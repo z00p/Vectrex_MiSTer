@@ -61,6 +61,10 @@ assign HDMI_BLACKOUT  = 0;
 assign HDMI_BOB_DEINT = 0;
 
 `include "build_id.v"
+// PiTrex mode build number: shown in Core Info and reported in the ring's
+// status block. Bump both together for every build that goes on a MiSTer.
+localparam [7:0] PTX_BUILD = 8'd4;
+
 localparam CONF_STR = {
 	"VECTREX;;",
 	"-;",
@@ -210,6 +214,8 @@ localparam CONF_STR = {
 	"P5-,port of Dar's original;",
 	"P5-,DE10-Lite core, with;",
 	"P5-,additional work by alanswx.;",
+	"P5-;",
+	"P5-,PiTrex mode: build B4;",
 	"P5-;",
 	"P5-,If you enjoy reliving the;",
 	"P5-,golden age of vector games,;",
@@ -594,7 +600,7 @@ wire [28:0] ptx_write_addr;
 wire [7:0]  ptx_write_burstcnt, ptx_write_be;
 wire [63:0] ptx_write_data;
 
-pitrex_ddr pitrex_ddr
+pitrex_ddr #(.BUILD(PTX_BUILD)) pitrex_ddr
 (
 	.clk              (clk_125),
 	.enable           (ptx_enable_125[1]),

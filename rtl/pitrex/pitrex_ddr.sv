@@ -12,6 +12,7 @@
 //   word 8      rd_idx                       core
 //   word 9      core_cycles (stream time)    core
 //   word 10     {underruns, frames}          core
+//   word 11     {0, build, "PTXC"}           core (identifies the core build)
 //   word 16     {pad, psg_ioa, y2, x2, y1, x1}  core
 //   word 17     {0, seq}                     core
 //   word 0x200  ring, 65536 entries
@@ -20,7 +21,8 @@
 `default_nettype none
 
 module pitrex_ddr #(
-	parameter logic [28:0] PTX_BASE = 29'h06800000
+	parameter logic [28:0] PTX_BASE = 29'h06800000,
+	parameter logic [7:0]  BUILD    = 8'd0
 ) (
 	input  wire         clk,
 	input  wire         enable,          // synchronised to clk by the caller
@@ -122,6 +124,7 @@ always_comb begin
 		4'd0: wr_data = rd_idx;
 		4'd1: wr_data = {16'd0, cap_cycles};
 		4'd2: wr_data = {16'd0, cap_underruns, 16'd0, cap_frames};
+		4'd3: wr_data = {24'd0, BUILD, 32'h43585450};   // "PTXC"
 		4'd8: wr_data = {24'd0, cap_ioa, cap_pots};
 		4'd9: wr_data = {32'd0, seq};
 		default: wr_be = 8'h00;
