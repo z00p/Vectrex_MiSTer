@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
@@ -131,6 +132,15 @@ static void publish(void)
 	published = wr;
 }
 
+/* Ctrl-C, kill or a dropped SSH session: clear the magic so the core hands
+   back at once (a real crash is still caught by the 100 ms heartbeat timeout). */
+static void on_signal(int sig)
+{
+	(void)sig;
+	if (!core_lost && hdr) hdr->magic = 0;
+	_exit(0);
+}
+
 static int m_open(void)
 {
 	if (!vectrex_core_loaded()) {
@@ -170,6 +180,9 @@ static int m_open(void)
 	hb_tick();
 	__sync_synchronize();
 	hdr->magic = PTX_MAGIC;          /* with a moving coded heartbeat: the core takes over */
+	signal(SIGINT, on_signal);
+	signal(SIGTERM, on_signal);
+	signal(SIGHUP, on_signal);
 	return 0;
 }
 
