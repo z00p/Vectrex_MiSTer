@@ -9,6 +9,7 @@
 // the input block. Layout in 64-bit words from PTX_BASE (byte = word * 8):
 //   word 0      {version, magic "PTRX"}      ARM
 //   word 2      wr_idx                       ARM
+//   word 3      {~hb ^ "PTRX", hb}           ARM heartbeat (coded; must keep changing)
 //   word 8      rd_idx                       core
 //   word 9      core_cycles (stream time)    core
 //   word 10     {underruns, frames}          core
@@ -26,6 +27,7 @@ module pitrex_ddr #(
 ) (
 	input  wire         clk,
 	input  wire         enable,          // synchronised to clk by the caller
+	output logic        present,         // a live ARM program is streaming (coded heartbeat)
 
 	// arbiter read client
 	output logic        rd_ready,
@@ -73,6 +75,9 @@ state_t state = S_IDLE;
 logic [63:0] rd_idx = '0;
 logic [16:0] wr_lo = '0;          // low bits suffice: the ARM is never > 65536 ahead
 logic        magic_ok = 1'b0;
+logic [31:0] hb_last = '0;
+logic [23:0] hb_timer = '0;
+localparam logic [23:0] HB_TIMEOUT = 24'd12_500_000;   // 100 ms at 125 MHz
 logic [2:0]  beat = '0;
 logic [5:0]  fetch_n = '0;
 logic [5:0]  fetch_left = '0;
@@ -136,6 +141,8 @@ always_ff @(posedge clk) begin
 	if (poll_timer != 0)   poll_timer <= poll_timer - 1'd1;
 	if (status_timer != 0) status_timer <= status_timer - 1'd1;
 	else                   status_due <= 1'b1;
+	if (hb_timer != 0)     hb_timer <= hb_timer - 1'd1;
+	else                   present <= 1'b0;     // heartbeat stopped: hand back
 
 	if (wr_advance) wbeat <= wbeat + 1'd1;      // may fire in the grant cycle
 
@@ -146,6 +153,8 @@ always_ff @(posedge clk) begin
 		rd_idx     <= '0;
 		wr_lo      <= '0;
 		magic_ok   <= 1'b0;
+		present    <= 1'b0;
+		hb_timer   <= '0;
 		status_due <= 1'b1;
 	end else begin
 		case (state)
@@ -156,7 +165,7 @@ always_ff @(posedge clk) begin
 					wbeat       <= '0;
 					wr_ready    <= 1'b1;
 					state       <= S_STAT_REQ;
-				end else if (magic_ok && avail_q != 0 && !fifo_almost_full) begin
+				end else if (magic_ok && present && avail_q != 0 && !fifo_almost_full) begin
 					rd_addr     <= RING_BASE + {13'd0, rd_idx[RING_LOG2-1:0]};
 					rd_burstcnt <= {2'd0, n_fetch_q};
 					fetch_n     <= n_fetch_q;
@@ -175,9 +184,19 @@ always_ff @(posedge clk) begin
 			S_HDR_REQ: if (rd_grant) begin rd_ready <= 1'b0; state <= S_HDR_DATA; end
 			S_HDR_DATA: if (rd_data_valid) begin
 				beat <= beat + 1'd1;
-				if (beat == 3'd0) magic_ok <= (rd_data[31:0] == MAGIC);
+				if (beat == 3'd0) begin
+					magic_ok <= (rd_data[31:0] == MAGIC);
+					if (rd_data[31:0] != MAGIC) present <= 1'b0;   // program exited
+				end
 				if (beat == 3'd2) wr_lo <= rd_data[16:0];
 				if (beat == 3'd3) begin
+					// accept a heartbeat only if it is coded correctly and has moved on
+					if (magic_ok && rd_data[63:32] == (~rd_data[31:0] ^ MAGIC) &&
+					    rd_data[31:0] != hb_last) begin
+						hb_last  <= rd_data[31:0];
+						hb_timer <= HB_TIMEOUT;
+						present  <= 1'b1;
+					end
 					poll_timer <= POLL_GAP;
 					state      <= S_SETTLE;
 				end

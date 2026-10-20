@@ -63,7 +63,7 @@ assign HDMI_BOB_DEINT = 0;
 `include "build_id.v"
 // PiTrex mode build number: shown in Core Info and reported in the ring's
 // status block. Bump both together for every build that goes on a MiSTer.
-localparam [7:0] PTX_BUILD = 8'd4;
+localparam [7:0] PTX_BUILD = 8'd5;
 
 localparam CONF_STR = {
 	"VECTREX;;",
@@ -215,7 +215,7 @@ localparam CONF_STR = {
 	"P5-,DE10-Lite core, with;",
 	"P5-,additional work by alanswx.;",
 	"P5-;",
-	"P5-,PiTrex mode: build B4;",
+	"P5-,PiTrex mode: build B5;",
 	"P5-;",
 	"P5-,If you enjoy reliving the;",
 	"P5-,golden age of vector games,;",
@@ -451,11 +451,14 @@ wire delayed_reset = (reset_timeout != 23'd0) &&
 	(reset_timeout <= 23'd999);
 // PiTrex mode: a short machine reset on every mode change (clean VIA state on
 // entry; a normal BIOS boot on exit).
+// PiTrex takes over only while the option is on AND a live ARM program
+// is detected (coded heartbeat); assigned in the PiTrex block below.
+wire      ptx_active;
 reg       ptx_mode_q = 1'b0;
 reg [4:0] ptx_mode_reset_cnt = 5'd0;
 always_ff @(posedge clk_sys) begin
-	ptx_mode_q <= status[36];
-	if (ptx_mode_q != status[36])
+	ptx_mode_q <= ptx_active;
+	if (ptx_mode_q != ptx_active)
 		ptx_mode_reset_cnt <= 5'd31;
 	else if (ptx_mode_reset_cnt != 5'd0)
 		ptx_mode_reset_cnt <= ptx_mode_reset_cnt - 1'd1;
@@ -524,7 +527,12 @@ assign rom_download = ioctl_download && (ioctl_index[4:0] <= 1) &&
 // FIFO into pitrex_player (clk_sys), which drives the machine bus while the
 // 6809 is held in reset. Stream format: PiTrex-on-MiSTer PROTOCOL.md.
 // ---------------------------------------------------------------------------
-wire        ptx_enable = status[36];
+wire        ptx_enable = status[36];      // option on: listen for a program
+wire        ptx_present_125;
+(* altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS"} *)
+reg [1:0]   ptx_present_sys = 2'b00;
+always_ff @(posedge clk_sys) ptx_present_sys <= {ptx_present_sys[0], ptx_present_125};
+assign      ptx_active = ptx_enable && ptx_present_sys[1];
 wire signed [7:0] pot_x1 = joya_0[7:0]  ? joya_0[7:0]   : {joystick_0[1], {7{joystick_0[0]}}};
 wire signed [7:0] pot_y1 = joya_0[15:8] ? ~joya_0[15:8] : {joystick_0[2], {7{joystick_0[3]}}};
 wire signed [7:0] pot_x2 = joya_1[7:0]  ? joya_1[7:0]   : {joystick_1[1], {7{joystick_1[0]}}};
@@ -551,7 +559,7 @@ wire        ptx_snap_toggle;
 pitrex_player pitrex_player
 (
 	.clk            (clk_sys),
-	.enable         (ptx_enable),
+	.enable         (ptx_active),
 	.e_fall         (vec_e_fall),
 	.fifo_rd_en     (ptx_fifo_rd_en),
 	.fifo_rd_data   (ptx_fifo_rd_data),
@@ -578,13 +586,13 @@ always_ff @(posedge clk_125) ptx_enable_125 <= {ptx_enable_125[0], ptx_enable};
 vfb_async_fifo #(.WIDTH(64), .DEPTH(128), .ALMOST_FULL_MARGIN(40)) pitrex_fifo
 (
 	.wr_clk         (clk_125),
-	.wr_reset       (!ptx_enable_125[1]),
+	.wr_reset       (!(ptx_enable_125[1] && ptx_present_125)),
 	.wr_en          (ptx_fifo_wr_en),
 	.wr_data        (ptx_fifo_wr_data),
 	.wr_full        (),
 	.wr_almost_full (ptx_fifo_almost_full),
 	.rd_clk         (clk_sys),
-	.rd_reset       (!ptx_enable),
+	.rd_reset       (!ptx_active),
 	.rd_en          (ptx_fifo_rd_en),
 	.rd_data        (ptx_fifo_rd_data),
 	.rd_valid       (ptx_fifo_rd_valid),
@@ -604,6 +612,7 @@ pitrex_ddr #(.BUILD(PTX_BUILD)) pitrex_ddr
 (
 	.clk              (clk_125),
 	.enable           (ptx_enable_125[1]),
+	.present          (ptx_present_125),
 	.rd_ready         (ptx_read_ready),
 	.rd_grant         (ptx_read_grant),
 	.rd_addr          (ptx_read_addr),
@@ -678,7 +687,7 @@ vectrex vectrex
 	.t2_reload    (t2_reload),
 	.t2_period    (t2_period),
 
-	.ptx_enable   (ptx_enable),
+	.ptx_enable   (ptx_active),
 	.ptx_addr     (ptx_addr),
 	.ptx_do       (ptx_do),
 	.ptx_rw       (ptx_rw),
