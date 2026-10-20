@@ -64,12 +64,12 @@ localparam logic [15:0] POLL_GAP  = 16'd250;        // 2 us between idle polls
 localparam logic [15:0] STATUS_GAP = 16'd62500;     // 0.5 ms between status writes
 
 typedef enum logic [2:0] {
-	S_IDLE, S_HDR_REQ, S_HDR_DATA, S_RING_REQ, S_RING_DATA, S_STAT_REQ, S_STAT_DATA
+	S_IDLE, S_HDR_REQ, S_HDR_DATA, S_RING_REQ, S_RING_DATA, S_STAT_REQ, S_STAT_DATA, S_SETTLE
 } state_t;
 state_t state = S_IDLE;
 
 logic [63:0] rd_idx = '0;
-logic [63:0] wr_idx_seen = '0;
+logic [16:0] wr_lo = '0;          // low bits suffice: the ARM is never > 65536 ahead
 logic        magic_ok = 1'b0;
 logic [2:0]  beat = '0;
 logic [5:0]  fetch_n = '0;
@@ -100,11 +100,17 @@ always_ff @(posedge clk) begin
 	end
 end
 
-// ring fetch size: min(32, available, words before the ring wraps)
-wire [63:0] avail      = wr_idx_seen - rd_idx;
-wire [16:0] to_wrap    = 17'h10000 - {1'b0, rd_idx[RING_LOG2-1:0]};
-wire [5:0]  n_avail    = (avail > 64'd32) ? 6'd32 : avail[5:0];
-wire [5:0]  n_fetch    = ({11'd0, n_avail} > to_wrap) ? to_wrap[5:0] : n_avail;
+// ring fetch size: min(32, available, words before the ring wraps), computed
+// one cycle ahead in registers to keep the 125 MHz paths short
+logic [16:0] avail_q = '0;
+logic [5:0]  n_fetch_q = '0;
+wire  [16:0] avail_d   = wr_lo - rd_idx[16:0];
+wire  [16:0] to_wrap   = 17'h10000 - {1'b0, rd_idx[RING_LOG2-1:0]};
+wire  [5:0]  n_avail   = (avail_d > 17'd32) ? 6'd32 : avail_d[5:0];
+always_ff @(posedge clk) begin
+	avail_q   <= avail_d;
+	n_fetch_q <= ({11'd0, n_avail} > to_wrap) ? to_wrap[5:0] : n_avail;
+end
 
 // status burst: words 8..17 (10 beats); byte enables off on words 11..15.
 // The arbiter takes DIN combinationally and pulses wr_advance per accepted beat.
@@ -133,7 +139,7 @@ always_ff @(posedge clk) begin
 		rd_ready   <= 1'b0;
 		wr_ready   <= 1'b0;
 		rd_idx     <= '0;
-		wr_idx_seen <= '0;
+		wr_lo      <= '0;
 		magic_ok   <= 1'b0;
 		status_due <= 1'b1;
 	end else begin
@@ -145,11 +151,11 @@ always_ff @(posedge clk) begin
 					wbeat       <= '0;
 					wr_ready    <= 1'b1;
 					state       <= S_STAT_REQ;
-				end else if (magic_ok && avail != 0 && !fifo_almost_full) begin
+				end else if (magic_ok && avail_q != 0 && !fifo_almost_full) begin
 					rd_addr     <= RING_BASE + {13'd0, rd_idx[RING_LOG2-1:0]};
-					rd_burstcnt <= {2'd0, n_fetch};
-					fetch_n     <= n_fetch;
-					fetch_left  <= n_fetch;
+					rd_burstcnt <= {2'd0, n_fetch_q};
+					fetch_n     <= n_fetch_q;
+					fetch_left  <= n_fetch_q;
 					rd_ready    <= 1'b1;
 					state       <= S_RING_REQ;
 				end else if (poll_timer == 0) begin
@@ -165,10 +171,10 @@ always_ff @(posedge clk) begin
 			S_HDR_DATA: if (rd_data_valid) begin
 				beat <= beat + 1'd1;
 				if (beat == 3'd0) magic_ok <= (rd_data[31:0] == MAGIC);
-				if (beat == 3'd2) wr_idx_seen <= rd_data;
+				if (beat == 3'd2) wr_lo <= rd_data[16:0];
 				if (beat == 3'd3) begin
 					poll_timer <= POLL_GAP;
-					state      <= S_IDLE;
+					state      <= S_SETTLE;
 				end
 			end
 
@@ -179,7 +185,7 @@ always_ff @(posedge clk) begin
 				fetch_left   <= fetch_left - 1'd1;
 				if (fetch_left == 6'd1) begin
 					rd_idx <= rd_idx + {58'd0, fetch_n};
-					state  <= S_IDLE;           // re-poll only when the ring runs dry
+					state  <= S_SETTLE;         // re-poll only when the ring runs dry
 				end
 			end
 
@@ -193,6 +199,7 @@ always_ff @(posedge clk) begin
 				end
 			end
 
+			S_SETTLE: state <= S_IDLE;       // let avail_q/n_fetch_q catch up
 			default: state <= S_IDLE;
 		endcase
 	end
