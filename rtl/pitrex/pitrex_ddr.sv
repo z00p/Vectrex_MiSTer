@@ -134,6 +134,8 @@ always_ff @(posedge clk) begin
 	if (status_timer != 0) status_timer <= status_timer - 1'd1;
 	else                   status_due <= 1'b1;
 
+	if (wr_advance) wbeat <= wbeat + 1'd1;      // may fire in the grant cycle
+
 	if (!enable) begin
 		state      <= S_IDLE;
 		rd_ready   <= 1'b0;
@@ -191,7 +193,6 @@ always_ff @(posedge clk) begin
 
 			S_STAT_REQ: if (wr_grant) begin wr_ready <= 1'b0; state <= S_STAT_DATA; end
 			S_STAT_DATA: begin
-				if (wr_advance) wbeat <= wbeat + 1'd1;
 				if (wr_done) begin
 					status_due   <= 1'b0;
 					status_timer <= STATUS_GAP;
