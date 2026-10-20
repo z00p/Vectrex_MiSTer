@@ -51,6 +51,7 @@ typedef struct {
 	uint64_t rd_idx;        /* commands the core has fetched */
 	uint64_t core_cycles;   /* stream time the core has played */
 	uint32_t frames, underruns;
+	uint32_t core_build;    /* PiTrex core build number, 0 if not reported */
 } ptx_status_t;
 
 /* Backend: where commands go and where input comes from. */

@@ -16,10 +16,10 @@
 #include <pitrex/pitrexio-gpio.h>
 #include <vectrex/vectrexInterface.h>
 
-#define FIELD_L   (-20000)
-#define FIELD_R   ( 20000)
+#define FIELD_L   (-15000)
+#define FIELD_R   ( 15000)
 #define FIELD_T   ( 14500)
-#define FIELD_B   (-27000)
+#define FIELD_B   (-17500)
 
 #define ROWS        5
 #define COLS        8
@@ -28,8 +28,8 @@
 #define BRICK_STEP  1300
 #define BRICK_HALF  350
 
-#define BAT_Y       (-23000)
-#define BAT_HALF_W  3000
+#define BAT_Y       (-15000)
+#define BAT_HALF_W  2400
 #define BAT_HALF_H  300
 #define BALL_R      350
 
@@ -42,8 +42,20 @@ static int ball_x, ball_y, ball_vx, ball_vy;
 static int score, lives, level, state, state_timer;
 static int sound_frames;
 
+/* Intro jingle: an original rising fanfare (tone periods = 93750 / Hz).
+   {period, frames}; period 0 = rest. Plays on channel A, one step per frame. */
+static const unsigned short jingle[][2] = {
+	{239, 4}, {179, 4}, {142, 4}, {120, 4}, { 90, 8},   /* G4 C5 E5 G5 C6 */
+	{ 95, 4}, {120, 4}, {107, 4}, {134, 4}, { 80, 8},   /* B5 G5 A5 F5 D6 */
+	{  0, 2}, { 90, 18},                                /* rest, C6 */
+};
+static int jingle_step = -1, jingle_left;
+
+static void jingle_start(void) { jingle_step = 0; jingle_left = 0; }
+
 static void beep(int period, int frames)
 {
+	if (jingle_step >= 0) return;
 	v_writePSG(0, period & 0xFF);
 	v_writePSG(1, (period >> 8) & 0x0F);
 	v_writePSG(7, 0x3E);                 /* tone A only; IOA stays an input */
@@ -53,6 +65,29 @@ static void beep(int period, int frames)
 
 static void sound_tick(void)
 {
+	if (jingle_step >= 0) {
+		if (jingle_left == 0) {
+			if (jingle_step >= (int)(sizeof jingle / sizeof jingle[0])) {
+				jingle_step = -1;
+				v_writePSG(8, 0x00);
+				return;
+			}
+			int period = jingle[jingle_step][0];
+			jingle_left = jingle[jingle_step][1];
+			jingle_step++;
+			if (period) {
+				v_writePSG(0, period & 0xFF);
+				v_writePSG(1, (period >> 8) & 0x0F);
+				v_writePSG(7, 0x3E);
+				v_writePSG(8, 0x0D);
+			} else {
+				v_writePSG(8, 0x00);
+			}
+		}
+		if (jingle_left == 1) v_writePSG(8, 0x08);   /* short release between notes */
+		jingle_left--;
+		return;
+	}
 	if (sound_frames > 0 && --sound_frames == 0)
 		v_writePSG(8, 0x00);
 }
@@ -80,6 +115,7 @@ static void new_game(void)
 	new_wall();
 	serve_position();
 	state = SERVE;
+	jingle_start();
 }
 
 static void box(int x0, int y0, int x1, int y1, int bright)
@@ -121,7 +157,7 @@ static void draw(void)
 
 static void move_bat(void)
 {
-	bat_x += currentJoy1X * 5;
+	bat_x += currentJoy1X * 4;
 	if (bat_x < FIELD_L + BAT_HALF_W) bat_x = FIELD_L + BAT_HALF_W;
 	if (bat_x > FIELD_R - BAT_HALF_W) bat_x = FIELD_R - BAT_HALF_W;
 }
@@ -212,6 +248,7 @@ int main(int argc, char *argv[])
 				new_wall();
 				serve_position();
 				state = SERVE;
+				jingle_start();
 			}
 			break;
 		}

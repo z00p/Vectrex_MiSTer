@@ -48,6 +48,7 @@ typedef struct {
 	volatile uint64_t rd_idx;
 	volatile uint64_t core_cycles;
 	volatile uint32_t frames, underruns;
+	volatile uint32_t build_magic, build;   /* "PTXC", build number */
 } core_status_t;
 
 static int memfd = -1;
@@ -60,10 +61,15 @@ static uint64_t wr, published;
 static uint64_t frame_end[8];
 static uint32_t n_frames;
 
+/* Every wait also ticks the heartbeat, so it keeps changing (at least once per
+   frame, and every few hundred microseconds while blocked) for as long as the
+   program runs. The core treats "magic valid and heartbeat changed within
+   100 ms" as "PiTrex program present"; stale RAM after a crash cannot pass. */
 static void nap_us(long us)
 {
 	struct timespec ts = { 0, us * 1000L };
 	nanosleep(&ts, NULL);
+	if (hdr) hdr->heartbeat++;
 }
 
 static void publish(void)
@@ -144,6 +150,7 @@ static void m_status(ptx_status_t *o)
 	if (!base) return;
 	o->rd_idx = st->rd_idx; o->core_cycles = st->core_cycles;
 	o->frames = st->frames; o->underruns = st->underruns;
+	o->core_build = st->build_magic == 0x43585450u ? (st->build & 0xFF) : 0;
 }
 
 static void m_close(void)

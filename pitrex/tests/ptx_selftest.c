@@ -118,10 +118,10 @@ int main(void)
 			ptx_get_status(&st);
 			if (st.valid)
 				printf("t=%" PRIu64 " core=%" PRIu64 " lead=%" PRId64 " fetched=%" PRIu64
-				       " frames=%u underruns=%u pots=%d,%d buttons=%02x seq=%u\n",
+				       " frames=%u underruns=%u pots=%d,%d buttons=%02x seq=%u core=B%u\n",
 				       ptx_now_cycles(), st.core_cycles,
 				       (int64_t)(ptx_now_cycles() - st.core_cycles), st.rd_idx,
-				       st.frames, st.underruns, in.pot[0], in.pot[1], b, in.seq);
+				       st.frames, st.underruns, in.pot[0], in.pot[1], b, in.seq, st.core_build);
 			else
 				printf("t=%" PRIu64 " (no core status: file backend)\n", ptx_now_cycles());
 			fflush(stdout);

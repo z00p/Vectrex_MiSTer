@@ -5,8 +5,8 @@ Vectrex core standing in for a real Vectrex. It is the same split as a PiTrex ca
 6809 is held, and a program on an ARM drives the VIA. Here the "bus" is a command ring in DDR3
 that the core replays at exact E-clock timing.
 
-Status: working on hardware (October 2026). The self-test and the PiTrex `hello`/`cube` demos
-run at full speed through Videodr0me's renderer. Games are being tested.
+Status: working on hardware (October 2026). The self-test, the PiTrex `hello`/`cube` demos and
+VecBreak run at full speed through Videodr0me's renderer, with joystick, buttons and sound.
 
 ## How it works
 - **ARM side** (this folder): a normal Linux program, started over SSH. The PiTrex library is
@@ -32,7 +32,10 @@ run at full speed through Videodr0me's renderer. Games are being tested.
   - OSD: System > **PiTrex Mode**. Switching it resets the machine; switching it off boots the
     BIOS normally.
 
-The full format is in [PROTOCOL.md](PROTOCOL.md).
+The full format is in [PROTOCOL.md](PROTOCOL.md), including the presence handshake: while a
+program runs, the header's heartbeat keeps changing, so the core can tell a live PiTrex program
+from stale RAM. Builds identify themselves: Core Info shows the PiTrex build, and the self-test
+prints the build the core reports in the status block.
 
 ## Using it on a MiSTer
 1. Build the core (Quartus 17.0.2 Lite; fitter seed 4 meets timing) or use a release build.
@@ -69,7 +72,7 @@ Holding a button from frame 0 opens the PiTrex calibration menu.
 | `src/` | stream layer, shadow VIA/PSG, MiSTer and file backends, `pitrexio-mister.c` |
 | `tests/ptx_selftest.c` | bring-up test without the PiTrex library (square, cross, joystick dot, button marks, status line) |
 | `tests/ptx_peek.c` | dumps the shared DDR block (header, status, input) |
-| `games/vecbreak/` | VecBreak, a small Breakout on the PiTrex library (analog joystick, buttons, PSG beeps) |
+| `games/vecbreak/` | VecBreak, a small Breakout on the PiTrex library (analog joystick, buttons, PSG sound and an intro jingle), plus its overlay: `make_overlay.py` draws `VecBreak.png` from the game's coordinates and the core's Overlay Tools turn it into `VecBreak.art` (copy to `games/Vectrex/Overlays/` and load it from the OSD) |
 | `tools/` | library patcher, build/run scripts, the PC stream player, a Quartus seed sweep and timing report script |
 
 ## Credits

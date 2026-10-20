@@ -19,6 +19,10 @@ int main(int argc, char **argv)
 	if (w == MAP_FAILED) { perror("mmap"); return 1; }
 	for (int r = 0; r < repeat; r++) {
 		printf("--- sample %d\n", r);
+		if ((uint32_t)w[11] == 0x43585450u)
+			printf("core build: B%u\n", (unsigned)((w[11] >> 32) & 0xFF));
+		else
+			printf("core build: not reported (pre-B4 core or PiTrex Mode off)\n");
 		for (int i = 0; i < 20; i++)
 			printf("word %2d (0x%03x): %016" PRIx64 "\n", i, i * 8, w[i]);
 		fflush(stdout);

@@ -30,6 +30,14 @@ all reads itself from a shadow VIA plus a per-frame input block written by the c
 | 0x0080 | 64 B | core | Input block: buttons (4 per pad × 2), analog X/Y per pad (signed 8-bit), sequence number |
 | 0x1000 | N × 8 B | ARM | Command ring (power of two entries, e.g. 64 K entries = 512 KB) |
 
+## Presence handshake
+The ARM increments the header heartbeat (word 3, low 32 bits) at least once per frame and
+every few hundred microseconds while it waits, for as long as the program runs; on exit it
+clears the magic. The core treats **magic == "PTRX" and heartbeat changed within the last
+100 ms** as "a PiTrex program is present". Stale DDR contents after a crash or reboot keep
+the magic but not a moving heartbeat, so they never look present. The core can use this to
+grey out the OSD option, or to run PiTrex mode only while (option on && present).
+
 ## Command word (64-bit)
 ```
 bits 63..56  opcode
