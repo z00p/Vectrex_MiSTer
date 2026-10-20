@@ -14,7 +14,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 W, H = 846, 1080
-KX, CX = 42.4, 417     # horizontal: units per pixel, centre column
+KX, CX = 41.4, 416     # horizontal: units per pixel, centre column (re-measured on B4)
 KY, CY = 41.5, 534     # vertical: units per pixel, centre row
 FIELD_L, FIELD_R, FIELD_T, FIELD_B = -15000, 15000, 14500, -17500   # match vecbreak.c
 BRICK_TOP, BRICK_STEP, ROWS = 11500, 1300, 5
@@ -48,7 +48,7 @@ def main(out):
     d.fontmode = "1"                                  # no anti-aliasing
 
     # play window: clear, a little outside the walls and score line
-    win = (px(FIELD_L) - 14, 96, px(FIELD_R) + 14, py(FIELD_B) + 12)
+    win = (px(FIELD_L) - 22, 96, px(FIELD_R) + 22, py(FIELD_B) + 12)
     d.rounded_rectangle((win[0] - 6, win[1] - 6, win[2] + 6, win[3] + 6), radius=26, fill=RIM)
     d.rounded_rectangle(win, radius=22, fill=(0, 0, 0, 0))
 

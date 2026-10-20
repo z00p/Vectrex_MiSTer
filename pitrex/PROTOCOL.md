@@ -30,13 +30,25 @@ all reads itself from a shadow VIA plus a per-frame input block written by the c
 | 0x0080 | 64 B | core | Input block: buttons (4 per pad × 2), analog X/Y per pad (signed 8-bit), sequence number |
 | 0x1000 | N × 8 B | ARM | Command ring (power of two entries, e.g. 64 K entries = 512 KB) |
 
-## Presence handshake
-The ARM increments the header heartbeat (word 3, low 32 bits) at least once per frame and
-every few hundred microseconds while it waits, for as long as the program runs; on exit it
-clears the magic. The core treats **magic == "PTRX" and heartbeat changed within the last
-100 ms** as "a PiTrex program is present". Stale DDR contents after a crash or reboot keep
-the magic but not a moving heartbeat, so they never look present. The core can use this to
-grey out the OSD option, or to run PiTrex mode only while (option on && present).
+## Presence handshake (B5, agreed with Videodr0me 20 Oct 2026)
+- **PiTrex Mode Off:** the core does nothing new: no DDR reads or writes, no heartbeat.
+- **PiTrex Mode On:** the core only *listens*. The 6809 keeps running normally (BIOS, the
+  loaded cartridge) and the core writes its status block (signature "PTXC" + build in
+  word 11, an input sequence counter in word 17 that changes every ~0.5 ms).
+- **ARM program start (read-only until confirmed):** `/tmp/CORENAME` must be `VECTREX`; then
+  the program waits, reading only, until word 11 reads "PTXC" *and* the sequence counter
+  moves. Only then does it write the header (wr_idx = the core's rd_idx), the heartbeat and
+  the magic.
+- **Coded heartbeat:** word 3 = {hi = ~lo ^ "PTRX", lo = counter}. The ARM bumps it every
+  frame and in every wait. The core accepts a sample only if magic == "PTRX", hi matches lo
+  and lo differs from the last accepted value. A leftover magic plus a random write by an
+  unrelated program will not pass.
+- **Takeover:** on the first valid heartbeat the core resets the machine, holds the 6809 and
+  starts fetching the ring. **Hand-back:** if no valid new heartbeat arrives for 100 ms, or
+  the magic is cleared (normal exit), it resets the machine and the 6809 runs again.
+- **While running:** the ARM keeps checking that the counter moves (< 500 ms) and that
+  `/tmp/CORENAME` is still `VECTREX` (once a second). If not, it stops at once and exits
+  without writing anything else.
 
 ## Command word (64-bit)
 ```

@@ -32,15 +32,17 @@ VecBreak run at full speed through Videodr0me's renderer, with joystick, buttons
   - OSD: System > **PiTrex Mode**. Switching it resets the machine; switching it off boots the
     BIOS normally.
 
-The full format is in [PROTOCOL.md](PROTOCOL.md), including the presence handshake: while a
-program runs, the header's heartbeat keeps changing, so the core can tell a live PiTrex program
-from stale RAM. Builds identify themselves: Core Info shows the PiTrex build, and the self-test
+The full format is in [PROTOCOL.md](PROTOCOL.md), including the presence handshake (B5):
+PiTrex Mode On only makes the core *listen*; the 6809 runs normally until a live program shows
+a coded heartbeat, then PiTrex takes over, and when the program exits or dies the core hands
+back. The program never writes to DDR until it has confirmed the Vectrex core (`/tmp/CORENAME`)
+and the core's live status signature. Builds identify themselves: Core Info shows the PiTrex build, and the self-test
 prints the build the core reports in the status block.
 
 ## Using it on a MiSTer
 1. Build the core (Quartus 17.0.2 Lite; fitter seed 4 meets timing) or use a release build.
-2. Load it, then OSD > System > PiTrex Mode = On. The picture freezes: the machine pauses while
-   the ring is empty.
+2. Load it, then OSD > System > PiTrex Mode = On. The Vectrex keeps running normally until a
+   PiTrex program starts.
 3. Over SSH (root, for `/dev/mem`): `PTX_BACKEND=mister ./ptx_selftest`. Start the core and
    PiTrex Mode **before** the program; the program resumes from the core's read index.
 
