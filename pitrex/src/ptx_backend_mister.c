@@ -1,0 +1,169 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright (C) 2026 John (z00p) - PiTrex on MiSTer
+ */
+/*
+ * ptx_backend_mister.c - DE10-Nano backend: a command ring in the DDR3 that
+ * the Vectrex core reads through its DDR arbiter. Same /dev/mem + mmap
+ * approach as Main_MiSTer's shmem_map().
+ *
+ * Layout (byte offsets from PTX_DDR_BASE; see PROTOCOL.md):
+ *   0x0000 ARM header : magic, version, log2 entries, wr_idx (u64), heartbeat
+ *   0x0040 core status: rd_idx (u64), core_cycles (u64), frames, underruns
+ *   0x0080 core input : ptx_input_t
+ *   0x1000 ring       : (1 << PTX_RING_LOG2) x 64-bit commands
+ *
+ * Base: the core's framebuffer + artwork occupy DDR word addresses
+ * 0x06000000-0x065CFFFF (bytes 0x30000000-0x32E7FFFF), so the ring sits above
+ * them at 0x34000000. To be agreed with Videodr0me.
+ */
+#include "ptx.h"
+
+#ifdef __linux__
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <time.h>
+#include <unistd.h>
+
+#ifndef PTX_DDR_BASE
+#define PTX_DDR_BASE   0x34000000u
+#endif
+#define PTX_RING_LOG2  16u
+#define PTX_RING_N     (1u << PTX_RING_LOG2)
+#define PTX_MAGIC      0x58525450u            /* "PTRX" */
+#define PTX_VERSION    0u
+#define PTX_MAP_SIZE   (0x1000u + PTX_RING_N * 8u)
+#define PTX_PUBLISH    32u                    /* = one 256-byte DDR burst */
+#define PTX_LEAD_FRAMES 2u                    /* frames the ARM may run ahead */
+
+typedef struct {
+	volatile uint32_t magic, version, log2n, pad0;
+	volatile uint64_t wr_idx;
+	volatile uint32_t heartbeat;
+} arm_hdr_t;
+
+typedef struct {
+	volatile uint64_t rd_idx;
+	volatile uint64_t core_cycles;
+	volatile uint32_t frames, underruns;
+} core_status_t;
+
+static int memfd = -1;
+static volatile uint8_t *base;
+static arm_hdr_t *hdr;
+static core_status_t *st;
+static volatile ptx_input_t *in;
+static volatile uint64_t *ring;
+static uint64_t wr, published;
+static uint64_t frame_end[8];
+static uint32_t n_frames;
+
+static void nap_us(long us)
+{
+	struct timespec ts = { 0, us * 1000L };
+	nanosleep(&ts, NULL);
+}
+
+static void publish(void)
+{
+	__sync_synchronize();           /* commands visible before the index */
+	hdr->wr_idx = wr;
+	published = wr;
+}
+
+static int m_open(void)
+{
+	memfd = open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
+	if (memfd < 0) { perror("ptx: /dev/mem"); return -1; }
+	void *p = mmap(0, PTX_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, memfd, PTX_DDR_BASE);
+	if (p == MAP_FAILED) { perror("ptx: mmap"); close(memfd); return -1; }
+	base = p;
+	hdr  = (arm_hdr_t *)(base + 0x0000);
+	st   = (core_status_t *)(base + 0x0040);
+	in   = (volatile ptx_input_t *)(base + 0x0080);
+	ring = (volatile uint64_t *)(base + 0x1000);
+	wr = published = st->rd_idx;     /* resume wherever the core is */
+	hdr->version = PTX_VERSION;
+	hdr->log2n = PTX_RING_LOG2;
+	hdr->wr_idx = wr;
+	__sync_synchronize();
+	hdr->magic = PTX_MAGIC;          /* core starts reading once magic is valid */
+	return 0;
+}
+
+static void m_push(uint64_t cmd)
+{
+	while (wr - st->rd_idx >= PTX_RING_N - PTX_PUBLISH) {   /* ring full: wait */
+		if (published != wr) publish();
+		nap_us(50);
+	}
+	ring[wr & (PTX_RING_N - 1)] = cmd;
+	wr++;
+	if (wr - published >= PTX_PUBLISH) publish();
+}
+
+static void m_frame(uint64_t stream_cycles)
+{
+	(void)stream_cycles;
+	publish();
+	hdr->heartbeat++;
+	/* Stay at most PTX_LEAD_FRAMES frames ahead of what the core has fetched
+	   (its FIFO is tiny, so fetched ~ played): enough slack for Linux
+	   scheduling, little enough that input still feels immediate. */
+	frame_end[n_frames % 8] = wr;
+	n_frames++;
+	if (n_frames <= PTX_LEAD_FRAMES) return;
+	uint64_t target = frame_end[(n_frames - 1 - PTX_LEAD_FRAMES) % 8];
+	int waited_ms = 0;
+	while (st->rd_idx < target) {
+		nap_us(200);
+		if (++waited_ms == 10000)                /* 2 s without progress */
+			fprintf(stderr, "ptx: core not fetching (rd_idx %llu < %llu) - PiTrex Mode on?\n",
+			        (unsigned long long)st->rd_idx, (unsigned long long)target);
+	}
+}
+
+static void m_input(ptx_input_t *o)
+{
+	o->seq = in->seq;
+	if (o->seq == 0) {               /* core has not written an input block yet */
+		o->pot[0] = o->pot[1] = o->pot[2] = o->pot[3] = 0;
+		o->psg_ioa = 0xFF;            /* nothing pressed */
+		return;
+	}
+	o->pot[0] = in->pot[0]; o->pot[1] = in->pot[1];
+	o->pot[2] = in->pot[2]; o->pot[3] = in->pot[3];
+	o->psg_ioa = in->psg_ioa;
+}
+
+static void m_status(ptx_status_t *o)
+{
+	o->valid = base != NULL;
+	if (!base) return;
+	o->rd_idx = st->rd_idx; o->core_cycles = st->core_cycles;
+	o->frames = st->frames; o->underruns = st->underruns;
+}
+
+static void m_close(void)
+{
+	if (!base) return;
+	publish();
+	hdr->magic = 0;                  /* core drops out of streaming */
+	munmap((void *)base, PTX_MAP_SIZE);
+	close(memfd);
+	base = NULL;
+}
+
+const ptx_backend_t ptx_backend_mister = { m_open, m_push, m_frame, m_input, m_status, m_close };
+
+#else  /* not Linux: keep the symbol so the harness links everywhere */
+static int m_unavailable(void) { return -1; }
+static void m_nop_push(uint64_t c) { (void)c; }
+static void m_nop_frame(uint64_t c) { (void)c; }
+static void m_nop_input(ptx_input_t *o) { (void)o; }
+static void m_nop(void) {}
+static void m_nop_status(ptx_status_t *o) { o->valid = 0; }
+const ptx_backend_t ptx_backend_mister = { m_unavailable, m_nop_push, m_nop_frame, m_nop_input, m_nop_status, m_nop };
+#endif
