@@ -40,7 +40,16 @@ and the core's live status signature. Builds identify themselves: Core Info show
 prints the build the core reports in the status block.
 
 ## Using it on a MiSTer
-1. Build the core (Quartus 17.0.2 Lite; fitter seed 4 meets timing) or use a release build.
+**Easiest: the Scripts menu.** Copy the programs and `scripts/pitrex_launch.sh` to
+`/media/fat/pitrex/`, the `scripts/PiTrex_*.sh` entries to `/media/fat/Scripts/`, and the core
+to `/media/fat/_Unstable/Vectrex_PiTrex_B<n>_<date>.rbf`. Then pick e.g. **PiTrex_VecDrive**
+from Scripts. From another core it loads the Vectrex core (switch PiTrex Mode on when it
+appears). If the Vectrex core is already running, it just switches programs.
+**PiTrex_Stop** ends the program and hands the Vectrex back.
+
+**By hand:**
+1. Build the core (Quartus 17.0.2 Lite; fitter seed 5 meets timing at all four corners) or use a
+   release build.
 2. Load it, then OSD > System > PiTrex Mode = On. The Vectrex keeps running normally until a
    PiTrex program starts.
 3. Over SSH (root, for `/dev/mem`): `PTX_BACKEND=mister ./ptx_selftest`. Start the core and
@@ -74,6 +83,9 @@ Holding a button from frame 0 opens the PiTrex calibration menu.
 | `src/` | stream layer, shadow VIA/PSG, MiSTer and file backends, `pitrexio-mister.c` |
 | `tests/ptx_selftest.c` | bring-up test without the PiTrex library (square, cross, joystick dot, button marks, status line) |
 | `tests/ptx_peek.c` | dumps the shared DDR block (header, status, input) |
+| `games/vecdrive/` | VecDrive, a pseudo-3D sunset racer: SEA / DESERT / CITY sections with checkpoints, 3-2-1 start, cars and trucks, palms and round trees, engine sound or an original synthwave loop (button 3), plus a sunset overlay (`make_overlay.py` -> `VecDrive.art`, built with `--max-colors 256`) |
+| `games/gyrocks/` | Gyrocks by Carsten Wartmann (GPL-2) with additions: ship damage from rocks and enemies, 3 lives, vector explosions, sound, game over (fire is button 4) |
+| `scripts/` | Scripts-menu launchers (`PiTrex_<Game>.sh`, `PiTrex_Stop.sh`) and `pitrex_launch.sh` |
 | `games/vecbreak/` | VecBreak, a small Breakout on the PiTrex library (analog joystick, buttons, PSG sound and an intro jingle), plus its overlay: `make_overlay.py` draws `VecBreak.png` from the game's coordinates and the core's Overlay Tools turn it into `VecBreak.art` (copy to `games/Vectrex/Overlays/` and load it from the OSD) |
 | `tools/` | library patcher, build/run scripts, the PC stream player, a Quartus seed sweep and timing report script |
 

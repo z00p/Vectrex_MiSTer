@@ -8,7 +8,7 @@ for seed in "$@"; do
 	start=$(date +%s)
 	"$Q/quartus_fit.exe" Vectrex --seed="$seed" > "seed_$seed.log" 2>&1 || { echo "seed $seed: fit failed"; continue; }
 	"$Q/quartus_asm.exe" Vectrex >> "seed_$seed.log" 2>&1
-	"$Q/quartus_sta.exe" Vectrex >> "seed_$seed.log" 2>&1
+	"$Q/quartus_sta.exe" Vectrex --multicorner=on >> "seed_$seed.log" 2>&1   # all four corners
 	worst=$(awk '/^Type/ {t=$0} /Slack/ {print $3}' output_files/Vectrex.sta.summary | sort -n | head -1)
 	mins=$(( ($(date +%s) - start) / 60 ))
 	cp output_files/Vectrex.rbf "output_files/Vectrex_seed$seed.rbf"

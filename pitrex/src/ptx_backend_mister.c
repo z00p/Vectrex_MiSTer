@@ -143,9 +143,17 @@ static void on_signal(int sig)
 
 static int m_open(void)
 {
-	if (!vectrex_core_loaded()) {
-		fprintf(stderr, "ptx: the Vectrex core is not running (see /tmp/CORENAME)\n");
-		return -1;
+	/* Launchers start the program, then load the core: PTX_WAIT_CORE=<seconds>
+	   lets it wait for the Vectrex core (reading /tmp/CORENAME only). */
+	const char *wait_env = getenv("PTX_WAIT_CORE");
+	long wait_ms = wait_env ? atol(wait_env) * 1000L : 0;
+	for (long t0 = now_ms(); !vectrex_core_loaded(); ) {
+		if (now_ms() - t0 >= wait_ms) {
+			fprintf(stderr, "ptx: the Vectrex core is not running (see /tmp/CORENAME)\n");
+			return -1;
+		}
+		struct timespec ts = { 0, 200 * 1000000L };
+		nanosleep(&ts, NULL);
 	}
 	memfd = open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
 	if (memfd < 0) { perror("ptx: /dev/mem"); return -1; }
