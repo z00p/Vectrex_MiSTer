@@ -1,129 +1,114 @@
-# PiTrex to MiSTer stream protocol (v0, implemented 20 Oct 2026)
+# PiTrex-on-MiSTer stream protocol
 
-Implemented in this branch: core side in `rtl/pitrex/`, ARM side in `pitrex/src/`.
+Version 0, core build B5 (October 2026). Core side: `rtl/pitrex/` and the hooks in `Vectrex.sv`
+and `rtl/vectrex.vhd`. ARM side: `pitrex/src/`.
 
-## Principle
-The ARM never waits on the FPGA. It writes **timestamped VIA writes** into a ring in shared
-DDR. The core replays them at exact E-clock (1.5 MHz) times into its own VIA, so the
-simulated integrators, ramps and beam behave exactly as on real hardware. The ARM answers
-all reads itself from a shadow VIA plus a per-frame input block written by the core.
+## The idea
+A program on the DE10-Nano's ARM never waits for the FPGA. It writes **timestamped VIA writes**
+into a ring in shared DDR3, and the core replays them at exact E-clock times (1.5 MHz) on its
+own VIA, with the 6809 held in reset. The core's integrators, ramps, sound and renderer then
+behave as they would for a real 6809.
 
-## Videodr0me's answers (17 Oct)
-- Full sources ship with the release (Sunday night). The core replaces the old Vectrex core in
-  MiSTer-devel, either as one big PR or as a full replace with new history.
-- Route PiTrex output to whatever hardware registers it targets; the core simulates
-  practically all the hardware. Talking to his vector render pipeline directly is also allowed.
-- The core already uses DDRAM (one framebuffer plus 4 overlay artwork planes, one per
-  supported resolution) and SDRAM (his logic runs at 125 MHz). It has a **DDR arbiter**: add a
-  stage, fetch **~256-byte chunks**, priority **just above the artwork loader** and below the
-  time-critical clients. "Plenty of room left" in DDR.
-- He expects the core side to be easy and the ARM side to be the main risk.
-- Checked 17 Oct: the PiTrex vector library only ever addresses **VIA registers** (port B 94×,
-  port A 57×, DDR_a 10×, then cntl, IFR, T1, T2, ACR, SR). The PSG, DAC, mux and integrators
-  all sit behind the VIA, so replaying VIA writes covers everything the library does.
+The ARM answers every VIA read itself:
+- timers and interrupt flags from a shadow VIA that runs on stream time;
+- buttons and the joystick comparator from an input block that the core writes back.
 
-## Shared region (base: pick a free area once the core's DDR map is known; 64-bit words to match DDRAM_*)
-| Offset | Size | Writer | Content |
-|---|---|---|---|
-| 0x0000 | 64 B | ARM | Header: magic "PTRX", version, ring size, ARM write index, ARM heartbeat |
-| 0x0040 | 64 B | core | Status: core read index, current E-cycle count (64-bit), frame counter, underrun count |
-| 0x0080 | 64 B | core | Input block: buttons (4 per pad × 2), analog X/Y per pad (signed 8-bit), sequence number |
-| 0x1000 | N × 8 B | ARM | Command ring (power of two entries, e.g. 64 K entries = 512 KB) |
+So there are no round trips. The PiTrex vector library only ever addresses VIA registers (the
+PSG, DAC, multiplexer and integrators all sit behind the VIA), so replaying VIA writes covers
+everything it does.
 
-## Presence handshake (B5, agreed with Videodr0me 20 Oct 2026)
-- **PiTrex Mode Off:** the core does nothing new: no DDR reads or writes, no heartbeat.
-- **PiTrex Mode On:** the core only *listens*. The 6809 keeps running normally (BIOS, the
-  loaded cartridge) and the core writes its status block (signature "PTXC" + build in
-  word 11, an input sequence counter in word 17 that changes every ~0.5 ms).
-- **ARM program start (read-only until confirmed):** `/tmp/CORENAME` must be `VECTREX`; then
-  the program waits, reading only, until word 11 reads "PTXC" *and* the sequence counter
-  moves. Only then does it write the header (wr_idx = the core's rd_idx), the heartbeat and
-  the magic.
-- **Coded heartbeat:** word 3 = {hi = ~lo ^ "PTRX", lo = counter}. The ARM bumps it every
-  frame and in every wait. The core accepts a sample only if magic == "PTRX", hi matches lo
-  and lo differs from the last accepted value. A leftover magic plus a random write by an
-  unrelated program will not pass.
-- **Takeover:** on the first valid heartbeat the core resets the machine, holds the 6809 and
-  starts fetching the ring. **Hand-back:** if no valid new heartbeat arrives for 100 ms, or
-  the magic is cleared (normal exit), it resets the machine and the 6809 runs again.
-- **While running:** the ARM keeps checking that the counter moves (< 500 ms) and that
-  `/tmp/CORENAME` is still `VECTREX` (once a second). If not, it stops at once and exits
-  without writing anything else.
+## Shared block
+Base: byte address `0x34000000` in DDR3, i.e. 64-bit word `0x06800000`. That's above the
+renderer's framebuffer and artwork areas. Offsets below are in 64-bit words.
 
-## Command word (64-bit)
+| Word | Written by | Content |
+|---|---|---|
+| 0 | ARM | bits 31..0 magic `"PTRX"` (`0x58525450`), bits 63..32 version (0) |
+| 1 | ARM | ring size as log2 of the entry count (16) |
+| 2 | ARM | `wr_idx`: entries written so far (free-running, 64-bit) |
+| 3 | ARM | heartbeat: bits 31..0 counter, bits 63..32 = `~counter ^ "PTRX"` |
+| 8 | core | `rd_idx`: entries fetched so far |
+| 9 | core | stream time in E cycles |
+| 10 | core | bits 31..0 frames, bits 63..32 underruns |
+| 11 | core | bits 31..0 signature `"PTXC"` (`0x43585450`), bits 39..32 build number |
+| 16 | core | input: x1, y1, x2, y2 (signed 8-bit pots), PSG port A (buttons, active low), pad bits |
+| 17 | core | input sequence number (changes every 0.5 ms while the core is listening) |
+| 0x200 | ARM | the command ring: 65,536 entries of 64 bits |
+
+The core polls the header every 2 µs when idle, fetches up to 32 commands per 256-byte burst,
+and writes the status and input words every 0.5 ms.
+
+## Command word
 ```
 bits 63..56  opcode
-bits 55..40  delta cycles (E-cycles to wait BEFORE executing; 0..65535)
-bits 39..24  address (VIA 0xD000-0xD00F, or other Vectrex space)
+bits 55..40  delta: E cycles to wait BEFORE this command (0..65535)
+bits 39..24  address (VIA $D000-$D00F, or elsewhere in the Vectrex map)
 bits 23..16  data
-bits 15..0   reserved / opcode-specific
+bits 15..0   reserved (0)
 ```
-Opcodes (initial set):
-- `0x01 WRITE`: after `delta` cycles, perform a bus write of `data` to `address`.
-- `0x02 WAIT`: wait `delta` cycles (for long gaps; WRITE covers short ones).
-- `0x03 WAIT_FLAG`: wait until a VIA IFR bit (data = mask) is set. This is a safety net if
-  the shadow and core timers drift; normally unused.
-- `0x10 FRAME`: frame marker (lets the core count frames and tell underrun from idle).
-- `0x7F RESET_SYNC`: ARM restarted; the core resets its VIA state and stream time.
+| Opcode | Name | Meaning |
+|---|---|---|
+| `0x01` | WRITE | after `delta`, one bus write of `data` to `address` (one E period) |
+| `0x02` | WAIT | wait `delta` cycles (for gaps longer than a WRITE's delta can hold) |
+| `0x04` | READ | after `delta`, one bus read of `address`; the value is discarded. Used for reads with side effects, e.g. clearing VIA flags |
+| `0x10` | FRAME | frame marker: counted in word 10 |
+| `0x7F` | RESET_SYNC | sent when a program starts; takes no bus time |
 
-## ARM side (pitrexio-mister.c)
-- Keeps `stream_time` (E-cycles). Every library delay (`DELAY_CYCLES`, `WAIT_CYCLE_NANO`,
-  `waitCycleMarkEnd`, ...) adds to it instead of busy-waiting.
-- Shadow VIA: T1/T2 counters and IFR, computed from `stream_time` and the writes issued; DDR
-  and port registers hold the last written values; the DAC value comes from the last port A
-  write.
-- Reads:
-  - IFR / T1 / T2: from the shadow.
-  - Buttons (PSG reg 14 via port A): from the input block.
-  - Joystick comparator (port B bit 5): computed as `axis > dac` from the input block (exact
-    sign convention to verify against the core and Malban's code).
-- Flow control: if the ring is nearly full, sleep briefly (this is the only waiting). If the ARM
-  falls behind, the core sees an underrun and holds the beam with zero blanking (counted in
-  status).
-- Pacing: the ARM stays at most 2 frames ahead of the core's fetched index (`rd_idx`); the
-  core's FIFO is only 128 entries, so fetched is close to played.
+If the ring runs dry, the core **pauses the whole machine** until more commands arrive, rather
+than drawing with broken timing. Each pause is counted as an underrun in word 10.
 
-## Core hook points (read from the released source, f6df13e, 18 Oct 2026)
-- Clocks: the whole machine **and** the DDR arbiter run on `clk_sys` = 24 MHz
-  (`rtl/pll.v`), so there is no clock-domain crossing. `cpu_en` pulses every 4 clocks
-  (6 MHz), and the CPU wrapper `rtl/mc6809.v` derives E/Q from it (E = 1.5 MHz), so
-  **E keeps running when the CPU is halted**.
-- HALT: `rtl/mc6809.v` instantiates `mc6809is` with `.nHALT(1'b1)` and leaves `.BA()`
-  unconnected. Expose both: drive nHALT low in PiTrex mode and use BA as "bus is ours".
-- VIA: `rtl/vectrex.vhd` (Gideon Zweijtzer's 6522, GPL-3) is fed from `cpu_addr`,
-  `cpu_do`, `via_write` and `via_read`, with `rising => cpu_e_fall`, `falling => cpu_e_rise`.
-  `via_write_accept = via_write and cpu_e_rise` also feeds the T2 frame-boundary
-  detector. Plan: introduce `bus_addr/bus_do/bus_rw` = player when (pitrex and BA)
-  else CPU, and use them for all the decodes (`via_cs`, `ram_cs`, `rom_cs`, `cart`, T2
-  detector). The player changes its outputs on the same `cpu_e_fall` edge the CPU uses, one
-  command per E period.
-- Inputs the ARM needs (the input block): `pot_x_1/y_1/x_2/y_2` (signed, as the comparator
-  uses them; mux = `via_pb_o(2:1)`, `compare = pot > signed(via_pa_o)`) and the PSG
-  port A input byte (buttons, active low) that `jt49_bus` sees on IOA.
-- DDR: `rtl/videodr0me_fb/vfb_ddr_arbiter.sv`, fixed priority readout > flush > fill >
-  composition > artwork upload > artwork readout. Add the PiTrex reader **between
-  composition and artwork upload**. The layout (`vfb_layout_pkg.sv`, 64-bit word addresses):
-  framebuffer 0x06000000-0x0654FFFF, artwork 0x06550000-0x065CFFFF, which is byte
-  0x30000000-0x32E7FFFF. Proposed PiTrex base: **byte 0x34000000 = word 0x06800000**
-  (to confirm with Videodr0me and against Main's own shmem use).
-- OSD: add `P3O[xx],PiTrex,Off,On;` to the System page using a free status bit (used
-  bits: 0-3, 7-12, 16-35, 39, 40, 47-50, 63, 64, 66-68, 116-123).
+## Presence handshake
+Agreed with Videodr0me: with the option Off nothing changes, and with it On nothing changes
+until a live program is present.
 
-## Core side (to build in a fork of the core)
-- OSD System menu: "PiTrex: Off/On". When on: hold the 6809 in HALT, reset VIA/PSG, and start
-  the ring reader.
-- Ring reader: a new client on the core's existing DDR arbiter, priority just above the artwork
-  loader. It fetches 256-byte bursts (32 commands) into a small FIFO (2 × 32 entries, refill when
-  half empty), counts down `delta` against the E-clock enable, then drives the VIA write port
-  exactly as a 6809 write cycle would. Load estimate: ~30k commands a frame is ~1,000 bursts a
-  frame, which is negligible.
-- Write the status block and the input block (from the pads it already reads) once per frame.
+- **PiTrex Mode Off:** the core makes no DDR accesses at all.
+- **PiTrex Mode On:** the core only *listens*. The 6809 keeps running (BIOS, cartridge) while
+  the core writes words 8-17, including the `"PTXC"` signature and a moving sequence number.
+- **Program start (read-only until confirmed):** `/tmp/CORENAME` must be `VECTREX`. The program
+  then waits, reading only, until word 11 shows `"PTXC"` and word 17 is moving. Only then does
+  it write the header: `wr_idx` starts at the core's `rd_idx`, then the heartbeat, then the
+  magic.
+- **Heartbeat:** the ARM bumps word 3 every frame and in every wait. The core accepts a sample
+  only if the magic is right, the high half matches `~low ^ "PTRX"`, and the low half differs
+  from the last accepted value. A leftover magic plus a stray write from another program will
+  not pass.
+- **Takeover:** on the first valid heartbeat the core resets the machine, holds the 6809 in
+  reset and starts fetching.
+- **Hand-back:** when the magic is cleared (normal exit, or SIGINT/SIGTERM/SIGHUP), or no valid
+  new heartbeat arrives for 100 ms (a crash), the core resets the machine and the 6809 runs
+  again.
+- **Watchdog on the ARM:** while running, the program checks that word 17 moves (within
+  500 ms) and that `/tmp/CORENAME` is still `VECTREX` (once a second). If either fails, it
+  exits without writing anything else.
 
-## Open questions
-1. VIA write port vs feeding the ramp logic directly: start with the VIA (exact and simplest);
-   the direct pipeline is an optimisation for later.
-2. The DDR map: read it from the source on Sunday (framebuffer + 4 overlay planes are taken).
-3. Sound: PSG writes go through VIA port A/B handshakes, so they are covered by WRITE. Check
-   that the PSG BDIR/BC1 sequencing timing is preserved.
-4. The PiTrex Linux build vs a bare-metal target on CPU1: start with Linux userspace pinned
-   to CPU1 (`taskset`).
+## ARM side (`pitrex/src/`)
+- **Stream time:** `ptx_core.c` keeps stream time in E cycles. Every write takes one cycle, and
+  the PiTrex library's delays (patched by `tools/patch_lib.py`) add to stream time instead of
+  busy-waiting.
+- **Shadow VIA:** T1/T2 counters and IFR are computed from stream time and the writes issued.
+  Ports and DDRs hold the last values written.
+- **Reads:**
+  - buttons (PSG register 14 through port A) come from the input block;
+  - the joystick comparator (port B bit 5) is `pot > DAC`, using the input block and the last
+    port A write.
+- **Pacing:** the program stays at most 2 frames ahead of `rd_idx`. The core's command FIFO
+  holds 128 entries, so "fetched" is close to "played", and input latency stays around two
+  frames.
+- **Backends:** `ptx_backend_mister.c` writes the DDR block through `/dev/mem`, and needs root.
+  `ptx_backend_file.c` writes the stream to a file for the PC harness (`tools/ptxplay`).
+
+## Core side (`rtl/pitrex/`)
+- **`pitrex_ddr.sv` (clk_125):** a read client and a write client on `vfb_ddr_arbiter`,
+  between composition and artwork upload in priority. It holds the presence logic and passes
+  commands through a 128-entry asynchronous FIFO.
+- **`pitrex_player.sv` (clk_sys, 24 MHz):** counts each `delta` on the E-clock enable, then
+  drives the bus on the falling-E edge the 6809 would use. In `vectrex.vhd` the CPU's address,
+  data and R/W outputs are multiplexed with the player's, so every downstream decode (VIA, RAM,
+  cartridge, the renderer's Timer 2 frame detector) is unchanged.
+- **OSD:** System > **PiTrex Mode** (status bit 36). Core Info shows the PiTrex build.
+
+## Frame boundaries
+Videodr0me's renderer starts a new displayed frame when VIA Timer 2 is reloaded, as the BIOS
+does in `Wait_Recal`. The PiTrex library does this every frame. A program that doesn't use
+the library (for example the UVMC2 runtime) must reload T2 once per frame, or the display
+keeps showing the previous image.

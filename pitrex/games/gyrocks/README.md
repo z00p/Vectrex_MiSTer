@@ -1,3 +1,18 @@
+# Gyrocks for PiTrex on MiSTer
+
+Carsten Wartmann's [Gyrocks](https://github.com/callimero/Gyrocks) (GPL-2), as included in the
+PiTrex tree, with these additions (marked in `gyrocks.c`; reproducible with
+`tools/patch_gyrocks.py` against the PiTrex copy):
+- the ship takes damage from rocks and enemies, with 3 lives and a short invulnerability after a hit;
+- vector explosions, plus PSG sound for shots and explosions;
+- game over, with button 1 to restart, and a ships counter.
+
+Controls: stick moves, **button 4** fires.
+
+The original README follows.
+
+---
+
 # Gyrocks
 A Vector Game For Oscilloscopes
 

@@ -8,10 +8,11 @@ With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everyt
 1. Download `PiTrex_MiSTer_B5_<date>.zip` from [Releases](https://github.com/z00p/Vectrex_MiSTer/releases) and unzip it onto the root of your MiSTer's SD card (`/media/fat`). It contains:
    - `_Unstable/Vectrex_PiTrex_B5_<date>.rbf`: the core with PiTrex mode;
    - `pitrex/`: the ARM programs and the launcher;
-   - `Scripts/PiTrex_*.sh`: one Scripts-menu entry per program, plus `PiTrex_Stop`;
+   - `Scripts/PiTrex_*.sh`: one Scripts-menu entry per program, plus Stop, Update and Uninstall;
    - `games/Vectrex/Overlays/`: overlays for VecBreak and VecDrive.
 2. On the MiSTer, open **Scripts** and pick a program, e.g. **PiTrex_VecDrive**. The launcher loads the core, switches PiTrex Mode on (OSD > System) and starts the program.
 3. To load a game's overlay, use OSD > Load Overlay. **PiTrex_Stop** ends the program and hands the Vectrex back to its BIOS.
+4. **PiTrex_Update** fetches the newest release and **PiTrex_Uninstall** removes it all again. If something doesn't work, see [Troubleshooting](pitrex/README.md#troubleshooting).
 
 ## Programs
 | Program | What it is |
