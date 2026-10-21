@@ -3,13 +3,14 @@
 # Remove PiTrex-on-MiSTer: the programs, the PiTrex cores in _Unstable, the overlays it
 # installed, its Scripts entries (this one last) and, if present, the optional OSD-loader
 # setup (pitrexd line in linux/user-startup.sh, log_file_entry from the MiSTer.ini backup).
-# Your Vectrex settings (config/VECTREX_v1.CFG) are left alone.
+# Your Vectrex settings (config/VECTREX_v1.CFG) are left alone. NOTE: files you added under
+# /media/fat/pitrex (e.g. a UVMC2 romset in pitrex/uvmc2/) are removed with it.
 [ -x /media/fat/Scripts/PiTrex_Stop.sh ] && /media/fat/Scripts/PiTrex_Stop.sh > /dev/null
 for p in $(ps | grep -v grep | grep pitrexd.sh | awk '{print $1}'); do kill "$p"; done
 
-rm -rf /media/fat/pitrex /media/fat/games/Vectrex/PiTrex
+rm -rf /media/fat/pitrex /media/fat/games/Vectrex/PiTrex "/media/fat/_PiTrex & UVMC2"
 rm -f /media/fat/_Unstable/Vectrex_PiTrex_B*.rbf
-rm -f /media/fat/games/Vectrex/Overlays/VecBreak.art /media/fat/games/Vectrex/Overlays/VecDrive.art
+rm -f /media/fat/games/Vectrex/Overlays/VecBreak.art /media/fat/games/Vectrex/Overlays/VecDrive.art /media/fat/games/Vectrex/Overlays/TacScan.art
 
 START=/media/fat/linux/user-startup.sh
 if grep -q pitrexd "$START" 2>/dev/null; then
@@ -26,4 +27,4 @@ if [ -f "$INI.pitrex-bak" ]; then
 fi
 
 echo "PiTrex removed."
-rm -f /media/fat/Scripts/PiTrex_*.sh
+rm -f /media/fat/Scripts/PiTrex_*.sh /media/fat/Scripts/UVMC2_*.sh

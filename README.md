@@ -2,26 +2,32 @@
 
 This is an **unofficial fork** of [Videodr0me's Vectrex core](https://github.com/MiSTer-devel/Vectrex_MiSTer) that adds **PiTrex mode**. [PiTrex](https://github.com/gtoal/pitrex) software runs on the DE10-Nano's own ARM processor and drives the Vectrex through the core, the way a Raspberry Pi drives a real Vectrex in a PiTrex cartridge. You don't need anything extra plugged in.
 
+The same route also runs games for the [UVMC2](https://github.com/tullulah/uvmc2-sdk) multicart, rebuilt for the ARM with the UVMC2 team's permission.
+
 With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everything below the line is his README and applies to this fork as well.
 
 ## Quick start
 1. Download `PiTrex_MiSTer_B5_<date>.zip` from [Releases](https://github.com/z00p/Vectrex_MiSTer/releases) and unzip it onto the root of your MiSTer's SD card (`/media/fat`). It contains:
    - `_Unstable/Vectrex_PiTrex_B5_<date>.rbf`: the core with PiTrex mode;
-   - `pitrex/`: the ARM programs and the launcher;
-   - `Scripts/PiTrex_*.sh`: one Scripts-menu entry per program, plus Stop, Update and Uninstall;
-   - `games/Vectrex/Overlays/`: overlays for VecBreak and VecDrive.
-2. On the MiSTer, open **Scripts** and pick a program, e.g. **PiTrex_VecDrive**. The launcher loads the core, switches PiTrex Mode on (OSD > System) and starts the program.
+   - `pitrex/`: the PiTrex and UVMC2 programs, the launcher and the menu helper;
+   - `Scripts/PiTrex_*.sh`, `Scripts/UVMC2_*.sh`: one Scripts-menu entry per program, plus Setup, Stop, Update and Uninstall;
+   - `games/Vectrex/Overlays/`: overlays for VecBreak, VecDrive and Tac/Scan.
+2. On the MiSTer, run **Scripts > PiTrex_Setup** once. It adds a **PiTrex & UVMC2** folder to the main menu.
+   Each entry loads the core, the game's overlay and the program in one go.
+   Or skip the setup and start programs from **Scripts** (e.g. **PiTrex_VecDrive**).
 3. To load a game's overlay, use OSD > Load Overlay. **PiTrex_Stop** ends the program and hands the Vectrex back to its BIOS.
 4. **PiTrex_Update** fetches the newest release and **PiTrex_Uninstall** removes it all again. If something doesn't work, see [Troubleshooting](pitrex/README.md#troubleshooting).
 
 ## Programs
 | Program | What it is |
 |---|---|
-| VecDrive | A pseudo-3D sunset racer: sea, desert and city sections, checkpoints, cars and trucks, engine sound or a synthwave track (button 3). Button 1 gas, button 2 brake. |
+| VecDrive | A pseudo-3D racer: four timed phases across nine scenery themes, a fork at the end of each phase to choose your route, hills and traffic. Button 1 gas, button 2 brake, button 3 music. |
 | VecBreak | A Breakout game with sound, an intro tune and an overlay. |
 | Gyrocks | Carsten Wartmann's Gyrocks (GPL-2) with ship damage, lives, explosions and sound added. Fire is button 4. |
 | Cube demo | The PiTrex rotating-cube demo. |
 | Selftest | Checks the link between the ARM and the core and prints the core's PiTrex build. |
+| UVMC2 Hello | The UVMC2 team's example game, running in UVMC2 mode. |
+| Tac/Scan | The UVMC2 team's port of Sega's 1982 arcade game. Build it yourself and supply your own romset: see [pitrex/UVMC2.md](pitrex/UVMC2.md). |
 
 ## More
 - How it works, building and the stream format: [pitrex/README.md](pitrex/README.md) and [pitrex/PROTOCOL.md](pitrex/PROTOCOL.md).

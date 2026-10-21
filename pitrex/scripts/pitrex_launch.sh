@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # PiTrex on MiSTer launcher (used by the "PiTrex - <game>.sh" entries in Scripts).
 # usage: pitrex_launch.sh <program> [args...]
 # Stops any running PiTrex program, starts the new one in the background (it
@@ -11,7 +12,7 @@ if [ -z "$CORE" ]; then echo "No Vectrex_PiTrex core found in /media/fat/_Unstab
 if [ ! -x "$PITREX/$PROG" ]; then echo "No program $PITREX/$PROG"; exit 1; fi
 
 # stop a running PiTrex program (it hands the Vectrex back cleanly on SIGTERM)
-for p in $(ps | grep -v grep | grep -v pitrex_launch | grep -E "(ptx_selftest|hello|cube|gyrocks|vecbreak|vecdrive)( |$)|/tmp/ptx/" | awk '{print $1}'); do
+for p in $(ps | grep -v grep | grep -v pitrex_launch | grep -E "/media/fat/pitrex/[^ ]+( |$)|/tmp/ptx/" | grep -v -E "pitrex_launch|pitrexd" | awk '{print $1}'); do
 	kill "$p" 2>/dev/null
 done
 sleep 1

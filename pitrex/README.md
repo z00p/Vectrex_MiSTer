@@ -6,6 +6,9 @@ on the console. PiTrex mode does the same on a MiSTer. The program runs on the D
 ARM processor, and the Vectrex core takes the place of the console. You don't need a Pi or a
 cartridge.
 
+The same route also runs games written for the **UVMC2** multicart, rebuilt for the ARM: see
+[UVMC2.md](UVMC2.md).
+
 With **PiTrex Mode** off (the default), the core behaves exactly like
 [Videodr0me's Vectrex core](https://github.com/MiSTer-devel/Vectrex_MiSTer), which this builds on.
 
@@ -22,13 +25,21 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    |---|---|
    | `_Unstable/Vectrex_PiTrex_<build>_<date>.rbf` | the Vectrex core with PiTrex mode |
    | `pitrex/` | the programs and the launcher |
-   | `Scripts/PiTrex_*.sh` | one Scripts-menu entry per program, plus Stop, Update and Uninstall |
-   | `games/Vectrex/Overlays/` | overlays for VecBreak and VecDrive |
+   | `Scripts/PiTrex_*.sh`, `Scripts/UVMC2_*.sh` | one Scripts-menu entry per program, plus Setup, Stop, Update and Uninstall |
+   | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive and Tac/Scan |
 
-Nothing else on the card is changed.
+   Unzipping changes nothing else on the card.
+3. **Recommended:** run Scripts > **PiTrex_Setup** once. It adds the **PiTrex & UVMC2** folder
+   to the main menu, where each entry loads the core, its overlay and the program in one go.
+   - It switches PiTrex Mode on and sets `log_file_entry=1` in `MiSTer.ini`, so the MiSTer
+     reports which file a menu entry loads. It keeps a backup of the ini.
+   - It starts a small helper, `pitrexd`, at boot.
+   - PiTrex_Uninstall undoes all of it.
 
 ## Playing
-- **Start a program:** OSD > **Scripts** > e.g. **PiTrex_VecDrive**.
+- **From the main menu** (after PiTrex_Setup): **PiTrex & UVMC2** > e.g. **VecDrive**. The
+  overlay loads automatically.
+- **From Scripts:** OSD > **Scripts** > e.g. **PiTrex_VecDrive**.
   - From any other core, the launcher loads the PiTrex core, switches PiTrex Mode on and
     starts the program.
   - If the Vectrex core is already running, it just switches programs.
@@ -38,11 +49,13 @@ Nothing else on the card is changed.
 
 | Program | Controls |
 |---|---|
-| **VecDrive**: pseudo-3D sunset racer with sea, desert and city sections, checkpoints, and cars and trucks | stick steers, button 1 gas (and start), button 2 brake, button 3 toggles the music |
+| **VecDrive**: pseudo-3D racer. Four timed phases across nine scenery themes, a fork at the end of each phase to choose your route, hills, traffic and the finish screen | stick steers, button 1 gas (and start), button 2 brake, button 3 toggles the music |
 | **VecBreak**: Breakout with sound and an intro tune | stick left/right moves the bat, button 1 serves and restarts |
 | **Gyrocks**: Carsten Wartmann's tunnel shooter, with damage, lives, explosions and sound added | stick moves, button 4 fires, button 1 restarts after game over |
 | **Cube demo**: the PiTrex rotating cube | none |
 | **Selftest**: checks the link to the core; shows the stick, the buttons and the core's build | stick and buttons |
+| **UVMC2 Hello**: the UVMC2 team's example game | stick steers, a button thrusts |
+| **Tac/Scan** (UVMC2 port, build it yourself; see [UVMC2.md](UVMC2.md)) | 1 fire, 2 grab, 3 coin, 4 start |
 
 The core's own pause button also pauses PiTrex programs.
 
@@ -59,7 +72,9 @@ The core's own pause button also pauses PiTrex programs.
 | Nothing happens from the Scripts menu | Check that the scripts are in `/media/fat/Scripts` and the programs in `/media/fat/pitrex`. Script names must not contain spaces. |
 | The picture freezes or stutters | Another heavy job is running on the ARM (e.g. an update or a network copy). Stop it, or run PiTrex_Stop and start the program again. |
 | SSH or the network can't reach the MiSTer | A VPN on your PC can block local network traffic. Turn it off, or allow local network access. |
-| You want to see what a program is doing | Its output goes to `/tmp/pitrex.log` on the MiSTer. |
+| A main-menu entry loads the core but the game doesn't start | Run Scripts > PiTrex_Setup (it starts `pitrexd` and sets `log_file_entry=1`), then try again. |
+| A UVMC2 picture looks too big or too small | Set `scale=<n>` in `/media/fat/pitrex/uvmc2.cfg` (default 120; larger means bigger). |
+| You want to see what a program is doing | Its output goes to `/tmp/pitrex.log` on the MiSTer (`/tmp/pitrexd.log` for menu starts). |
 
 Problems and suggestions: please use this fork's
 [Issues](https://github.com/z00p/Vectrex_MiSTer/issues), not Videodr0me's repository.
@@ -130,6 +145,7 @@ seed 5 (set in `Vectrex.qsf`) meets timing at all four corners. After a change, 
 - **The PiTrex project** (Kevin Koster, Malban, Graham Toal, James Churchill and others): the
   library and interface this targets, notably Kevin Koster's `pitrexio-gpio.c` API.
 - **Carsten Wartmann:** Gyrocks.
+- **The UVMC2 team** ([uvmc2-sdk](https://github.com/tullulah/uvmc2-sdk)): the UVMC2 runtime, beam model, libvpy and games, published here with their permission. See [UVMC2.md](UVMC2.md) for the full credits.
 - The analogue model in `ptxplay` follows vecx's.
 - The coding and testing were AI-assisted (Claude), with everything checked on real hardware.
 
