@@ -1,3 +1,34 @@
+# Vectrex for MiSTer, with PiTrex mode
+
+This is an **unofficial fork** of [Videodr0me's Vectrex core](https://github.com/MiSTer-devel/Vectrex_MiSTer) that adds **PiTrex mode**. [PiTrex](https://github.com/gtoal/pitrex) software runs on the DE10-Nano's own ARM processor and drives the Vectrex through the core, the way a Raspberry Pi drives a real Vectrex in a PiTrex cartridge. You don't need anything extra plugged in.
+
+With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everything below the line is his README and applies to this fork as well.
+
+## Quick start
+1. Download `PiTrex_MiSTer_B5_<date>.zip` from [Releases](https://github.com/z00p/Vectrex_MiSTer/releases) and unzip it onto the root of your MiSTer's SD card (`/media/fat`). It contains:
+   - `_Unstable/Vectrex_PiTrex_B5_<date>.rbf`: the core with PiTrex mode;
+   - `pitrex/`: the ARM programs and the launcher;
+   - `Scripts/PiTrex_*.sh`: one Scripts-menu entry per program, plus `PiTrex_Stop`;
+   - `games/Vectrex/Overlays/`: overlays for VecBreak and VecDrive.
+2. On the MiSTer, open **Scripts** and pick a program, e.g. **PiTrex_VecDrive**. The launcher loads the core, switches PiTrex Mode on (OSD > System) and starts the program.
+3. To load a game's overlay, use OSD > Load Overlay. **PiTrex_Stop** ends the program and hands the Vectrex back to its BIOS.
+
+## Programs
+| Program | What it is |
+|---|---|
+| VecDrive | A pseudo-3D sunset racer: sea, desert and city sections, checkpoints, cars and trucks, engine sound or a synthwave track (button 3). Button 1 gas, button 2 brake. |
+| VecBreak | A Breakout game with sound, an intro tune and an overlay. |
+| Gyrocks | Carsten Wartmann's Gyrocks (GPL-2) with ship damage, lives, explosions and sound added. Fire is button 4. |
+| Cube demo | The PiTrex rotating-cube demo. |
+| Selftest | Checks the link between the ARM and the core and prints the core's PiTrex build. |
+
+## More
+- How it works, building and the stream format: [pitrex/README.md](pitrex/README.md) and [pitrex/PROTOCOL.md](pitrex/PROTOCOL.md).
+- The PiTrex code in this fork (`pitrex/`, `rtl/pitrex/` and the PiTrex hooks) is GPL-2.0-or-later. Please report PiTrex issues on [this fork](https://github.com/z00p/Vectrex_MiSTer/issues), not to Videodr0me.
+- The core, renderer and everything else are Videodr0me's work. If you enjoy it, please support him: [buymeacoffee.com/videodr0me](https://buymeacoffee.com/videodr0me).
+
+---
+
 # Vectrex (1982) for MiSTer FPGA
 
 ![Fifteen Vectrex games](images/Vectrex-fifteen-games.png)
