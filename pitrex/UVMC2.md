@@ -9,7 +9,7 @@ Published with the permission of the UVMC2 team, who wrote the runtime, the beam
 and the games. Please credit them and link their SDK when you share builds.
 
 ## Playing
-- **UVMC2 Hello** (main menu > PiTrex & UVMC2, or Scripts > UVMC2_Hello): the team's example
+- **UVMC2 Hello** (main menu > PiTrex & UVMC2): the team's example
   game. Steer with the stick and thrust with a button, with a stick and button readout.
 - **Tac/Scan** (Sega 1982), the team's port with sampled sound. It isn't in the release (see
   below), so you build it yourself and supply your own files:

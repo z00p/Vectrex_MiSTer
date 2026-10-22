@@ -25,13 +25,13 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    |---|---|
    | `_Unstable/Vectrex_PiTrex_<build>_<date>.rbf` | the Vectrex core with PiTrex mode |
    | `pitrex/` | the programs and the launcher |
-   | `Scripts/PiTrex_*.sh`, `Scripts/UVMC2_*.sh` | one Scripts-menu entry per program, plus Setup, Stop, Update and Uninstall |
+   | `Scripts/PiTrex_*.sh` | Setup, Update, Stop and Uninstall |
    | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive and Tac/Scan |
 
    Unzipping changes nothing else on the card. In particular, **the official Vectrex core in
    `_Console` is not replaced or modified**: the PiTrex core is a separate file in `_Unstable`,
    so the normal Vectrex entry and its updates (e.g. from update_all) carry on as before.
-3. **Recommended:** run Scripts > **PiTrex_Setup** once. It adds the **PiTrex & UVMC2** folder
+3. **Required:** run Scripts > **PiTrex_Setup** once. It adds the **PiTrex & UVMC2** folder
    to the main menu, where each entry loads the core, its overlay and the program in one go.
    - It switches PiTrex Mode on and sets `log_file_entry=1` in `MiSTer.ini`, so the MiSTer
      reports which file a menu entry loads. It keeps a backup of the ini.
@@ -40,11 +40,10 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
 
 ## Playing
 - **From the main menu** (after PiTrex_Setup): **PiTrex & UVMC2** > e.g. **VecDrive**. The
-  overlay loads automatically.
-- **From Scripts:** OSD > **Scripts** > e.g. **PiTrex_VecDrive**.
-  - From any other core, the launcher loads the PiTrex core, switches PiTrex Mode on and
-    starts the program.
-  - If the Vectrex core is already running, it just switches programs.
+  core, the overlay and the program load in one go. Games aren't in the Scripts menu; it
+  only holds Setup, Update, Stop and Uninstall.
+- **From a shell (SSH):** `/media/fat/pitrex/pitrex_launch.sh vecdrive` loads the PiTrex core
+  if needed, switches PiTrex Mode on and starts the program.
 - **Overlays:** OSD > **Load Overlay**, then pick `VecDrive.art` or `VecBreak.art`.
 - **Stop:** Scripts > **PiTrex_Stop**. The Vectrex resets and runs its BIOS (or the loaded
   cartridge) again.
@@ -78,7 +77,7 @@ race, and button 3 cycles through the rest. None are included.
 | Symptom | Likely cause and fix |
 |---|---|
 | The program starts but the Vectrex just shows its BIOS screen | PiTrex Mode is off. OSD > System > **PiTrex Mode** = On; to keep it, OSD > (right) > **Save settings**. The launcher also switches it on when it loads the core. |
-| Nothing happens from the Scripts menu | Check that the scripts are in `/media/fat/Scripts` and the programs in `/media/fat/pitrex`. Script names must not contain spaces. |
+| The **PiTrex & UVMC2** folder is missing or a game isn't in it | Run Scripts > PiTrex_Setup. An entry only appears for a program that is in `/media/fat/pitrex` (Tac/Scan once you've built and copied it). |
 | The picture freezes or stutters | Another heavy job is running on the ARM (e.g. an update or a network copy). Stop it, or run PiTrex_Stop and start the program again. |
 | SSH or the network can't reach the MiSTer | A VPN on your PC can block local network traffic. Turn it off, or allow local network access. |
 | A main-menu entry loads the core but the game doesn't start | Run Scripts > PiTrex_Setup (it starts `pitrexd` and sets `log_file_entry=1`), then try again. |
@@ -144,7 +143,7 @@ seed 5 (set in `Vectrex.qsf`) meets timing at all four corners. After a change, 
 | `tests/` | `ptx_selftest.c` (bring-up without the library), `ptx_peek.c` (dumps the shared block) |
 | `games/vecdrive/`, `games/vecbreak/` | the two games, with their overlay generators (`make_overlay.py`) |
 | `games/gyrocks/` | Gyrocks with our additions (see its README) |
-| `scripts/` | the launcher and the Scripts-menu entries |
+| `scripts/` | the launcher, the menu builder, pitrexd and the Scripts-menu tools |
 | `tools/` | library patcher, build and run scripts, `ptxplay`, seed sweep and timing reports |
 | `../rtl/pitrex/` | the core side: `pitrex_ddr.sv` (ring reader) and `pitrex_player.sv` (bus player) |
 

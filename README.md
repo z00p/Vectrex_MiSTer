@@ -10,15 +10,14 @@ With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everyt
 1. Download `PiTrex_MiSTer_<build>_<date>.zip` (currently B6) from [Releases](https://github.com/z00p/Vectrex_MiSTer/releases) and unzip it onto the root of your MiSTer's SD card (`/media/fat`). It contains:
    - `_Unstable/Vectrex_PiTrex_<build>_<date>.rbf`: the core with PiTrex mode, including (from B6) a 32 kHz PCM sound channel that programs can mix in next to the Vectrex's own sound;
    - `pitrex/`: the PiTrex and UVMC2 programs, the launcher and the menu helper;
-   - `Scripts/PiTrex_*.sh`, `Scripts/UVMC2_*.sh`: one Scripts-menu entry per program, plus Setup, Stop, Update and Uninstall;
+   - `Scripts/PiTrex_*.sh`: Setup, Update, Stop and Uninstall;
    - `games/Vectrex/Overlays/`: overlays for VecBreak, VecDrive and Tac/Scan.
 
    **Your official Vectrex core is not touched.** The PiTrex core is a separate file in `_Unstable`;
    the MiSTer-devel Vectrex core in `_Console` (as installed by update_all) stays exactly as it is,
    and updates to it carry on as normal.
-2. On the MiSTer, run **Scripts > PiTrex_Setup** once. It adds a **PiTrex & UVMC2** folder to the main menu.
+2. On the MiSTer, run **Scripts > PiTrex_Setup** once (required). It adds a **PiTrex & UVMC2** folder to the main menu.
    Each entry loads the core, the game's overlay and the program in one go.
-   Or skip the setup and start programs from **Scripts** (e.g. **PiTrex_VecDrive**).
 3. To load a game's overlay, use OSD > Load Overlay. **PiTrex_Stop** ends the program and hands the Vectrex back to its BIOS.
 4. **PiTrex_Update** fetches the newest release and **PiTrex_Uninstall** removes it all again. If something doesn't work, see [Troubleshooting](pitrex/README.md#troubleshooting).
 
