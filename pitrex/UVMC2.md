@@ -11,6 +11,12 @@ and the games. Please credit them and link their SDK when you share builds.
 ## Playing
 - **UVMC2 Hello** (main menu > PiTrex & UVMC2): the team's example
   game. Steer with the stick and thrust with a button, with a stick and button readout.
+- **UVMC2 Playroom**: the team's showcase. A wireframe figure with a 13-bone skeleton walks a
+  hub; four doors lead to four rooms, each a small game built round part of the SDK: a crate
+  tower to shoot apart, soft bodies, a shape that breaks up, and a flight over hills. Stereo
+  sound is mixed to mono for the PCM channel.
+- **UVMC2 FX demo**: the team's effects demo. Shoot a wireframe shape and it comes apart from
+  where it was hit.
 - **Tac/Scan** (Sega 1982), the team's port with sampled sound. It isn't in the release (see
   below), so you build it yourself and supply your own files:
   1. Build it: `tools/build_tacscan.sh` (needs `upstream/uvmc2-starter-kit`).

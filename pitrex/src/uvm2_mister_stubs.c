@@ -59,6 +59,17 @@ void uvm2_config_game(const char *name, unsigned settings) { (void)name; (void)s
 int  uvm2_jack_init(void) { return ptx_audio_ready(); }
 int  uvm2_jack_space(void) { return (int)ptx_audio_space(); }
 void uvm2_jack_write(const int16_t *s, int n) { if (n > 0) ptx_audio_write(s, (uint32_t)n); }
+/* stereo games: the PCM channel is mono, so left and right are averaged */
+void uvm2_jack_write_lr(const int16_t *l, const int16_t *r, int n)
+{
+	int16_t m[256];
+	while (n > 0) {
+		int k = n > 256 ? 256 : n;
+		for (int i = 0; i < k; i++) m[i] = (int16_t)(((int32_t)l[i] + r[i]) >> 1);
+		ptx_audio_write(m, (uint32_t)k);
+		l += k; r += k; n -= k;
+	}
+}
 
 /* PSRAM: games address it through overridable macros (src/uvmc2_psram.h points them here). */
 unsigned char uvmc2_psram[4u << 20];

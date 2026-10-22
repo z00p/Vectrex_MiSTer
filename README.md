@@ -30,6 +30,8 @@ With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everyt
 | Cube demo | The PiTrex rotating-cube demo. |
 | Selftest | Checks the link between the ARM and the core and prints the core's PiTrex build. |
 | UVMC2 Hello | The UVMC2 team's example game, running in UVMC2 mode. |
+| UVMC2 Playroom | The UVMC2 team's showcase: a wireframe figure with a 13-bone skeleton walks a hub with four doors, and each room is a small game built on part of their SDK. |
+| UVMC2 FX demo | The UVMC2 team's effects demo: shoot a wireframe shape and it comes apart from where it was hit. |
 | Tac/Scan | The UVMC2 team's port of Sega's 1982 arcade game. Build it yourself and supply your own romset and samples: see [pitrex/UVMC2.md](pitrex/UVMC2.md). On a B6 core its samples play at full quality through the PCM channel. |
 
 ## More

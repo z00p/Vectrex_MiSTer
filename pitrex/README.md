@@ -56,6 +56,8 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
 | **Cube demo**: the PiTrex rotating cube | none |
 | **Selftest**: checks the link to the core; shows the stick, the buttons and the core's build | stick and buttons |
 | **UVMC2 Hello**: the UVMC2 team's example game | stick steers, a button thrusts |
+| **UVMC2 Playroom**: the UVMC2 team's showcase, a walking figure, a hub and four rooms | stick up walks (all the way up runs), left/right turns, button 2 waves; walk into a door to play |
+| **UVMC2 FX demo**: shoot a wireframe shape and watch it come apart | stick aims, 1 fires, 2 blows it apart, 3 dissolves it, 4 starts again |
 | **Tac/Scan** (UVMC2 port, build it yourself; see [UVMC2.md](UVMC2.md)) | 1 fire, 2 grab, 3 coin, 4 start |
 
 The core's own pause button also pauses PiTrex programs.

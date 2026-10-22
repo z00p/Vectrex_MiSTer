@@ -44,5 +44,7 @@ Gyrocks|gyrocks|
 Cube demo|cube|
 PiTrex Selftest|ptx_selftest|
 UVMC2 Hello|hello_uvmc2|
+UVMC2 Playroom|playroom|
+UVMC2 FX demo|fx_demo|
 UVMC2 Tac Scan|tacscan|UVMC2_DIR=/media/fat/pitrex/uvmc2/tacscan AAE_ROMZIP=/media/fat/pitrex/uvmc2/tacscan/tacscan.zip UVMC2_MUTE=0,1,2
 EOF
