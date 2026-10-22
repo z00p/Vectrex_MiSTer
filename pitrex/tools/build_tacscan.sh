@@ -11,6 +11,6 @@ K=upstream/uvmc2-starter-kit
 G=$K/game/tacscan
 A=$K/third_party/aae
 export UVM2_HZ=0
-export UVMC2_CFLAGS="-std=gnu11 -DMZ80_IDLE_SKIP -DVPY_RP2350 -DCCNT0(x)=do{}while(0) -include $G/src/aae_compat.h -I$G/src -I$A"
-exec sh tools/build_uvmc2_game.sh tacscan $G/src/main.c $G/src/aae_stubs.c $G/src/aae_machine.c $G/src/samples.c $G/src/ts_audio.c $G/src/ts_jack.c \
+export UVMC2_CFLAGS="-std=gnu11 -DMZ80_IDLE_SKIP -DVPY_RP2350 -DCCNT0(x)=do{}while(0) -include $G/src/aae_compat.h -include src/uvmc2_psram.h -I$G/src -I$A"
+exec sh tools/build_uvmc2_game.sh tacscan $G/src/main.c $G/src/aae_stubs.c $G/src/aae_machine.c $G/src/samples.c $G/src/ts_audio.c build/uvmc2/ts_jack.c \
   $A/aae_romload.c $A/aae_romload_gi.c $A/romzip.c $A/puff.c $A/SegaG80.c $A/SegaG80snd.c $A/mz80/mz80.c $A/cpuintrf.c $A/cpu_control.c $A/rand.c $A/acommon.c

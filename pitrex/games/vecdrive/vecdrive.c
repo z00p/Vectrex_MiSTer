@@ -22,6 +22,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <dirent.h>
 
 #include <pitrex/pitrexio-gpio.h>
 #include <vectrex/vectrexInterface.h>
@@ -846,9 +848,106 @@ static void psg_tone(int ch, int period)
 	v_writePSG(ch * 2 + 1, (period >> 8) & 0x0F);
 }
 
+/* ---- user music: .ay14 register dumps (AY R0..R13, one 14-byte frame per
+   50 Hz tick, recorded at a 1 MHz AY clock). An optional <name>.loop holds
+   "loop=<frame>" (default 0). Files are looked up in MUSIC_DIR (the env var
+   VD_MUSIC_DIR overrides it) and a dump is loaded when selected. ---- */
+#define MUSIC_DIR   "/media/fat/pitrex/music"
+#define MAX_TRACKS  16
+static struct { char path[300]; char name[28]; } track[MAX_TRACKS];     /* path first: qsort sorts on it */
+static int n_tracks;
+static unsigned char *dump;                       /* the selected dump, if any */
+static long dump_frames, dump_pos, dump_loop;
+static int chip_r13;                              /* what the chip's envelope shape register holds */
+
+static int track_cmp(const void *a, const void *b)
+{
+	return strcmp((const char *)a, (const char *)b);
+}
+
+static void scan_music(void)
+{
+	const char *dir = getenv("VD_MUSIC_DIR");
+	DIR *d;
+	struct dirent *e;
+	if (!dir || !*dir) dir = MUSIC_DIR;
+	if (!(d = opendir(dir))) return;
+	while ((e = readdir(d)) != NULL && n_tracks < MAX_TRACKS) {
+		size_t len = strlen(e->d_name);
+		if (len < 6 || len > 120 || strcasecmp(e->d_name + len - 5, ".ay14") != 0) continue;
+		snprintf(track[n_tracks].path, sizeof track[0].path, "%s/%s", dir, e->d_name);
+		n_tracks++;
+	}
+	closedir(d);
+	qsort(track, n_tracks, sizeof track[0], track_cmp);
+	for (int i = 0; i < n_tracks; i++) {                   /* banner name: base name, upper case */
+		const char *b = strrchr(track[i].path, '/');
+		int k = 0;
+		b = b ? b + 1 : track[i].path;
+		for (; b[k] && b[k] != '.' && k < (int)sizeof track[0].name - 1; k++)
+			track[i].name[k] = (b[k] >= 'a' && b[k] <= 'z') ? b[k] - 32 : b[k];
+		track[i].name[k] = 0;
+	}
+}
+
+static void load_track(int i)
+{
+	char lp[310], line[64];
+	FILE *f;
+	free(dump); dump = NULL; dump_frames = dump_pos = dump_loop = 0;
+	if (i < 0 || i >= n_tracks || !(f = fopen(track[i].path, "rb"))) return;
+	fseek(f, 0, SEEK_END);
+	long size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	if (size >= 14 && (dump = malloc((size_t)size)) != NULL) {
+		if (fread(dump, 1, (size_t)size, f) == (size_t)size) dump_frames = size / 14;
+		else { free(dump); dump = NULL; }
+	}
+	fclose(f);
+	snprintf(lp, sizeof lp, "%s", track[i].path);
+	strcpy(strrchr(lp, '.'), ".loop");
+	if ((f = fopen(lp, "r")) != NULL) {
+		while (fgets(line, sizeof line, f))
+			if (strncmp(line, "loop=", 5) == 0) dump_loop = atol(line + 5);
+		fclose(f);
+	}
+	if (dump_loop < 0 || dump_loop >= dump_frames) dump_loop = 0;
+}
+
+/* one 50 Hz tick of the dump, rescaled from the 1 MHz CPC clock to the
+   Vectrex's 1.5 MHz: periods x 3/2 (rounded, clamped to their field widths) */
+static int x32(int v, int max) { v = (v * 3 + 1) / 2; return v > max ? max : v; }
+
+static void dump_tick(void)
+{
+	const unsigned char *r = dump + dump_pos * 14;
+	int out[14], i;
+	for (i = 0; i < 3; i++) {                        /* tone periods, 12 bit */
+		int v = x32(r[i * 2] | ((r[i * 2 + 1] & 0x0F) << 8), 0x0FFF);
+		out[i * 2] = v & 0xFF; out[i * 2 + 1] = v >> 8;
+	}
+	out[6] = x32(r[6] & 0x1F, 0x1F);                 /* noise, 5 bit */
+	out[7] = r[7] & 0x3F;                            /* IOA stays an input; bit 7 clear too */
+	out[8] = r[8] & 0x1F; out[9] = r[9] & 0x1F; out[10] = r[10] & 0x1F;
+	{
+		int v = x32(r[11] | (r[12] << 8), 0xFFFF);   /* envelope period, 16 bit */
+		out[11] = v & 0xFF; out[12] = v >> 8;
+	}
+	out[13] = r[13] & 0x0F;
+	for (i = 0; i < 13; i++) v_writePSG(i, out[i]);
+	if (out[13] != chip_r13) { v_writePSG(13, out[13]); chip_r13 = out[13]; }   /* a write restarts the envelope */
+#ifdef VD_MUSIC_TRACE
+	fprintf(stderr, "M %ld", dump_pos);
+	for (i = 0; i < 14; i++) fprintf(stderr, " %d", out[i]);
+	fprintf(stderr, "\n");
+#endif
+	if (++dump_pos >= dump_frames) dump_pos = dump_loop;
+}
+
 static int beep_frames;
 static void beep(int period, int frames)
 {
+	if (music_mode >= 2) return;                     /* a playing dump owns all three channels */
 	psg_tone(2, period);                         /* channel C for effects */
 	v_writePSG(10, 0x0D);
 	beep_frames = frames;
@@ -856,6 +955,15 @@ static void beep(int period, int frames)
 
 static void sound_tick(int offroad)
 {
+	if (music_mode >= 2) {                           /* user dump: no engine, no effects */
+		if (dump && state != ATTRACT) {
+			dump_tick();
+		} else {
+			v_writePSG(7, 0x3F);
+			v_writePSG(8, 0); v_writePSG(9, 0); v_writePSG(10, 0);
+		}
+		return;
+	}
 	int noise = offroad && speed > 0 && state == RACE;
 	int mixer = 0x3F & ~0x01;                    /* tone A on */
 	if (music_mode) mixer &= ~0x02;              /* tone B (bass) */
@@ -920,6 +1028,7 @@ static void place_cars(float from)
 
 static void reset_race(void)
 {
+	dump_pos = 0;                                   /* a dump restarts with every race */
 	pos_z = 0; speed = 0; player_x = 0; sun_x = 0; sky_x = 0; hz_off = 0; hz = HORIZON; sky_w = 1;
 	time_left = ph_time[1]; race_frames = 0;
 #ifdef VD_START_TIME
@@ -1139,6 +1248,8 @@ int main(int argc, char *argv[])
 	v_setName("vecdrive");
 	v_init();
 	v_setRefresh(50);
+	scan_music();
+	if (n_tracks) { music_mode = 2; load_track(0); }   /* a soundtrack, if there is one, is the default */
 	reset_race();
 	state = ATTRACT;
 #ifdef VD_START_PHASE
@@ -1162,8 +1273,9 @@ int main(int argc, char *argv[])
 		btn_prev = currentButtonState;
 
 		if (pressed & 0x04) {                        /* button 3: engine / music */
-			music_mode = !music_mode;
-			show_banner(music_mode ? "MUSIC" : "ENGINE", 60);
+			music_mode = (music_mode + 1) % (2 + n_tracks);   /* ENGINE, SYNTH LOOP, each dump */
+			if (music_mode >= 2) load_track(music_mode - 2);
+			show_banner(music_mode >= 2 ? track[music_mode - 2].name : music_mode ? "MUSIC" : "ENGINE", 60);
 		}
 		if ((state == ATTRACT || (state == TIMEUP && state_timer <= 0)) && (pressed & 0x01)) {
 			reset_race();

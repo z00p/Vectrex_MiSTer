@@ -47,9 +47,10 @@ package vfb_layout_pkg;
 	localparam logic [28:0] VFB_FRAMEBUFFER_LAST = 29'h0654ffff;
 	localparam logic [28:0] VFB_ARTWORK_BASE = 29'h06550000;
 	localparam logic [28:0] VFB_ARTWORK_LAST = 29'h065cffff;
-	// PiTrex command ring shared with the HPS (byte 0x34000000): header + 64K entries.
+	// PiTrex area shared with the HPS (byte 0x34000000): header, 64K-entry command ring,
+	// then (B6) the 8K-word PCM audio ring.
 	localparam logic [28:0] VFB_PITREX_BASE = 29'h06800000;
-	localparam logic [28:0] VFB_PITREX_LAST = 29'h068101ff;
+	localparam logic [28:0] VFB_PITREX_LAST = 29'h068121ff;
 
 	function automatic logic [28:0] vfb_buffer_base(
 		input logic [2:0] index

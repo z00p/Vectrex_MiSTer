@@ -7,8 +7,8 @@ The same route also runs games for the [UVMC2](https://github.com/tullulah/uvmc2
 With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everything below the line is his README and applies to this fork as well.
 
 ## Quick start
-1. Download `PiTrex_MiSTer_B5_<date>.zip` from [Releases](https://github.com/z00p/Vectrex_MiSTer/releases) and unzip it onto the root of your MiSTer's SD card (`/media/fat`). It contains:
-   - `_Unstable/Vectrex_PiTrex_B5_<date>.rbf`: the core with PiTrex mode;
+1. Download `PiTrex_MiSTer_<build>_<date>.zip` (currently B6) from [Releases](https://github.com/z00p/Vectrex_MiSTer/releases) and unzip it onto the root of your MiSTer's SD card (`/media/fat`). It contains:
+   - `_Unstable/Vectrex_PiTrex_<build>_<date>.rbf`: the core with PiTrex mode, including (from B6) a 32 kHz PCM sound channel that programs can mix in next to the Vectrex's own sound;
    - `pitrex/`: the PiTrex and UVMC2 programs, the launcher and the menu helper;
    - `Scripts/PiTrex_*.sh`, `Scripts/UVMC2_*.sh`: one Scripts-menu entry per program, plus Setup, Stop, Update and Uninstall;
    - `games/Vectrex/Overlays/`: overlays for VecBreak, VecDrive and Tac/Scan.
@@ -21,13 +21,13 @@ With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everyt
 ## Programs
 | Program | What it is |
 |---|---|
-| VecDrive | A pseudo-3D racer: four timed phases across nine scenery themes, a fork at the end of each phase to choose your route, hills and traffic. Button 1 gas, button 2 brake, button 3 music. |
+| VecDrive | A pseudo-3D racer: four timed phases across nine scenery themes, a fork at the end of each phase to choose your route, hills and traffic. Button 1 gas, button 2 brake, button 3 cycles the sound and music; you can add your own AY music (see [pitrex/README.md](pitrex/README.md#playing)). |
 | VecBreak | A Breakout game with sound, an intro tune and an overlay. |
 | Gyrocks | Carsten Wartmann's Gyrocks (GPL-2) with ship damage, lives, explosions and sound added. Fire is button 4. |
 | Cube demo | The PiTrex rotating-cube demo. |
 | Selftest | Checks the link between the ARM and the core and prints the core's PiTrex build. |
 | UVMC2 Hello | The UVMC2 team's example game, running in UVMC2 mode. |
-| Tac/Scan | The UVMC2 team's port of Sega's 1982 arcade game. Build it yourself and supply your own romset: see [pitrex/UVMC2.md](pitrex/UVMC2.md). |
+| Tac/Scan | The UVMC2 team's port of Sega's 1982 arcade game. Build it yourself and supply your own romset and samples: see [pitrex/UVMC2.md](pitrex/UVMC2.md). On a B6 core its samples play at full quality through the PCM channel. |
 
 ## More
 - How it works, building and the stream format: [pitrex/README.md](pitrex/README.md) and [pitrex/PROTOCOL.md](pitrex/PROTOCOL.md).

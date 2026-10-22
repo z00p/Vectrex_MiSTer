@@ -27,16 +27,32 @@ renderer's framebuffer and artwork areas. Offsets below are in 64-bit words.
 | 1 | ARM | ring size as log2 of the entry count (16) |
 | 2 | ARM | `wr_idx`: entries written so far (free-running, 64-bit) |
 | 3 | ARM | heartbeat: bits 31..0 counter, bits 63..32 = `~counter ^ "PTRX"` |
+| 4 | ARM | B6: audio `wr`: PCM words written (free-running; the core uses bits 13..0) |
 | 8 | core | `rd_idx`: entries fetched so far |
 | 9 | core | stream time in E cycles |
 | 10 | core | bits 31..0 frames, bits 63..32 underruns |
 | 11 | core | bits 31..0 signature `"PTXC"` (`0x43585450`), bits 39..32 build number |
+| 12 | core | B6: audio `rd`: PCM words fetched, 14 bits (wraps at 16,384) |
 | 16 | core | input: x1, y1, x2, y2 (signed 8-bit pots), PSG port A (buttons, active low), pad bits |
 | 17 | core | input sequence number (changes every 0.5 ms while the core is listening) |
 | 0x200 | ARM | the command ring: 65,536 entries of 64 bits |
+| 0x10200 | ARM | B6: the PCM audio ring: 8,192 words, each four 16-bit signed samples (first in bits 15..0) |
 
 The core polls the header every 2 µs when idle, fetches up to 32 commands per 256-byte burst,
 and writes the status and input words every 0.5 ms.
+
+The renderer's DDR arbiter only lets PiTrex reach `VFB_PITREX_BASE`..`VFB_PITREX_LAST`
+(`rtl/videodr0me_fb/vfb_layout_pkg.sv`); accesses outside it are dropped and reads return
+zeros. B6 widens it to cover the audio ring. Anything added to this block must widen it too.
+
+### Audio (B6 and later)
+Mono 16-bit PCM at 32 kHz goes straight into the core's mixer, next to the Vectrex's own
+sound. The ARM keeps about 100 ms queued: it writes samples into the ring, then word 4. The
+core fetches up to 16 words per burst into a 64-word FIFO and plays one sample every 750
+cycles of the 24 MHz clock; if the FIFO runs dry it holds the last sample. The PCM channel
+is mixed at half scale and saturated, only while a program is active. The distance between
+`wr` and `rd` is taken modulo 16,384. A core without it (build < 6) simply ignores the ring:
+`ptx_audio_ready()` tells a program whether it can use it.
 
 ## Command word
 ```
@@ -94,6 +110,8 @@ until a live program is present.
 - **Pacing:** the program stays at most 2 frames ahead of `rd_idx`. The core's command FIFO
   holds 128 entries, so "fetched" is close to "played", and input latency stays around two
   frames.
+- **Audio (B6):** `ptx_audio_ready()`, `ptx_audio_space()` and `ptx_audio_write()` in
+  `ptx_backend_mister.c`; `games/tonetest` is a two-minute test tone.
 - **Backends:** `ptx_backend_mister.c` writes the DDR block through `/dev/mem`, and needs root.
   `ptx_backend_file.c` writes the stream to a file for the PC harness (`tools/ptxplay`).
 
@@ -105,6 +123,7 @@ until a live program is present.
   drives the bus on the falling-E edge the 6809 would use. In `vectrex.vhd` the CPU's address,
   data and R/W outputs are multiplexed with the player's, so every downstream decode (VIA, RAM,
   cartridge, the renderer's Timer 2 frame detector) is unchanged.
+- **`pitrex_audio.sv` (clk_sys, B6):** plays the PCM channel from its FIFO at 32 kHz.
 - **OSD:** System > **PiTrex Mode** (status bit 36). Core Info shows the PiTrex build.
 
 ## Frame boundaries

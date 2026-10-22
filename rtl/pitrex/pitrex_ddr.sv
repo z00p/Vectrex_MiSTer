@@ -13,10 +13,13 @@
 //   word 8      rd_idx                       core
 //   word 9      core_cycles (stream time)    core
 //   word 10     {underruns, frames}          core
+//   word 4      audio wr_idx (words)         ARM (B6)
 //   word 11     {0, build, "PTXC"}           core (identifies the core build)
+//   word 12     audio rd_idx (words fetched) core (B6)
 //   word 16     {pad, psg_ioa, y2, x2, y1, x1}  core
 //   word 17     {0, seq}                     core
 //   word 0x200  ring, 65536 entries
+//   word 0x10200 audio ring, 8192 words of four 16-bit samples (32 kHz) (B6)
 // ============================================================================
 
 `default_nettype none
@@ -52,6 +55,11 @@ module pitrex_ddr #(
 	output logic [63:0] fifo_wr_data,
 	input  wire         fifo_almost_full,  // fewer than one burst free
 
+	// audio FIFO write side (PCM ring, four 16-bit samples per word)
+	output logic        aud_fifo_wr_en,
+	output logic [63:0] aud_fifo_wr_data,
+	input  wire         aud_fifo_almost_full,
+
 	// snapshot from the machine domain (held stable between toggles)
 	input  wire [47:0]  snap_cycles,
 	input  wire [15:0]  snap_frames,
@@ -67,8 +75,13 @@ localparam integer      RING_LOG2 = 16;
 localparam logic [15:0] POLL_GAP  = 16'd250;        // 2 us between idle polls
 localparam logic [15:0] STATUS_GAP = 16'd62500;     // 0.5 ms between status writes
 
-typedef enum logic [2:0] {
-	S_IDLE, S_HDR_REQ, S_HDR_DATA, S_RING_REQ, S_RING_DATA, S_STAT_REQ, S_STAT_DATA, S_SETTLE
+// PCM audio ring (B6): after the command ring, 8192 words of four samples each
+localparam logic [28:0] AUD_BASE = PTX_BASE + 29'h10200;
+localparam integer      AUD_LOG2 = 13;
+
+typedef enum logic [3:0] {
+	S_IDLE, S_HDR_REQ, S_HDR_DATA, S_RING_REQ, S_RING_DATA, S_STAT_REQ, S_STAT_DATA, S_SETTLE,
+	S_AUD_REQ, S_AUD_DATA
 } state_t;
 state_t state = S_IDLE;
 
@@ -119,7 +132,21 @@ always_ff @(posedge clk) begin
 	n_fetch_q <= ({11'd0, n_avail} > to_wrap) ? to_wrap[5:0] : n_avail;
 end
 
-// status burst: words 8..17 (10 beats); byte enables off on words 11..15.
+// audio fetch size: min(16, available, words before the audio ring wraps), registered
+logic [13:0] aud_rd = '0;          // words fetched
+logic [13:0] aud_wr_lo = '0;       // ARM's audio write index (words), low bits
+logic [13:0] aud_avail_q = '0;
+logic [4:0]  aud_n_q = '0;
+logic [4:0]  aud_n = '0, aud_left = '0;
+wire  [13:0] aud_avail_d = aud_wr_lo - aud_rd;
+wire  [13:0] aud_to_wrap = 14'h2000 - {1'b0, aud_rd[AUD_LOG2-1:0]};
+wire  [4:0]  aud_n_avail = (aud_avail_d > 14'd16) ? 5'd16 : aud_avail_d[4:0];
+always_ff @(posedge clk) begin
+	aud_avail_q <= aud_avail_d;
+	aud_n_q     <= ({9'd0, aud_n_avail} > aud_to_wrap) ? aud_to_wrap[4:0] : aud_n_avail;
+end
+
+// status burst: words 8..17 (10 beats); byte enables off on words 13..15.
 // The arbiter takes DIN combinationally and pulses wr_advance per accepted beat.
 logic [3:0] wbeat = '0;
 always_comb begin
@@ -130,6 +157,7 @@ always_comb begin
 		4'd1: wr_data = {16'd0, cap_cycles};
 		4'd2: wr_data = {16'd0, cap_underruns, 16'd0, cap_frames};
 		4'd3: wr_data = {24'd0, BUILD, 32'h43585450};   // "PTXC"
+		4'd4: wr_data = {50'd0, aud_rd};                // audio words fetched
 		4'd8: wr_data = {24'd0, cap_ioa, cap_pots};
 		4'd9: wr_data = {32'd0, seq};
 		default: wr_be = 8'h00;
@@ -138,6 +166,7 @@ end
 
 always_ff @(posedge clk) begin
 	fifo_wr_en <= 1'b0;
+	aud_fifo_wr_en <= 1'b0;
 	if (poll_timer != 0)   poll_timer <= poll_timer - 1'd1;
 	if (status_timer != 0) status_timer <= status_timer - 1'd1;
 	else                   status_due <= 1'b1;
@@ -152,6 +181,8 @@ always_ff @(posedge clk) begin
 		wr_ready   <= 1'b0;
 		rd_idx     <= '0;
 		wr_lo      <= '0;
+		aud_rd     <= '0;
+		aud_wr_lo  <= '0;
 		magic_ok   <= 1'b0;
 		present    <= 1'b0;
 		hb_timer   <= '0;
@@ -165,6 +196,13 @@ always_ff @(posedge clk) begin
 					wbeat       <= '0;
 					wr_ready    <= 1'b1;
 					state       <= S_STAT_REQ;
+				end else if (magic_ok && present && aud_avail_q != 0 && !aud_fifo_almost_full) begin
+					rd_addr     <= AUD_BASE + {16'd0, aud_rd[AUD_LOG2-1:0]};
+					rd_burstcnt <= {3'd0, aud_n_q};
+					aud_n       <= aud_n_q;
+					aud_left    <= aud_n_q;
+					rd_ready    <= 1'b1;
+					state       <= S_AUD_REQ;
 				end else if (magic_ok && present && avail_q != 0 && !fifo_almost_full) begin
 					rd_addr     <= RING_BASE + {13'd0, rd_idx[RING_LOG2-1:0]};
 					rd_burstcnt <= {2'd0, n_fetch_q};
@@ -174,7 +212,7 @@ always_ff @(posedge clk) begin
 					state       <= S_RING_REQ;
 				end else if (poll_timer == 0) begin
 					rd_addr     <= PTX_BASE;
-					rd_burstcnt <= 8'd4;
+					rd_burstcnt <= 8'd5;          // words 0..4 (4 = audio write index)
 					beat        <= '0;
 					rd_ready    <= 1'b1;
 					state       <= S_HDR_REQ;
@@ -197,8 +235,22 @@ always_ff @(posedge clk) begin
 						hb_timer <= HB_TIMEOUT;
 						present  <= 1'b1;
 					end
+				end
+				if (beat == 3'd4) begin
+					aud_wr_lo  <= rd_data[13:0];
 					poll_timer <= POLL_GAP;
 					state      <= S_SETTLE;
+				end
+			end
+
+			S_AUD_REQ: if (rd_grant) begin rd_ready <= 1'b0; state <= S_AUD_DATA; end
+			S_AUD_DATA: if (rd_data_valid) begin
+				aud_fifo_wr_en   <= 1'b1;
+				aud_fifo_wr_data <= rd_data;
+				aud_left         <= aud_left - 1'd1;
+				if (aud_left == 5'd1) begin
+					aud_rd <= aud_rd + {9'd0, aud_n};
+					state  <= S_SETTLE;
 				end
 			end
 

@@ -49,45 +49,94 @@ int uvm2_config_load(void)
 int      uvm2_config_wizard(void) { return 0; }
 void     rust_eh_personality(void) {}
 
-/* Sound: 0 = the cartridge's own audio jack, 1 = the console's chip. There is no jack here,
- * so games that offer both use the Vectrex's PSG and DAC. */
+/* Sound: 0 = the cartridge's own audio jack, 1 = the console's chip. On a B6 core the "jack"
+ * is the core's PCM channel (16-bit, 32 kHz, the jack's own rate), chosen in main() below;
+ * older cores use the Vectrex's PSG. UVMC2_AUDIO=psg forces the PSG. */
 volatile int32_t uvm2_setting_audio = 1;
 void uvm2_config_game(const char *name, unsigned settings) { (void)name; (void)settings; }
 
-/* The cartridge's audio jack, PSRAM and SD card: not present. */
-int  uvm2_jack_init(void) { return 0; }
-int  uvm2_jack_space(void) { return 0; }
-void uvm2_jack_write(const int16_t *s, int n) { (void)s; (void)n; }
-int  uvm2_psram_ready = 0;
+/* The cartridge's audio jack: the core's PCM channel (B6). */
+int  uvm2_jack_init(void) { return ptx_audio_ready(); }
+int  uvm2_jack_space(void) { return (int)ptx_audio_space(); }
+void uvm2_jack_write(const int16_t *s, int n) { if (n > 0) ptx_audio_write(s, (uint32_t)n); }
+
+/* PSRAM: games address it through overridable macros (src/uvmc2_psram.h points them here). */
+unsigned char uvmc2_psram[4u << 20];
+int  uvm2_psram_ready = 1;
+#include <time.h>
+uint32_t uvmc2_now_us(void)          /* wall clock, for games that budget time per frame */
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (uint32_t)((uint64_t)t.tv_sec * 1000000u + (uint64_t)t.tv_nsec / 1000u);
+}
 unsigned long uvm2_romzip_desc = 0;
 #include "uvm2_sd.h"
 struct uvm2_sd_diag uvm2_sd_diag;
-int      uvm2_sd_open(const char *path, uvm2_sd_file *f) { (void)path; f->ok = 0; return 0; }
-uint32_t uvm2_sd_next(uvm2_sd_file *f, unsigned char *d, uint32_t m) { (void)f; (void)d; (void)m; return 0; }
-void     uvm2_sd_close(uvm2_sd_file *f) { f->ok = 0; }
+/* Streaming reads of "card" files from $UVMC2_DIR (e.g. a game's PCM bundle). The FILE*
+ * lives in the struct's spare storage. */
+static FILE *uvmc2_fopen(const char *path, char *full, size_t fullsz);
+int uvm2_sd_open(const char *path, uvm2_sd_file *f)
+{
+	char full[512];
+	FILE *fp = uvmc2_fopen(path, full, sizeof full);
+	f->ok = 0;
+	if (!fp) { fprintf(stderr, "uvmc2: %s not found\n", path); return 0; }
+	fseek(fp, 0, SEEK_END); f->len = (uint32_t)ftell(fp); fseek(fp, 0, SEEK_SET);
+	f->pos = 0;
+	f->fil[0] = (uint64_t)(uintptr_t)fp;
+	f->ok = 1;
+	fprintf(stderr, "uvmc2: streaming %s (%u bytes)\n", full, (unsigned)f->len);
+	return 1;
+}
+uint32_t uvm2_sd_next(uvm2_sd_file *f, unsigned char *d, uint32_t m)
+{
+	if (!f->ok) return 0;
+	uint32_t got = (uint32_t)fread(d, 1, m, (FILE *)(uintptr_t)f->fil[0]);
+	f->pos += got;
+	if (got == 0) f->ok = 0;
+	return got;
+}
+void uvm2_sd_close(uvm2_sd_file *f)
+{
+	if (f->fil[0]) fclose((FILE *)(uintptr_t)f->fil[0]);
+	f->fil[0] = 0;
+	f->ok = 0;
+}
 /* Data files a game reads from "the card" (e.g. a sample bundle): from the game's folder,
  * $UVMC2_DIR (the launcher sets it), trying the name as given, then upper and lower case. */
 #include <ctype.h>
 #include <string.h>
-uint32_t uvm2_sd_read_from(const char *path, unsigned char *dst, uint32_t max, uint32_t from)
+static FILE *uvmc2_fopen(const char *path, char *full, size_t fullsz)
 {
 	const char *dir = getenv("UVMC2_DIR");
-	char name[256], full[512];
+	char name[256];
 	for (int pass = 0; pass < 3; pass++) {
 		size_t i;
 		for (i = 0; path[i] && i < sizeof name - 1; i++)
 			name[i] = pass == 1 ? (char)toupper((unsigned char)path[i])
 			        : pass == 2 ? (char)tolower((unsigned char)path[i]) : path[i];
 		name[i] = 0;
-		snprintf(full, sizeof full, "%s/%s", dir ? dir : ".", name);
+		snprintf(full, fullsz, "%s/%s", dir ? dir : ".", name);
 		FILE *f = fopen(full, "rb");
-		if (!f) continue;
+		if (f) return f;
+	}
+	return NULL;
+}
+uint32_t uvm2_sd_read_from(const char *path, unsigned char *dst, uint32_t max, uint32_t from)
+{
+	const char *dir = getenv("UVMC2_DIR");
+	char full[512];
+	{
+		FILE *f = uvmc2_fopen(path, full, sizeof full);
+		if (!f) goto missing;
 		uint32_t got = 0;
 		if (fseek(f, (long)from, SEEK_SET) == 0) got = (uint32_t)fread(dst, 1, max, f);
 		fclose(f);
 		fprintf(stderr, "uvmc2: read %s: %u bytes\n", full, (unsigned)got);
 		return got;
 	}
+missing:
 	fprintf(stderr, "uvmc2: %s not found in %s\n", path, dir ? dir : ".");
 	return 0;
 }
@@ -120,6 +169,9 @@ int  uvm2_game_main(void);      /* the game's main(), renamed at compile time */
 int main(void)
 {
 	if (ptx_init()) { fprintf(stderr, "uvmc2: no stream\n"); return 1; }
+	const char *a = getenv("UVMC2_AUDIO");
+	uvm2_setting_audio = (ptx_audio_ready() && !(a && !strcmp(a, "psg"))) ? 0 : 1;
+	fprintf(stderr, "uvmc2: sound through the %s\n", uvm2_setting_audio ? "PSG" : "core's PCM channel");
 	uvm2_runtime_init();
 	int r = uvm2_game_main();
 	ptx_shutdown();

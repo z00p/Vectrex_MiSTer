@@ -49,7 +49,7 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
 
 | Program | Controls |
 |---|---|
-| **VecDrive**: pseudo-3D racer. Four timed phases across nine scenery themes, a fork at the end of each phase to choose your route, hills, traffic and the finish screen | stick steers, button 1 gas (and start), button 2 brake, button 3 toggles the music |
+| **VecDrive**: pseudo-3D racer. Four timed phases across nine scenery themes, a fork at the end of each phase to choose your route, hills, traffic and the finish screen | stick steers, button 1 gas (and start), button 2 brake, button 3 cycles the engine sound, the built-in tune and any music you add (see below) |
 | **VecBreak**: Breakout with sound and an intro tune | stick left/right moves the bat, button 1 serves and restarts |
 | **Gyrocks**: Carsten Wartmann's tunnel shooter, with damage, lives, explosions and sound added | stick moves, button 4 fires, button 1 restarts after game over |
 | **Cube demo**: the PiTrex rotating cube | none |
@@ -58,6 +58,11 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
 | **Tac/Scan** (UVMC2 port, build it yourself; see [UVMC2.md](UVMC2.md)) | 1 fire, 2 grab, 3 coin, 4 start |
 
 The core's own pause button also pauses PiTrex programs.
+
+**Your own music in VecDrive:** put AY-3-8912 register dumps in `/media/fat/pitrex/music/`
+as `.ay14` files: 14 bytes per 50 Hz frame (registers 0 to 13 in order). An optional `.loop`
+file with the same name sets the loop point (`loop=<frame>`). The first dump plays during the
+race, and button 3 cycles through the rest. None are included.
 
 ## Updating and removing
 - **PiTrex_Update** (Scripts) downloads the newest release from GitHub and unpacks it. It

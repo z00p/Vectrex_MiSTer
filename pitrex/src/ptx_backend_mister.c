@@ -35,7 +35,10 @@
 #define PTX_RING_N     (1u << PTX_RING_LOG2)
 #define PTX_MAGIC      0x58525450u            /* "PTRX" */
 #define PTX_VERSION    0u
-#define PTX_MAP_SIZE   (0x1000u + PTX_RING_N * 8u)
+#define PTX_AUD_LOG2   13u                    /* PCM ring (B6 cores): 8192 words */
+#define PTX_AUD_N      (1u << PTX_AUD_LOG2)
+#define PTX_AUD_TARGET 800u                   /* words kept queued: 3200 samples = 100 ms */
+#define PTX_MAP_SIZE   (0x1000u + PTX_RING_N * 8u + PTX_AUD_N * 8u)
 #define PTX_PUBLISH    32u                    /* = one 256-byte DDR burst */
 #define PTX_LEAD_FRAMES 2u                    /* frames the ARM may run ahead */
 
@@ -43,6 +46,7 @@ typedef struct {
 	volatile uint32_t magic, version, log2n, pad0;
 	volatile uint64_t wr_idx;
 	volatile uint32_t hb_lo, hb_hi;          /* coded heartbeat: hi = ~lo ^ PTX_MAGIC */
+	volatile uint64_t aud_wr;                /* PCM words written (B6) */
 } arm_hdr_t;
 
 typedef struct {
@@ -50,6 +54,7 @@ typedef struct {
 	volatile uint64_t core_cycles;
 	volatile uint32_t frames, underruns;
 	volatile uint32_t build_magic, build;   /* "PTXC", build number */
+	volatile uint64_t aud_rd;               /* PCM words fetched (B6) */
 } core_status_t;
 
 static int memfd = -1;
@@ -58,6 +63,10 @@ static arm_hdr_t *hdr;
 static core_status_t *st;
 static volatile ptx_input_t *in;
 static volatile uint64_t *ring;
+static volatile uint64_t *aud;         /* PCM ring */
+static uint64_t aud_wr;                /* PCM words written */
+static uint64_t aud_part;              /* samples collected for the next word */
+static unsigned aud_nsamp;
 static uint64_t wr, published;
 static uint64_t frame_end[8];
 static uint32_t n_frames;
@@ -164,6 +173,7 @@ static int m_open(void)
 	st   = (core_status_t *)(base + 0x0040);
 	in   = (volatile ptx_input_t *)(base + 0x0080);
 	ring = (volatile uint64_t *)(base + 0x1000);
+	aud  = (volatile uint64_t *)(base + 0x1000 + PTX_RING_N * 8u);
 	/* Read-only until the core proves it is live with PiTrex Mode on. */
 	long t0 = now_ms(), told = t0;
 	last_seq = in->seq;
@@ -185,6 +195,9 @@ static int m_open(void)
 	hdr->version = PTX_VERSION;
 	hdr->log2n = PTX_RING_LOG2;
 	hdr->wr_idx = wr;
+	aud_wr = st->aud_rd & (2u * PTX_AUD_N - 1);   /* B6 cores: start the PCM ring where the core is */
+	aud_nsamp = 0;
+	hdr->aud_wr = aud_wr;
 	hb_tick();
 	__sync_synchronize();
 	hdr->magic = PTX_MAGIC;          /* with a moving coded heartbeat: the core takes over */
@@ -263,6 +276,47 @@ static void m_close(void)
 
 const ptx_backend_t ptx_backend_mister = { m_open, m_push, m_frame, m_input, m_status, m_close };
 
+/* PCM audio (B6 cores): 16-bit mono at 32 kHz into the core's mixer. Samples are packed
+ * four to a word (first in bits 15:0); the core reports the words it has fetched in its
+ * status block, and its audio FIFO holds 64 words, so "fetched" is within 8 ms of
+ * "played". About 100 ms is kept queued. The core's counters are 14 bits (twice the ring),
+ * so the distance between them is taken modulo that. */
+static uint32_t aud_queued(void)
+{
+	return (uint32_t)(aud_wr - st->aud_rd) & (2u * PTX_AUD_N - 1);
+}
+
+int ptx_audio_ready(void)
+{
+	return base && !core_lost && st->build_magic == 0x43585450u && (st->build & 0xFF) >= 6;
+}
+
+uint32_t ptx_audio_space(void)
+{
+	if (!ptx_audio_ready()) return 0;
+	uint32_t queued = aud_queued();
+	if (queued >= PTX_AUD_TARGET) return 0;
+	return (uint32_t)(PTX_AUD_TARGET - queued) * 4u - aud_nsamp;
+}
+
+void ptx_audio_write(const int16_t *s, uint32_t n)
+{
+	if (!ptx_audio_ready()) return;
+	while (n--) {
+		aud_part |= (uint64_t)(uint16_t)*s++ << (16 * aud_nsamp);
+		if (++aud_nsamp == 4) {
+			if (aud_queued() < PTX_AUD_N - 16) {   /* else full: drop this word */
+				aud[aud_wr & (PTX_AUD_N - 1)] = aud_part;
+				aud_wr++;
+			}
+			aud_part = 0;
+			aud_nsamp = 0;
+		}
+	}
+	__sync_synchronize();           /* samples visible before the index */
+	hdr->aud_wr = aud_wr;
+}
+
 #else  /* not Linux: keep the symbol so the harness links everywhere */
 static int m_unavailable(void) { return -1; }
 static void m_nop_push(uint64_t c) { (void)c; }
@@ -271,4 +325,7 @@ static void m_nop_input(ptx_input_t *o) { (void)o; }
 static void m_nop(void) {}
 static void m_nop_status(ptx_status_t *o) { o->valid = 0; }
 const ptx_backend_t ptx_backend_mister = { m_unavailable, m_nop_push, m_nop_frame, m_nop_input, m_nop_status, m_nop };
+int      ptx_audio_ready(void) { return 0; }
+uint32_t ptx_audio_space(void) { return 0; }
+void     ptx_audio_write(const int16_t *s, uint32_t n) { (void)s; (void)n; }
 #endif

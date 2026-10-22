@@ -81,4 +81,11 @@ void     ptx_frame(void);                /* call once per frame (v_WaitRecal) */
 void     ptx_get_status(ptx_status_t *out);
 void     ptx_get_input(ptx_input_t *out);
 
+/* PCM audio into the core's mixer (MiSTer, B6 cores and later; no-ops elsewhere):
+ * 16-bit signed mono at 32 kHz. ptx_audio_space() says how many samples to write now
+ * to stay about 100 ms ahead. */
+int      ptx_audio_ready(void);
+uint32_t ptx_audio_space(void);
+void     ptx_audio_write(const int16_t *s, uint32_t n);
+
 #endif

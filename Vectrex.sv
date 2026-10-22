@@ -63,7 +63,7 @@ assign HDMI_BOB_DEINT = 0;
 `include "build_id.v"
 // PiTrex mode build number: shown in Core Info and reported in the ring's
 // status block. Bump both together for every build that goes on a MiSTer.
-localparam [7:0] PTX_BUILD = 8'd5;
+localparam [7:0] PTX_BUILD = 8'd6;
 
 localparam CONF_STR = {
 	"VECTREX;;",
@@ -215,7 +215,7 @@ localparam CONF_STR = {
 	"P5-,DE10-Lite core, with;",
 	"P5-,additional work by alanswx.;",
 	"P5-;",
-	"P5-,PiTrex mode: build B5;",
+	"P5-,PiTrex mode: build B6;",
 	"P5-;",
 	"P5-,If you enjoy reliving the;",
 	"P5-,golden age of vector games,;",
@@ -426,8 +426,7 @@ vectrex_flash_save flash_save (
 
 wire       pause_cpu;
 wire [9:0] audio;
-assign AUDIO_L   = pause_cpu ? 16'd0 : {audio, 6'd0};
-assign AUDIO_R   = pause_cpu ? 16'd0 : {audio, 6'd0};
+// AUDIO_L/R are assigned after the PiTrex PCM channel, below
 assign AUDIO_S   = 1;
 assign AUDIO_MIX = 0;
 
@@ -599,6 +598,49 @@ vfb_async_fifo #(.WIDTH(64), .DEPTH(128), .ALMOST_FULL_MARGIN(40)) pitrex_fifo
 	.rd_empty       (ptx_fifo_rd_empty)
 );
 
+// PCM audio (B6): pitrex_ddr fills this FIFO from the audio ring; pitrex_audio
+// plays it at 32 kHz into the mixer below (only while a program is active).
+wire        ptx_aud_wr_en, ptx_aud_almost_full, ptx_aud_rd_en, ptx_aud_rd_valid, ptx_aud_rd_empty;
+wire [63:0] ptx_aud_wr_data, ptx_aud_rd_data;
+wire signed [15:0] ptx_pcm;
+
+vfb_async_fifo #(.WIDTH(64), .DEPTH(64), .ALMOST_FULL_MARGIN(20)) pitrex_audio_fifo
+(
+	.wr_clk         (clk_125),
+	.wr_reset       (!(ptx_enable_125[1] && ptx_present_125)),
+	.wr_en          (ptx_aud_wr_en),
+	.wr_data        (ptx_aud_wr_data),
+	.wr_full        (),
+	.wr_almost_full (ptx_aud_almost_full),
+	.rd_clk         (clk_sys),
+	.rd_reset       (!ptx_active),
+	.rd_en          (ptx_aud_rd_en),
+	.rd_data        (ptx_aud_rd_data),
+	.rd_valid       (ptx_aud_rd_valid),
+	.rd_empty       (ptx_aud_rd_empty)
+);
+
+pitrex_audio pitrex_audio
+(
+	.clk           (clk_sys),
+	.reset         (!ptx_active),
+	.fifo_rd_en    (ptx_aud_rd_en),
+	.fifo_rd_data  (ptx_aud_rd_data),
+	.fifo_rd_valid (ptx_aud_rd_valid),
+	.fifo_rd_empty (ptx_aud_rd_empty),
+	.sample        (ptx_pcm)
+);
+
+// Mixer: the machine's sound as before; while a PiTrex program is active, plus
+// the PCM channel at half scale (headroom), saturated.
+wire signed [15:0] core_snd = {audio, 6'd0};
+wire signed [16:0] mix_sum  = core_snd + (ptx_pcm >>> 1);
+wire signed [15:0] mix_sat  = (mix_sum >  17'sd32767) ? 16'sd32767 :
+                              (mix_sum < -17'sd32768) ? 16'h8000 : mix_sum[15:0];
+wire        [15:0] snd_out  = ptx_active ? mix_sat : core_snd;
+assign AUDIO_L   = pause_cpu ? 16'd0 : snd_out;
+assign AUDIO_R   = pause_cpu ? 16'd0 : snd_out;
+
 wire        ptx_read_ready, ptx_read_grant, ptx_read_data_valid;
 wire [28:0] ptx_read_addr;
 wire [7:0]  ptx_read_burstcnt;
@@ -630,6 +672,9 @@ pitrex_ddr #(.BUILD(PTX_BUILD)) pitrex_ddr
 	.fifo_wr_en       (ptx_fifo_wr_en),
 	.fifo_wr_data     (ptx_fifo_wr_data),
 	.fifo_almost_full (ptx_fifo_almost_full),
+	.aud_fifo_wr_en       (ptx_aud_wr_en),
+	.aud_fifo_wr_data     (ptx_aud_wr_data),
+	.aud_fifo_almost_full (ptx_aud_almost_full),
 	.snap_cycles      (ptx_snap_cycles),
 	.snap_frames      (ptx_snap_frames),
 	.snap_underruns   (ptx_snap_underruns),

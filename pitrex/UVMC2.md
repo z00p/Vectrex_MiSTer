@@ -16,8 +16,10 @@ and the games. Please credit them and link their SDK when you share builds.
   1. Build it: `tools/build_tacscan.sh` (needs `upstream/uvmc2-starter-kit`).
   2. Copy `build/arm/tacscan` to `/media/fat/pitrex/`.
   3. Put the MAME romset `tacscan.zip` in `/media/fat/pitrex/uvmc2/tacscan/`.
-  4. For sound, make `TACSCAN.VSM` from the MAME `tacscan` sample set with the starter kit's
-     `game/tacscan/tools/wav_to_vsmp.py`, and put it in the same folder.
+  4. For sound, make `TACSCAN.PCM` from the MAME `tacscan` sample set with the starter kit's
+     `game/tacscan/tools/wav_to_pcm.py`, and put it in the same folder. A B6 core plays it
+     through its PCM channel at full quality. For older cores, also make `TACSCAN.VSM` with
+     `wav_to_vsmp.py`; it plays through the Vectrex's sound chip.
   5. Run Scripts > PiTrex_Setup again to add it to the menu.
   - Controls: 1 fire, 2 grab, 3 coin, 4 start.
   - The continuous ship roar is muted (`UVMC2_MUTE=0,1,2`); the shots and alien sounds play.
@@ -48,7 +50,9 @@ On MiSTer:
     cartridge's stock value of 160, the picture is about a third too large on this core, so
     the MiSTer default is 120. Override it in `/media/fat/pitrex/uvmc2.cfg` (`scale=125`) or
     with `UVMC2_SCALE`. On this core, larger means bigger.
-  - **Sound:** set to the console's PSG and DAC, since there is no audio jack.
+  - **Sound:** on a B6 core the cartridge's audio jack is the core's PCM channel (16-bit,
+    32 kHz, the jack's own rate). Older cores use the console's PSG and DAC.
+    `UVMC2_AUDIO=psg` forces the PSG.
   - **Data files:** read from `$UVMC2_DIR`.
 
 ### Building

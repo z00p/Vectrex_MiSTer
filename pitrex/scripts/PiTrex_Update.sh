@@ -24,4 +24,6 @@ curl -fsSL $CA -o "$TMP" "$url" || { echo "Download failed."; exit 1; }
 unzip -o -q "$TMP" -d /media/fat || { echo "Unpacking failed."; exit 1; }
 rm -f "$TMP"
 chmod +x /media/fat/pitrex/* /media/fat/Scripts/PiTrex_*.sh 2>/dev/null
-echo "Updated. Older cores stay in _Unstable; the launcher always uses the newest."
+# the main-menu entries name the core file: point them at the newest one
+[ -d "/media/fat/_PiTrex & UVMC2" ] && bash /media/fat/pitrex/make_menu.sh > /dev/null
+echo "Updated. Older cores stay in _Unstable; the launcher and the menu use the newest."

@@ -79,3 +79,14 @@ smp = ("#include <stdint.h>\n"
        + smp)
 (OUT / "uvm2_smp.c").write_text(smp, encoding="utf-8", newline="\n")
 print("wrote", OUT / "sdk_rp2350.c", OUT / "uvm2_svc.c", "and", OUT / "uvm2_smp.c")
+
+# --- Tac/Scan (starter kit, if present): the mute list on its jack path too ------------
+TSJ = ROOT / "upstream/uvmc2-starter-kit/game/tacscan/src/ts_jack.c"
+if TSJ.exists():
+    ts = TSJ.read_text(encoding="utf-8")
+    head = "void ts_jack_play(int voice, int idx, int loop)\n{\n"
+    assert ts.count(head) == 1, "ts_jack.c: ts_jack_play not found"
+    ts = ts.replace(head, "int uvmc2_sample_muted(int idx);   /* src/uvm2_mister_stubs.c */\n" + head
+                    + "    if (uvmc2_sample_muted(idx)) return;\n")
+    (OUT / "ts_jack.c").write_text(ts, encoding="utf-8", newline="\n")
+    print("wrote", OUT / "ts_jack.c")
