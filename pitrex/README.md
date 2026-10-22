@@ -28,7 +28,9 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    | `Scripts/PiTrex_*.sh`, `Scripts/UVMC2_*.sh` | one Scripts-menu entry per program, plus Setup, Stop, Update and Uninstall |
    | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive and Tac/Scan |
 
-   Unzipping changes nothing else on the card.
+   Unzipping changes nothing else on the card. In particular, **the official Vectrex core in
+   `_Console` is not replaced or modified**: the PiTrex core is a separate file in `_Unstable`,
+   so the normal Vectrex entry and its updates (e.g. from update_all) carry on as before.
 3. **Recommended:** run Scripts > **PiTrex_Setup** once. It adds the **PiTrex & UVMC2** folder
    to the main menu, where each entry loads the core, its overlay and the program in one go.
    - It switches PiTrex Mode on and sets `log_file_entry=1` in `MiSTer.ini`, so the MiSTer
@@ -66,9 +68,11 @@ race, and button 3 cycles through the rest. None are included.
 
 ## Updating and removing
 - **PiTrex_Update** (Scripts) downloads the newest release from GitHub and unpacks it. It
-  needs the MiSTer to be online.
-- **PiTrex_Uninstall** removes everything PiTrex added, including the optional extras. Your
-  Vectrex settings are kept.
+  needs the MiSTer to be online. The new core goes into `_Unstable` next to the older PiTrex
+  builds (delete those by hand if you like); the main-menu entries switch to the newest. It
+  never touches the official core in `_Console`.
+- **PiTrex_Uninstall** removes everything PiTrex added, including the optional extras and all
+  `Vectrex_PiTrex_*` cores in `_Unstable`. The official core and your Vectrex settings are kept.
 
 ## Troubleshooting
 | Symptom | Likely cause and fix |

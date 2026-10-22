@@ -12,6 +12,10 @@ With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everyt
    - `pitrex/`: the PiTrex and UVMC2 programs, the launcher and the menu helper;
    - `Scripts/PiTrex_*.sh`, `Scripts/UVMC2_*.sh`: one Scripts-menu entry per program, plus Setup, Stop, Update and Uninstall;
    - `games/Vectrex/Overlays/`: overlays for VecBreak, VecDrive and Tac/Scan.
+
+   **Your official Vectrex core is not touched.** The PiTrex core is a separate file in `_Unstable`;
+   the MiSTer-devel Vectrex core in `_Console` (as installed by update_all) stays exactly as it is,
+   and updates to it carry on as normal.
 2. On the MiSTer, run **Scripts > PiTrex_Setup** once. It adds a **PiTrex & UVMC2** folder to the main menu.
    Each entry loads the core, the game's overlay and the program in one go.
    Or skip the setup and start programs from **Scripts** (e.g. **PiTrex_VecDrive**).
