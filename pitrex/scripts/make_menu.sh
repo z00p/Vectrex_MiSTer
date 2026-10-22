@@ -15,6 +15,8 @@ CORE=$(ls -1 $FAT/_Unstable/Vectrex_PiTrex_B*.rbf 2>/dev/null | sort -V | tail -
 [ -n "$CORE" ] || { echo "No PiTrex core in _Unstable"; exit 1; }
 RBF=${CORE#$FAT/}; RBF=${RBF%.rbf}
 mkdir -p "$MENU" "$PTX"
+# games start from this folder now: remove the per-game Scripts entries B6 and older installed
+rm -f $FAT/Scripts/PiTrex_Cube_demo.sh $FAT/Scripts/PiTrex_Gyrocks.sh $FAT/Scripts/PiTrex_Selftest.sh \n	$FAT/Scripts/PiTrex_VecBreak.sh $FAT/Scripts/PiTrex_VecDrive.sh $FAT/Scripts/PiTrex_VecDrive_v2.sh \n	$FAT/Scripts/UVMC2_Hello.sh $FAT/Scripts/UVMC2_TacScan.sh
 rm -f "$MENU"/*.mgl "$PTX"/*.ptx
 
 # title | program | environment for the program (UVMC2 games need theirs)
