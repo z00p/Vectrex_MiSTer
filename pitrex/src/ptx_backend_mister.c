@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <time.h>
@@ -92,7 +93,7 @@ static int vectrex_core_loaded(void)
 	size_t n = fread(name, 1, sizeof name - 1, f);
 	fclose(f);
 	while (n && (name[n - 1] == '\n' || name[n - 1] == '\r' || name[n - 1] == ' ')) name[--n] = 0;
-	return strcmp(name, "VECTREX") == 0;
+	return strcasecmp(name, "Vectrex-PiTrex") == 0 || strcmp(name, "VECTREX") == 0;
 }
 
 /* The core writes its status block (signature "PTXC", input sequence counter)
@@ -248,8 +249,8 @@ static void m_input(ptx_input_t *o)
 		o->psg_ioa = 0xFF;            /* nothing pressed */
 		return;
 	}
-	o->pot[0] = in->pot[0]; o->pot[1] = in->pot[1];
-	o->pot[2] = in->pot[2]; o->pot[3] = in->pot[3];
+	o->pot[0] = in->pot[0]; o->pot[1] = in->pot[1];   /* as the core reports them: up is */
+	o->pot[2] = in->pot[2]; o->pot[3] = in->pot[3];   /* positive, as on a real Vectrex  */
 	o->psg_ioa = in->psg_ioa;
 }
 

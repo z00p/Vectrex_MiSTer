@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # One-time setup for the main-menu folder "PiTrex & UVMC2" (run again after adding programs):
-#  - PiTrex Mode On in config/VECTREX_v1.CFG (harmless for cartridges: the core only listens)
+#  - PiTrex Mode On in config/Vectrex-PiTrex_v1.CFG (our core's own settings file)
 #  - log_file_entry=1 in MiSTer.ini (Main reports the file an MGL loads; backup kept)
 #  - pitrexd, which starts the program a menu entry picks: now and at every boot
 #  - builds the menu entries (make_menu.sh)
@@ -11,18 +11,25 @@ PITREX=$FAT/pitrex
 INI=$FAT/MiSTer.ini
 START=$FAT/linux/user-startup.sh
 
-python3 - <<'EOF'
-p = "/media/fat/config/VECTREX_v1.CFG"
-try:
-    b = bytearray(open(p, "rb").read())
-except OSError:
-    b = bytearray()
-b += bytes(max(0, 16 - len(b)))
-if not b[4] & 0x10:
-    b[4] |= 0x10
-    open(p, "wb").write(b)
-    print("PiTrex Mode set On")
-EOF
+python3 - <<'PYEOF'
+# PiTrex Mode = OSD status bit 36 (byte 4, bit 4). Our core loads as "Vectrex-PiTrex" (the MGL's
+# setname), so its settings live in their own file; clear the bit older releases set in the
+# official core's VECTREX_v1.CFG.
+def setbit(path, on):
+    try:
+        b = bytearray(open(path, "rb").read())
+    except OSError:
+        if not on:
+            return
+        b = bytearray()
+    b += bytes(max(0, 16 - len(b)))
+    new = (b[4] | 0x10) if on else (b[4] & ~0x10)
+    if new != b[4]:
+        b[4] = new
+        open(path, "wb").write(b)
+setbit("/media/fat/config/Vectrex-PiTrex_v1.CFG", True)
+setbit("/media/fat/config/VECTREX_v1.CFG", False)
+PYEOF
 
 if grep -q '^log_file_entry=1' "$INI"; then
 	echo "MiSTer.ini: log_file_entry already 1"

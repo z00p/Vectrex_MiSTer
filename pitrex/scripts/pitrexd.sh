@@ -15,13 +15,13 @@ while sleep 0.5; do
 	[ "$now" = "$last" ] && continue
 	last=$now
 	[ "$(cat /tmp/FILESELECT 2>/dev/null)" = "selected" ] || continue
-	[ "$(cat /tmp/CORENAME 2>/dev/null)" = "VECTREX" ] || continue
+	case "$(cat /tmp/CORENAME 2>/dev/null)" in Vectrex-PiTrex|VECTREX) ;; *) continue ;; esac
 	f=$(cat /tmp/FULLPATH 2>/dev/null)
 	case "${f,,}" in *.ptx) ;; *) continue ;; esac
 	[ -f "$f" ] || continue
 
 	# one program at a time: stop what is running (launcher or OSD started)
-	for p in $(ps | grep -v grep | grep -E "(ptx_selftest|hello|cube|gyrocks|vecbreak|vecdrive)( |$)|$RUN/" | awk '{print $1}'); do
+	for p in $(ps | grep -v grep | grep -E "/media/fat/pitrex/[^ ]+( |$)|$RUN/" | grep -v -E "pitrex_launch|pitrexd" | awk '{print $1}'); do
 		kill "$p"
 	done
 	sleep 1

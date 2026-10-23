@@ -8,7 +8,7 @@ With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everyt
 
 ## Quick start
 1. Download `PiTrex_MiSTer_<build>_<date>.zip` (currently B6) from [Releases](https://github.com/z00p/Vectrex_MiSTer/releases) and unzip it onto the root of your MiSTer's SD card (`/media/fat`). It contains:
-   - `_Unstable/Vectrex_PiTrex_<build>_<date>.rbf`: the core with PiTrex mode, including (from B6) a 32 kHz PCM sound channel that programs can mix in next to the Vectrex's own sound;
+   - `_Unstable/Vectrex-PiTrex_<build>_<date>.rbf`: the core with PiTrex mode (it runs as "Vectrex-PiTrex", with its own settings file `config/Vectrex-PiTrex_v1.CFG`, so it never touches the official core's settings), including (from B6) a 32 kHz PCM sound channel that programs can mix in next to the Vectrex's own sound;
    - `pitrex/`: the PiTrex and UVMC2 programs, the launcher and the menu helper;
    - `Scripts/PiTrex_*.sh`: Setup, Update, Stop and Uninstall;
    - `games/Vectrex/Overlays/`: overlays for VecBreak, VecDrive, Tac/Scan and Gong Rider.

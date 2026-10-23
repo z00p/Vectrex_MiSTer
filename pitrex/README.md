@@ -23,7 +23,7 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    It adds:
    | Path | What |
    |---|---|
-   | `_Unstable/Vectrex_PiTrex_<build>_<date>.rbf` | the Vectrex core with PiTrex mode |
+   | `_Unstable/Vectrex-PiTrex_<build>_<date>.rbf` | the Vectrex core with PiTrex mode; the menu entries load it as "Vectrex-PiTrex", so its settings live in their own `config/Vectrex-PiTrex_v1.CFG` |
    | `pitrex/` | the programs and the launcher |
    | `Scripts/PiTrex_*.sh` | Setup, Update, Stop and Uninstall |
    | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive, Tac/Scan and Gong Rider |
@@ -77,7 +77,7 @@ race, and button 3 cycles through the rest. None are included.
   builds (delete those by hand if you like); the main-menu entries switch to the newest. It
   never touches the official core in `_Console`.
 - **PiTrex_Uninstall** removes everything PiTrex added, including the optional extras and all
-  `Vectrex_PiTrex_*` cores in `_Unstable`. The official core and your Vectrex settings are kept.
+  PiTrex cores in `_Unstable` and `config/Vectrex-PiTrex_v1.CFG`. The official core and your Vectrex settings are kept.
 
 ## Troubleshooting
 | Symptom | Likely cause and fix |
