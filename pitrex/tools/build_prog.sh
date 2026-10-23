@@ -10,7 +10,7 @@ target=$1; name=$2; shift 2
 [ -f build/lib/vectrex/vectrexInterface.c ] || python3 -I tools/patch_lib.py
 incs=""
 for s in "$@"; do incs="$incs -I$(dirname "$s")"; done
-CFLAGS="-O2 -DPITREX_MISTER -DPIZERO -DRPI0 -DAVOID_TICKS -DDISABLE_FIQ -Ibuild/lib -Ibuild/lib/vectrex -Isrc -w"
+CFLAGS="-O2 -DPITREX_MISTER -DPIZERO -DRPI0 -DAVOID_TICKS -DDISABLE_FIQ -Ibuild/lib -Ibuild/lib/vectrex -Isrc -w $EXTRA_CFLAGS"
 SHIM="src/ptx_core.c src/ptx_backend_file.c src/ptx_backend_mister.c src/pitrexio-mister.c"
 LIB="build/lib/vectrex/vectrexInterface.c build/lib/vectrex/osWrapper.c build/lib/vectrex/baremetalUtil.c build/lib/vectrex/ini.c build/lib/pitrex/bcm2835.c"
 case $target in

@@ -10,7 +10,7 @@ for p in $(ps | grep -v grep | grep pitrexd.sh | awk '{print $1}'); do kill "$p"
 
 rm -rf /media/fat/pitrex /media/fat/games/Vectrex/PiTrex "/media/fat/_PiTrex & UVMC2"
 rm -f /media/fat/_Unstable/Vectrex_PiTrex_B*.rbf
-rm -f /media/fat/games/Vectrex/Overlays/VecBreak.art /media/fat/games/Vectrex/Overlays/VecDrive.art /media/fat/games/Vectrex/Overlays/TacScan.art
+rm -f /media/fat/games/Vectrex/Overlays/VecBreak.art /media/fat/games/Vectrex/Overlays/VecDrive.art /media/fat/games/Vectrex/Overlays/TacScan.art /media/fat/games/Vectrex/Overlays/GongRider.art
 
 START=/media/fat/linux/user-startup.sh
 if grep -q pitrexd "$START" 2>/dev/null; then

@@ -17,21 +17,22 @@ and the games. Please credit them and link their SDK when you share builds.
   sound is mixed to mono for the PCM channel.
 - **UVMC2 FX demo**: the team's effects demo. Shoot a wireframe shape and it comes apart from
   where it was hit.
-- **Tac/Scan** (Sega 1982), the team's port with sampled sound. It isn't in the release (see
-  below), so you build it yourself and supply your own files:
-  1. Build it: `tools/build_tacscan.sh` (needs `upstream/uvmc2-starter-kit`).
-  2. Copy `build/arm/tacscan` to `/media/fat/pitrex/`.
-  3. Put the MAME romset `tacscan.zip` in `/media/fat/pitrex/uvmc2/tacscan/`.
-  4. For sound, make `TACSCAN.PCM` from the MAME `tacscan` sample set with the starter kit's
-     `game/tacscan/tools/wav_to_pcm.py`, and put it in the same folder. A B6 core plays it
-     through its PCM channel at full quality. For older cores, also make `TACSCAN.VSM` with
-     `wav_to_vsmp.py`; it plays through the Vectrex's sound chip.
-  5. Run Scripts > PiTrex_Setup again to add it to the menu.
+- **Tac/Scan** (Sega 1982), the team's port with sampled sound. It is included pre-built, so
+  there is nothing to build; you only supply your own files:
+  1. **Romset:** your MAME `tacscan.zip`. The menu entry looks for it in
+     `/media/fat/games/mame/` (where most MiSTers already keep MAME sets) and then in
+     `/media/fat/pitrex/uvmc2/tacscan/`.
+  2. **Sound (optional):** get the MAME `tacscan` samples (for example from
+     [Arcade@Home's sample page](https://www.arcadeathome.com/mamewav.phtml)), convert them to
+     `TACSCAN.PCM` and put it in
+     `/media/fat/pitrex/uvmc2/tacscan/`. The UVMC2 starter kit's `game/tacscan/tools/wav_to_pcm.py`
+     does the conversion. A B6 core plays it through its PCM channel at full quality. Without
+     `TACSCAN.PCM` the game runs silent for now.
   - Controls: 1 fire, 2 grab, 3 coin, 4 start.
   - The continuous ship roar is muted (`UVMC2_MUTE=0,1,2`); the shots and alien sounds play.
 
-Tac/Scan isn't shipped as a binary because its Z80 core, mz80 by Neil Bradley, may not be
-redistributed in modified form without the author's approval.
+The game's Z80 is Tim Cottrill's AAE Z80 core (see Credits), so the binary can be shipped; no
+romset, sample or Sega code is included.
 
 ## How it works
 A UVMC2 game calls the PiTrex-style contract (`v_directDraw32`, `v_writePSG`, `v_readButtons`,
@@ -73,8 +74,19 @@ tools/build_uvmc2_game.sh hello_uvmc2 upstream/uvmc2-starter-kit/examples/hello_
 samples go into the gaps of the drawing list. `tests/uvmc2_lines.c` is a minimal drawing test
 for the PC harness (`tools/build_uvmc2.sh pc ...`); full games are built for the ARM only.
 
+Tac/Scan is built with `tools/build_tacscan.sh` (needs `upstream/uvmc2-starter-kit` and
+`g++-arm-linux-gnueabihf`); it compiles the Z80 core in `third_party/aae_z80/` and the adapter in
+`games/uvmc2_tacscan/z80shim/`. The other programs are built like Hello above; only developers
+need any of this.
+
 ## Credits
 - **The UVMC2 team:** the UVMC2 SDK, runtime, beam model, libvpy and the starter kit games.
+- **Daniel Ferrer** (tullulah): UVMC2 and the UVMC2 starter kit; also PureDOOM-pitrex (see
+  [games/doom/README.md](games/doom/README.md)).
 - **Tac/Scan:** © Sega 1982. Its port is built on AAE sources included in the starter kit.
-- **mz80:** "Multi-Z80 CPU emulator by Neil Bradley (neil@synthcom.com)".
+- **Z80 core:** [Tim Cottrill's AAE](https://github.com/tcottrill/AAE) `cpu_z80`, used with his permission
+  ([issue 13](https://github.com/tcottrill/AAE/issues/13)); a modified port of **Edward Massey's** 1997
+  Z80 emulator (GNU LGPL v2, distributed here under the GPL as the LGPL allows). His readme and
+  documentation are in `third_party/aae_z80/`. This replaces the old mz80 core, so the earlier
+  licence issue is gone.
 - **puff:** © Mark Adler.

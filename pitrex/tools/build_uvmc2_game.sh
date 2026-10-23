@@ -17,7 +17,12 @@ RUNTIME="build/uvmc2/sdk_rp2350.c build/uvmc2/uvm2_svc.c $U/uvm2-sdk/uvm2_draw.c
   $U/uvm2-sdk/uvm2_audio.c build/uvmc2/uvm2_smp.c $U/uvm2-sdk/uvm2_input.c
   src/uvm2_bus_mister.c src/uvm2_mister_stubs.c src/ptx_core.c src/ptx_backend_file.c src/ptx_backend_mister.c"
 VPY=$(ls $U/vpy-c/*.c)
-mkdir -p build/arm
-arm-linux-gnueabihf-gcc $CFLAGS $UVMC2_CFLAGS -ffunction-sections -fdata-sections -Wl,--gc-sections -static $incs -o build/arm/$name "$@" $VPY $RUNTIME \
-  $VXT/armv7-unknown-linux-gnueabihf/release/libvectrex_draw_cabi.a -lm -lpthread -ldl
-echo "built build/arm/$name"
+# GAME_TARGET=arm (default, static MiSTer binary) | pc (host build for the file backend: build/pc/<name>)
+case ${GAME_TARGET:-arm} in
+	arm) CC=arm-linux-gnueabihf-gcc; STATIC=-static; OUT=build/arm/$name; LIB=$VXT/armv7-unknown-linux-gnueabihf/release/libvectrex_draw_cabi.a ;;
+	pc)  CC=cc; STATIC=; OUT=build/pc/$name; LIB=$VXT/x86_64-unknown-linux-gnu/release/libvectrex_draw_cabi.a ;;
+	*)   echo "GAME_TARGET must be arm or pc" >&2; exit 2 ;;
+esac
+mkdir -p "$(dirname "$OUT")"
+$CC $CFLAGS $UVMC2_CFLAGS -ffunction-sections -fdata-sections -Wl,--gc-sections $STATIC $incs -o $OUT "$@" $VPY $RUNTIME   $LIB -lm -lpthread -ldl $UVMC2_LIBS
+echo "built $OUT"

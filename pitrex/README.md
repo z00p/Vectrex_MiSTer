@@ -26,7 +26,12 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    | `_Unstable/Vectrex_PiTrex_<build>_<date>.rbf` | the Vectrex core with PiTrex mode |
    | `pitrex/` | the programs and the launcher |
    | `Scripts/PiTrex_*.sh` | Setup, Update, Stop and Uninstall |
-   | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive and Tac/Scan |
+   | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive, Tac/Scan and Gong Rider |
+   | `games/Vectrex/DOOM/` | where you put `doom1.wad` (see DOOM below) |
+
+   Every program is pre-built; you never compile anything. The only extras are your own MAME
+   romset (Tac/Scan; usually already in `/media/fat/games/mame`) and, for DOOM, the free
+   shareware `doom1.wad`.
 
    Unzipping changes nothing else on the card. In particular, **the official Vectrex core in
    `_Console` is not replaced or modified**: the PiTrex core is a separate file in `_Unstable`,
@@ -53,12 +58,14 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
 | **VecDrive**: pseudo-3D racer. Four timed phases across nine scenery themes, a fork at the end of each phase to choose your route, hills, traffic and the finish screen | stick steers, button 1 gas (and start), button 2 brake, button 3 cycles the engine sound, the built-in tune and any music you add (see below) |
 | **VecBreak**: Breakout with sound and an intro tune | stick left/right moves the bat, button 1 serves and restarts |
 | **Gyrocks**: Carsten Wartmann's tunnel shooter, with damage, lives, explosions and sound added | stick moves, button 4 fires, button 1 restarts after game over |
+| **DOOM**: Daniel Ferrer's wireframe DOOM (PureDOOM-pitrex). Needs the free shareware `doom1.wad` in `/media/fat/games/Vectrex/DOOM/` (saves go there too) | stick up/down forward/back, left/right turn; 1 fire, 2 use, 3 run, 4 hold to strafe, tap for the menu; in menus the stick moves, 1 selects, 2 goes back, 4 closes. More in [games/doom/README.md](games/doom/README.md) |
+| **Gong Rider**: Roger Boesch's Master of the Lamps-style game, with an overlay | stick steers and strikes the gongs; buttons 1 to 4 strike the gongs too |
 | **Cube demo**: the PiTrex rotating cube | none |
 | **Selftest**: checks the link to the core; shows the stick, the buttons and the core's build | stick and buttons |
 | **UVMC2 Hello**: the UVMC2 team's example game | stick steers, a button thrusts |
 | **UVMC2 Playroom**: the UVMC2 team's showcase, a walking figure, a hub and four rooms | stick up walks (all the way up runs), left/right turns, button 2 waves; walk into a door to play |
 | **UVMC2 FX demo**: shoot a wireframe shape and watch it come apart | stick aims, 1 fires, 2 blows it apart, 3 dissolves it, 4 starts again |
-| **Tac/Scan** (UVMC2 port, build it yourself; see [UVMC2.md](UVMC2.md)) | 1 fire, 2 grab, 3 coin, 4 start |
+| **Tac/Scan** (UVMC2 port, included; reads your MAME `tacscan.zip` from `/media/fat/games/mame`; see [UVMC2.md](UVMC2.md) for the optional sound) | 1 fire, 2 grab, 3 coin, 4 start |
 
 The core's own pause button also pauses PiTrex programs.
 
@@ -79,7 +86,7 @@ race, and button 3 cycles through the rest. None are included.
 | Symptom | Likely cause and fix |
 |---|---|
 | The program starts but the Vectrex just shows its BIOS screen | PiTrex Mode is off. OSD > System > **PiTrex Mode** = On; to keep it, OSD > (right) > **Save settings**. The launcher also switches it on when it loads the core. |
-| The **PiTrex & UVMC2** folder is missing or a game isn't in it | Run Scripts > PiTrex_Setup. An entry only appears for a program that is in `/media/fat/pitrex` (Tac/Scan once you've built and copied it). |
+| The **PiTrex & UVMC2** folder is missing or a game isn't in it | Run Scripts > PiTrex_Setup. An entry only appears for a program that is in `/media/fat/pitrex` (Tac/Scan needs nothing built, only the romset). |
 | The picture freezes or stutters | Another heavy job is running on the ARM (e.g. an update or a network copy). Stop it, or run PiTrex_Stop and start the program again. |
 | SSH or the network can't reach the MiSTer | A VPN on your PC can block local network traffic. Turn it off, or allow local network access. |
 | A main-menu entry loads the core but the game doesn't start | Run Scripts > PiTrex_Setup (it starts `pitrexd` and sets `log_file_entry=1`), then try again. |
@@ -145,6 +152,8 @@ seed 5 (set in `Vectrex.qsf`) meets timing at all four corners. After a change, 
 | `tests/` | `ptx_selftest.c` (bring-up without the library), `ptx_peek.c` (dumps the shared block) |
 | `games/vecdrive/`, `games/vecbreak/` | the two games, with their overlay generators (`make_overlay.py`) |
 | `games/gyrocks/` | Gyrocks with our additions (see its README) |
+| `games/doom/`, `games/gongrider/` | DOOM (MiSTer entry point and platform layer; see its README) and Roger Boesch's Gong Rider, each with its build line |
+| `games/uvmc2_tacscan/z80shim/`, `third_party/aae_z80/` | the Z80 core (Tim Cottrill's AAE core) and the adapter Tac/Scan is built with |
 | `scripts/` | the launcher, the menu builder, pitrexd and the Scripts-menu tools |
 | `tools/` | library patcher, build and run scripts, `ptxplay`, seed sweep and timing reports |
 | `../rtl/pitrex/` | the core side: `pitrex_ddr.sv` (ring reader) and `pitrex_player.sv` (bus player) |
@@ -155,6 +164,9 @@ seed 5 (set in `Vectrex.qsf`) meets timing at all four corners. After a change, 
 - **The PiTrex project** (Kevin Koster, Malban, Graham Toal, James Churchill and others): the
   library and interface this targets, notably Kevin Koster's `pitrexio-gpio.c` API.
 - **Carsten Wartmann:** Gyrocks.
+- **Daniel Ferrer:** UVMC2 (with the team) and [PureDOOM-pitrex](https://github.com/tullulah/PureDOOM-pitrex), the wireframe DOOM. **id Software:** the DOOM source (GPL).
+- **Roger Boesch:** Gong Rider ([source](https://rogerboesch.games/learn/gong-rider/), MIT licence).
+- **Tim Cottrill:** the AAE Z80 core that Tac/Scan runs on, used with his permission ([AAE issue 13](https://github.com/tcottrill/AAE/issues/13)). It is a modified port of **Edward Massey's** 1997 Z80 emulator (GNU LGPL v2, distributed here under the GPL as the LGPL allows); his readme and documentation are in `third_party/aae_z80/`. The earlier mz80 licensing issue no longer applies.
 - **The UVMC2 team** ([uvmc2-sdk](https://github.com/tullulah/uvmc2-sdk)): the UVMC2 runtime, beam model, libvpy and games, published here with their permission. See [UVMC2.md](UVMC2.md) for the full credits.
 - The analogue model in `ptxplay` follows vecx's.
 - The coding and testing were AI-assisted (Claude), with everything checked on real hardware.
