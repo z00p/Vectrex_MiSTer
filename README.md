@@ -35,7 +35,7 @@ With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everyt
 | UVMC2 Hello | The UVMC2 team's example game, running in UVMC2 mode. |
 | UVMC2 Playroom | The UVMC2 team's showcase: a wireframe figure with a 13-bone skeleton walks a hub with four doors, and each room is a small game built on part of their SDK. |
 | UVMC2 FX demo | The UVMC2 team's effects demo: shoot a wireframe shape and it comes apart from where it was hit. |
-| Tac/Scan | The UVMC2 team's port of Sega's 1982 arcade game, included pre-built. It reads your MAME romset from `/media/fat/games/mame/tacscan.zip` (or `/media/fat/pitrex/uvmc2/tacscan/tacscan.zip`). Sound is optional: convert the MAME `tacscan` samples ([Arcade@Home](https://www.arcadeathome.com/mamewav.phtml)) to `TACSCAN.PCM` in `/media/fat/pitrex/uvmc2/tacscan/` (see [pitrex/UVMC2.md](pitrex/UVMC2.md)); without it the game is silent for now. With it, a B6 core plays the samples at full quality through the PCM channel. |
+| Tac/Scan | The UVMC2 team's port of Sega's 1982 arcade game, included pre-built. It reads your MAME romset from `/media/fat/games/mame/tacscan.zip` (or `/media/fat/pitrex/uvmc2/tacscan/tacscan.zip`). For sound, drop MAME's `tacscan` samples zip ([Arcade@Home](https://www.arcadeathome.com/mamewav.phtml)) into `/media/fat/games/mame/samples/` as downloaded: it is converted automatically and plays at full quality through the PCM channel. Without it the game is silent. |
 
 ## More
 - How it works, building and the stream format: [pitrex/README.md](pitrex/README.md) and [pitrex/PROTOCOL.md](pitrex/PROTOCOL.md).

@@ -43,12 +43,22 @@ rm -f $FAT/Scripts/PiTrex_Cube_demo.sh $FAT/Scripts/PiTrex_Gyrocks.sh $FAT/Scrip
 	$FAT/Scripts/UVMC2_Hello.sh $FAT/Scripts/UVMC2_TacScan.sh
 rm -f "$MENU"/*.mgl "$PTX"/*.ptx
 
+# Tac/Scan sound: convert MAME's tacscan samples zip (games/mame/samples) once
+TS_ZIP=$FAT/games/mame/samples/tacscan.zip
+TS_PCM=$PITREX/uvmc2/tacscan/TACSCAN.PCM
+if [ -f "$TS_ZIP" ] && { [ ! -f "$TS_PCM" ] || [ "$TS_ZIP" -nt "$TS_PCM" ]; }; then
+	mkdir -p "$PITREX/uvmc2/tacscan"
+	echo "Converting the Tac/Scan samples (about 20 seconds)..."
+	python3 "$PITREX/ts_samples.py" "$TS_ZIP" "$TS_PCM"
+fi
+
 # title | program | environment for the program (UVMC2 games need theirs)
 while IFS='|' read -r title prog env; do
 	[ -x "$PITREX/$prog" ] || continue
 	{
 		echo '#!/bin/bash'
 		[ -n "$env" ] && echo "export $env"
+		[ "$prog" = tacscan ] && echo '[ -f /media/fat/pitrex/uvmc2/tacscan/TACSCAN.PCM ] || [ ! -f /media/fat/games/mame/samples/tacscan.zip ] || python3 /media/fat/pitrex/ts_samples.py /media/fat/games/mame/samples/tacscan.zip /media/fat/pitrex/uvmc2/tacscan/TACSCAN.PCM >&2'
 		echo "exec $PITREX/$prog"
 	} > "$PTX/$prog.ptx"
 	chmod +x "$PTX/$prog.ptx"

@@ -22,12 +22,11 @@ and the games. Please credit them and link their SDK when you share builds.
   1. **Romset:** your MAME `tacscan.zip`. The menu entry looks for it in
      `/media/fat/games/mame/` (where most MiSTers already keep MAME sets) and then in
      `/media/fat/pitrex/uvmc2/tacscan/`.
-  2. **Sound (optional):** get the MAME `tacscan` samples (for example from
-     [Arcade@Home's sample page](https://www.arcadeathome.com/mamewav.phtml)), convert them to
-     `TACSCAN.PCM` and put it in
-     `/media/fat/pitrex/uvmc2/tacscan/`. The UVMC2 starter kit's `game/tacscan/tools/wav_to_pcm.py`
-     does the conversion. A B6 core plays it through its PCM channel at full quality. Without
-     `TACSCAN.PCM` the game runs silent for now.
+  2. **Sound (optional):** put MAME's `tacscan` samples zip, as downloaded (for example from
+     [Arcade@Home's sample page](https://www.arcadeathome.com/mamewav.phtml)), in
+     `/media/fat/games/mame/samples/`. PiTrex_Setup, PiTrex_Update or the first start of
+     Tac/Scan converts it to `TACSCAN.PCM` (`pitrex/ts_samples.py`, about 20 seconds), and a
+     B6 core plays it through its PCM channel at full quality. Without it the game runs silent.
   - Controls: 1 fire, 2 grab, 3 coin, 4 start.
   - The continuous ship roar is muted (`UVMC2_MUTE=0,1,2`); the shots and alien sounds play.
 
