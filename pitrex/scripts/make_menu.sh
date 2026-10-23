@@ -43,7 +43,6 @@ done <<'EOF'
 VecDrive|vecdrive|
 VecBreak|vecbreak|
 Gyrocks|gyrocks|
-DOOM|doom|
 Gong Rider|gongrider|
 Cube demo|cube|
 PiTrex Selftest|ptx_selftest|

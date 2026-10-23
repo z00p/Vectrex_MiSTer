@@ -27,11 +27,9 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    | `pitrex/` | the programs and the launcher |
    | `Scripts/PiTrex_*.sh` | Setup, Update, Stop and Uninstall |
    | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive, Tac/Scan and Gong Rider |
-   | `games/Vectrex/DOOM/` | where you put `doom1.wad` (see DOOM below) |
 
    Every program is pre-built; you never compile anything. The only extras are your own MAME
-   romset (Tac/Scan; usually already in `/media/fat/games/mame`) and, for DOOM, the free
-   shareware `doom1.wad`.
+   romset (Tac/Scan; usually already in `/media/fat/games/mame`).
 
    Unzipping changes nothing else on the card. In particular, **the official Vectrex core in
    `_Console` is not replaced or modified**: the PiTrex core is a separate file in `_Unstable`,
@@ -58,7 +56,6 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
 | **VecDrive**: pseudo-3D racer. Four timed phases across nine scenery themes, a fork at the end of each phase to choose your route, hills, traffic and the finish screen | stick steers, button 1 gas (and start), button 2 brake, button 3 cycles the engine sound, the built-in tune and any music you add (see below) |
 | **VecBreak**: Breakout with sound and an intro tune | stick left/right moves the bat, button 1 serves and restarts |
 | **Gyrocks**: Carsten Wartmann's tunnel shooter, with damage, lives, explosions and sound added | stick moves, button 4 fires, button 1 restarts after game over |
-| **DOOM**: Daniel Ferrer's wireframe DOOM (PureDOOM-pitrex). Needs the free shareware `doom1.wad` in `/media/fat/games/Vectrex/DOOM/` (saves go there too) | stick up/down forward/back, left/right turn; 1 fire, 2 use, 3 run, 4 hold to strafe, tap for the menu; in menus the stick moves, 1 selects, 2 goes back, 4 closes. More in [games/doom/README.md](games/doom/README.md) |
 | **Gong Rider**: Roger Boesch's Master of the Lamps-style game, with an overlay | stick steers and strikes the gongs; buttons 1 to 4 strike the gongs too |
 | **Cube demo**: the PiTrex rotating cube | none |
 | **Selftest**: checks the link to the core; shows the stick, the buttons and the core's build | stick and buttons |

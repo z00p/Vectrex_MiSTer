@@ -19,7 +19,7 @@ With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everyt
 2. On the MiSTer, run **Scripts > PiTrex_Setup** once (required). It adds a **PiTrex & UVMC2** folder to the main menu.
    Each entry loads the core, the game's overlay and the program in one go. Every program is
    pre-built: nothing to compile. The only things you add yourself are your own MAME romset
-   (Tac/Scan, normally already in `/media/fat/games/mame`) and, for DOOM, the free shareware `doom1.wad`.
+   (Tac/Scan, normally already in `/media/fat/games/mame`).
 3. To load a game's overlay, use OSD > Load Overlay. **PiTrex_Stop** ends the program and hands the Vectrex back to its BIOS.
 4. **PiTrex_Update** fetches the newest release and **PiTrex_Uninstall** removes it all again. If something doesn't work, see [Troubleshooting](pitrex/README.md#troubleshooting).
 
@@ -29,7 +29,6 @@ With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everyt
 | VecDrive | A pseudo-3D racer: four timed phases across nine scenery themes, a fork at the end of each phase to choose your route, hills and traffic. Button 1 gas, button 2 brake, button 3 cycles the sound and music; you can add your own AY music (see [pitrex/README.md](pitrex/README.md#playing)). |
 | VecBreak | A Breakout game with sound, an intro tune and an overlay. |
 | Gyrocks | Carsten Wartmann's Gyrocks (GPL-2) with ship damage, lives, explosions and sound added. Fire is button 4. |
-| DOOM | Daniel Ferrer's wireframe DOOM for the Vectrex (PureDOOM-pitrex, GPL-2; DOOM source by id Software). Needs the free shareware `doom1.wad`, which you put in `/media/fat/games/Vectrex/DOOM/`. Controls in [pitrex/games/doom/README.md](pitrex/games/doom/README.md). |
 | Gong Rider | Roger Boesch's Master of the Lamps-style game (MIT): fly the carpet through the rings, then strike the gongs. Comes with an overlay. |
 | Cube demo | The PiTrex rotating-cube demo. |
 | Selftest | Checks the link between the ARM and the core and prints the core's PiTrex build. |

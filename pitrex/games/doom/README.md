@@ -1,5 +1,8 @@
 # DOOM (wireframe) for PiTrex on MiSTer
 
+**Work in progress: not in the release yet.** It runs, but drawing glitches and the layout
+still need work. Build it yourself to try it.
+
 Daniel Ferrer's [PureDOOM-pitrex](https://github.com/tullulah/PureDOOM-pitrex): DOOM drawn as
 vectors on the Vectrex. It is GPL-2; the DOOM source it is built on is by id Software (GPL).
 The two files here are the MiSTer entry point and platform layer (libc instead of the
