@@ -114,7 +114,11 @@ module vfb_top (
 	input  wire [7:0]   ptx_write_burstcnt,
 	input  wire [63:0]  ptx_write_data,
 	input  wire [7:0]   ptx_write_be,
-	output wire         ptx_write_advance
+	output wire         ptx_write_advance,
+	// PiTrex (B7): reset for the PiTrex client. High while client_reset is asserted and
+	// while the arbiter is still draining the burst it was serving when reset began, so
+	// the client can withdraw its requests without waiting for beats that get discarded.
+	output wire         ptx_client_reset
 );
 import vfb_layout_pkg::*;
 import vfb_control_pkg::*;
@@ -221,6 +225,12 @@ always_ff @(posedge clk_sys) begin
 	matte_geometry_sync_d <= matte_geometry_sync;
 	if (matte_geometry_sync == matte_geometry_sync_d) matte_geometry_stable <= matte_geometry_sync;
 end
+
+// PiTrex client reset (B7): same terms as the arbiter's own reset/drain, registered once.
+logic ptx_client_reset_q = 1'b1;
+always_ff @(posedge clk_sys)
+	ptx_client_reset_q <= client_reset | arbiter_reset_busy_d;
+assign ptx_client_reset = ptx_client_reset_q;
 
 // Register the next reset and arbiter-busy values so the client reset
 // changes on the same clock edge.

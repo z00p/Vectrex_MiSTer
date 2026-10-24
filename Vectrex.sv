@@ -63,7 +63,7 @@ assign HDMI_BOB_DEINT = 0;
 `include "build_id.v"
 // PiTrex mode build number: shown in Core Info and reported in the ring's
 // status block. Bump both together for every build that goes on a MiSTer.
-localparam [7:0] PTX_BUILD = 8'd6;
+localparam [7:0] PTX_BUILD = 8'd7;
 
 localparam CONF_STR = {
 	"VECTREX;;",
@@ -215,7 +215,7 @@ localparam CONF_STR = {
 	"P5-,DE10-Lite core, with;",
 	"P5-,additional work by alanswx.;",
 	"P5-;",
-	"P5-,PiTrex mode: build B6;",
+	"P5-,PiTrex mode: build B7;",
 	"P5-;",
 	"P5-,If you enjoy reliving the;",
 	"P5-,golden age of vector games,;",
@@ -451,7 +451,11 @@ wire delayed_reset = (reset_timeout != 23'd0) &&
 // PiTrex mode: a short machine reset on every mode change (clean VIA state on
 // entry; a normal BIOS boot on exit).
 // PiTrex takes over only while the option is on AND a live ARM program
-// is detected (coded heartbeat); assigned in the PiTrex block below.
+// is detected (coded heartbeat, seen to move); assigned in the PiTrex block below.
+// The player may not consume commands until this entry reset has finished
+// (ptx_run). A user/framework reset while a program is live DROPS the takeover:
+// the 6809 is released and boots the BIOS, the ARM sees the epoch in status word 11
+// change and has to re-attach (see pitrex_ddr.sv, PROTOCOL.md).
 wire      ptx_active;
 reg       ptx_mode_q = 1'b0;
 reg [4:0] ptx_mode_reset_cnt = 5'd0;
@@ -463,7 +467,11 @@ always_ff @(posedge clk_sys) begin
 		ptx_mode_reset_cnt <= ptx_mode_reset_cnt - 1'd1;
 end
 wire ptx_mode_reset = ptx_mode_reset_cnt != 5'd0;
+// the machine is in (or entering/leaving) a PiTrex session transition: no commands yet
+wire ptx_entry_busy = (ptx_mode_q != ptx_active) || ptx_mode_reset;
 wire machine_reset = video_reset | status[7] | rom_download | save_hold_reset | delayed_reset | ptx_mode_reset;
+// every reset that destroys VIA state except our own entry reset: drops a live takeover
+wire ptx_user_reset = video_reset | status[7] | rom_download | save_hold_reset | delayed_reset | bios_reset;
 wire core_reset = machine_reset | bios_reset;
 
 // A delayed warm reset preserves RAM state and skips the GCE startup animation.
@@ -559,6 +567,7 @@ pitrex_player pitrex_player
 (
 	.clk            (clk_sys),
 	.enable         (ptx_active),
+	.run            (ptx_active && !ptx_entry_busy),
 	.e_fall         (vec_e_fall),
 	.fifo_rd_en     (ptx_fifo_rd_en),
 	.fifo_rd_data   (ptx_fifo_rd_data),
@@ -581,6 +590,13 @@ pitrex_player pitrex_player
 (* altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS"} *)
 reg [1:0] ptx_enable_125 = 2'b00;
 always_ff @(posedge clk_125) ptx_enable_125 <= {ptx_enable_125[0], ptx_enable};
+
+// user/framework reset level into the renderer clock: drops the takeover in pitrex_ddr
+reg       ptx_user_reset_q = 1'b0;               // glitch-free source for the synchroniser
+(* altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS"} *)
+reg [1:0] ptx_drop_125 = 2'b00;
+always_ff @(posedge clk_sys) ptx_user_reset_q <= ptx_user_reset;
+always_ff @(posedge clk_125) ptx_drop_125 <= {ptx_drop_125[0], ptx_user_reset_q};
 
 vfb_async_fifo #(.WIDTH(64), .DEPTH(128), .ALMOST_FULL_MARGIN(40)) pitrex_fifo
 (
@@ -624,6 +640,7 @@ pitrex_audio pitrex_audio
 (
 	.clk           (clk_sys),
 	.reset         (!ptx_active),
+	.pause         (pause_cpu),
 	.fifo_rd_en    (ptx_aud_rd_en),
 	.fifo_rd_data  (ptx_aud_rd_data),
 	.fifo_rd_valid (ptx_aud_rd_valid),
@@ -641,6 +658,7 @@ wire        [15:0] snd_out  = ptx_active ? mix_sat : core_snd;
 assign AUDIO_L   = pause_cpu ? 16'd0 : snd_out;
 assign AUDIO_R   = pause_cpu ? 16'd0 : snd_out;
 
+wire        ptx_client_reset;             // from the framebuffer arbiter (reset + drain)
 wire        ptx_read_ready, ptx_read_grant, ptx_read_data_valid;
 wire [28:0] ptx_read_addr;
 wire [7:0]  ptx_read_burstcnt;
@@ -654,6 +672,8 @@ pitrex_ddr #(.BUILD(PTX_BUILD)) pitrex_ddr
 (
 	.clk              (clk_125),
 	.enable           (ptx_enable_125[1]),
+	.reset            (ptx_client_reset),
+	.drop             (ptx_drop_125[1]),
 	.present          (ptx_present_125),
 	.rd_ready         (ptx_read_ready),
 	.rd_grant         (ptx_read_grant),
@@ -836,6 +856,7 @@ vectrex_video vectrex_video
 	.ptx_write_data     (ptx_write_data),
 	.ptx_write_be       (ptx_write_be),
 	.ptx_write_advance  (ptx_write_advance),
+	.ptx_client_reset   (ptx_client_reset),
 
 	.sdram_dq           (SDRAM_DQ),
 	.sdram_clk          (SDRAM_CLK),

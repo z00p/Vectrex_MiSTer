@@ -7,6 +7,12 @@
 // FIFO. This module plays one sample every DIVIDER clocks (24 MHz / 750 =
 // 32 kHz exactly) and holds the last sample if the FIFO runs dry, so an
 // underrun is a short flat spot rather than a click.
+//
+// Pause (B7): while the machine is paused by the user (pause_cpu) the playback position
+// freezes - no sample is consumed and the sample-rate divider stops - so the queued
+// audio is still there on resume; the top level keeps muting the output meanwhile.
+// A command-stream underrun (the player stalling the machine) does NOT freeze PCM:
+// the PCM channel runs on wall-clock time, and the ARM sizes its queue (~100 ms) for that.
 // ============================================================================
 
 `default_nettype none
@@ -16,9 +22,10 @@ module pitrex_audio #(
 ) (
 	input  wire               clk,
 	input  wire               reset,       // not active: silence, drop the word in hand
+	input  wire               pause,       // machine paused by the user: freeze playback
 
 	// audio FIFO read side (first-word-fall-through not assumed)
-	output logic              fifo_rd_en,
+	output logic              fifo_rd_en = 1'b0,
 	input  wire  [63:0]       fifo_rd_data,
 	input  wire               fifo_rd_valid,
 	input  wire               fifo_rd_empty,
@@ -53,7 +60,9 @@ always_ff @(posedge clk) begin
 			slot    <= '0;
 		end
 
-		if (div == DIVIDER - 1) begin
+		if (pause) begin
+			// frozen: keep position, divider phase and the last sample
+		end else if (div == DIVIDER - 1) begin
 			div <= '0;
 			if (have && !fifo_rd_valid) begin
 				case (slot)

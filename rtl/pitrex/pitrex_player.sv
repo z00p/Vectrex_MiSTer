@@ -10,6 +10,12 @@
 // with broken timing. A snapshot of stream time and inputs is published for
 // the DDR side every 4096 clocks (toggle handshake; data held stable).
 //
+// Two enables (B7): `enable` says a live session exists (the FIFO may prefetch and
+// the snapshot keeps running); `run` says the machine has finished its entry reset
+// and may execute commands. Until `run`, nothing is popped from the FIFO, no bus
+// cycle is generated and the machine is not paused, so the first VIA writes of a
+// session can never be consumed while the VIA is still in reset.
+//
 // Command word: op[63:56] delta[55:40] addr[39:24] data[23:16]
 // ============================================================================
 
@@ -17,19 +23,20 @@
 
 module pitrex_player (
 	input  wire        clk,
-	input  wire        enable,        // OSD PiTrex mode
+	input  wire        enable,        // a live PiTrex session (mode on and program present)
+	input  wire        run,           // entry reset finished: commands may be consumed
 	input  wire        e_fall,        // falling-E enable from the CPU wrapper
 
 	// command FIFO read side (vfb_async_fifo: data valid the cycle after rd_en)
-	output logic       fifo_rd_en,
+	output logic       fifo_rd_en = 1'b0,
 	input  wire [63:0] fifo_rd_data,
 	input  wire        fifo_rd_valid,
 	input  wire        fifo_rd_empty,
 
 	// bus override towards vectrex.vhd
-	output logic [15:0] bus_addr,
-	output logic [7:0]  bus_do,
-	output logic        bus_rw,
+	output logic [15:0] bus_addr = 16'hFFFF,
+	output logic [7:0]  bus_do = 8'h00,
+	output logic        bus_rw = 1'b1,
 	output wire         stall,
 
 	// inputs to publish (as the core's comparator and PSG port A see them)
@@ -37,12 +44,12 @@ module pitrex_player (
 	input  wire [7:0]  psg_ioa,
 
 	// snapshot for the DDR side
-	output logic [47:0] snap_cycles,
-	output logic [15:0] snap_frames,
-	output logic [15:0] snap_underruns,
-	output logic [31:0] snap_pots,
-	output logic [7:0]  snap_ioa,
-	output logic        snap_toggle
+	output logic [47:0] snap_cycles = '0,
+	output logic [15:0] snap_frames = '0,
+	output logic [15:0] snap_underruns = '0,
+	output logic [31:0] snap_pots = '0,
+	output logic [7:0]  snap_ioa = 8'hFF,
+	output logic        snap_toggle = 1'b0
 );
 
 localparam logic [7:0] OP_WRITE = 8'h01;
@@ -51,10 +58,10 @@ localparam logic [7:0] OP_READ  = 8'h04;
 localparam logic [7:0] OP_FRAME = 8'h10;
 
 logic        cur_valid = 1'b0;
-logic [7:0]  cur_op;
-logic [15:0] cur_cnt;
-logic [15:0] cur_addr;
-logic [7:0]  cur_data;
+logic [7:0]  cur_op = '0;
+logic [15:0] cur_cnt = '0;
+logic [15:0] cur_addr = '0;
+logic [7:0]  cur_data = '0;
 logic        loading = 1'b0;
 
 logic [47:0] stream_cycles = '0;
@@ -64,7 +71,7 @@ logic        in_underrun = 1'b0;
 logic [11:0] snap_div = '0;
 
 // Pause only when nothing at all is queued; a pop in flight is not an underrun.
-assign stall = enable && !cur_valid && !loading && fifo_rd_empty;
+assign stall = enable && run && !cur_valid && !loading && fifo_rd_empty;
 
 wire [7:0]  in_op    = fifo_rd_data[63:56];
 wire [15:0] in_delta = fifo_rd_data[55:40];
@@ -82,6 +89,11 @@ always_ff @(posedge clk) begin
 		frames        <= '0;
 		underruns     <= '0;
 		in_underrun   <= 1'b0;
+	end else if (!run) begin
+		// session live but the machine is still in its entry reset: hold everything.
+		// Nothing has been popped before `run`, so no pop can be in flight here.
+		bus_addr <= 16'hFFFF;
+		bus_rw   <= 1'b1;
 	end else begin
 		// ---- fetch the next command ----
 		if (!cur_valid && !loading && !fifo_rd_empty && !fifo_rd_en) begin
@@ -133,7 +145,7 @@ always_ff @(posedge clk) begin
 		end
 	end
 
-	// ---- snapshot for the 125 MHz side (stable for 4096 clocks) ----
+	// ---- snapshot for the 125 MHz side (held for 4096 clocks) ----
 	snap_div <= snap_div + 1'd1;
 	if (snap_div == '0) begin
 		snap_cycles    <= stream_cycles;

@@ -53,3 +53,14 @@ set_net_delay -max 8.000 \
 set_net_delay -max 8.000 \
 	-from [get_registers {*|pitrex_fifo|rd_gray[*]}] \
 	-to [get_registers {*|pitrex_fifo|rd_gray_meta[*]}]
+
+# PiTrex PCM audio FIFO: same crossing and same bounds as the command FIFO above.
+set_net_delay -max 8.000 	-from [get_registers {*|pitrex_audio_fifo|wr_gray[*]}] 	-to [get_registers {*|pitrex_audio_fifo|wr_gray_meta[*]}]
+set_net_delay -max 8.000 	-from [get_registers {*|pitrex_audio_fifo|rd_gray[*]}] 	-to [get_registers {*|pitrex_audio_fifo|rd_gray_meta[*]}]
+
+# PiTrex status snapshot (clk_sys -> clk_125): the data and the update toggle change
+# together and the data is captured two synchroniser stages after the toggle, so the data
+# nets must arrive within one clk_125 period (bundled-data contract); the data then
+# holds for 4096 clk_sys cycles.
+set_net_delay -max 8.000 	-from [get_registers {*|pitrex_player|snap_toggle}] 	-to [get_registers {*|pitrex_ddr|tog_sync[0]}]
+set_net_delay -max 8.000 	-from [get_registers {*|pitrex_player|snap_cycles[*] *|pitrex_player|snap_frames[*] *|pitrex_player|snap_underruns[*] *|pitrex_player|snap_pots[*] *|pitrex_player|snap_ioa[*]}] 	-to [get_registers {*|pitrex_ddr|cap_cycles[*] *|pitrex_ddr|cap_frames[*] *|pitrex_ddr|cap_underruns[*] *|pitrex_ddr|cap_pots[*] *|pitrex_ddr|cap_ioa[*]}]

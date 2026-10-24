@@ -125,6 +125,7 @@ module vectrex_video
 	input  wire [63:0] ptx_write_data,
 	input  wire [7:0]  ptx_write_be,
 	output wire        ptx_write_advance,
+	output wire        ptx_client_reset,   // PiTrex client reset incl. arbiter drain (clk_125)
 
 	output wire fifo_full_led
 );
@@ -798,6 +799,7 @@ vfb_top framebuffer
 	.ptx_write_data           (ptx_write_data),
 	.ptx_write_be             (ptx_write_be),
 	.ptx_write_advance        (ptx_write_advance),
+	.ptx_client_reset         (ptx_client_reset),
 
 	.SDRAM_DQ_IN              (sdram_dq),
 	.SDRAM_DQ_OUT             (sdram_dq_out),

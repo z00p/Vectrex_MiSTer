@@ -165,6 +165,13 @@ static int corename_ours(long t)
    which stale RAM cannot. */
 static int core_signature(void) { return st->build_magic == 0x43585450u; }
 
+/* B7 cores count every dropped takeover (reset, timeout, hand-back) in word 11 bits 63..48.
+   A change means the core reset the machine and stopped listening to us; it will not take
+   over again until it has seen the magic cleared. Older cores keep it at 0. */
+static uint16_t epoch0;
+static int      epoch_changed;
+static uint16_t core_epoch(void) { return (uint16_t)(st->build >> 16); }
+
 /* 1 while we still own the block; otherwise 0 and *why says what failed. No exit, no writes. */
 static int still_ours(const char **why)
 {
@@ -179,6 +186,7 @@ static int still_ours(const char **why)
 	if ((int32_t)(rd_lo - last_rd_lo) < 0) { *why = "the core's read index went backwards (reloaded)"; return 0; }
 	last_rd_lo = rd_lo;
 	if (hdr->session != session)        { *why = "another producer took over the header"; return 0; }
+	if (core_epoch() != epoch0) { epoch_changed = 1; *why = "the core was reset (back to the BIOS)"; return 0; }
 	return 1;
 }
 
@@ -186,6 +194,10 @@ static void check_core_alive(void)
 {
 	const char *why;
 	if (still_ours(&why)) return;
+	if (epoch_changed && hdr) {      /* still our core and our block: release it so it can attach again */
+		hdr->magic = 0;
+		__sync_synchronize();
+	}
 	core_lost = 1;
 	fprintf(stderr, "ptx: %s - stopping (no further writes)\n", why);
 	exit(3);
@@ -299,6 +311,12 @@ static int m_open(void)
 	signal(SIGINT, on_signal);
 	signal(SIGTERM, on_signal);
 	signal(SIGHUP, on_signal);
+	hdr->magic = 0;                  /* a B7 core attaches only after seeing the magic clear */
+	__sync_synchronize();
+	{                                /* the core polls the header every ~2 us; a plain sleep, as */
+		struct timespec ts = { 0, 100000L };   /* nap_us() would run the ownership checks */
+		nanosleep(&ts, NULL);        /* before our session id is in the header */
+	}
 	hdr->session = session;          /* word 1 high half: ignored by the core, read back by every check */
 	wr = published = st->rd_idx;     /* resume wherever the core is */
 	hdr->version = PTX_VERSION;
@@ -307,6 +325,7 @@ static int m_open(void)
 	aud_wr = st->aud_rd & (2u * PTX_AUD_N - 1);   /* B6 cores: start the PCM ring where the core is */
 	aud_nsamp = 0;
 	hdr->aud_wr = aud_wr;
+	epoch0 = core_epoch();
 	hb_tick();
 	__sync_synchronize();
 	hdr->magic = PTX_MAGIC;          /* with a moving coded heartbeat: the core takes over */

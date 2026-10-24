@@ -31,7 +31,7 @@ renderer's framebuffer and artwork areas. Offsets below are in 64-bit words.
 | 8 | core | `rd_idx`: entries fetched so far |
 | 9 | core | stream time in E cycles |
 | 10 | core | bits 31..0 frames, bits 63..32 underruns |
-| 11 | core | bits 31..0 signature `"PTXC"` (`0x43585450`), bits 39..32 build number |
+| 11 | core | bits 31..0 signature `"PTXC"` (`0x43585450`), bits 39..32 build number, bits 63..48 (B7) epoch: counts every dropped takeover (reset, timeout, hand-back) |
 | 12 | core | B6: audio `rd`: PCM words fetched, 14 bits (wraps at 16,384) |
 | 16 | core | input: x1, y1, x2, y2 (signed 8-bit pots), PSG port A (buttons, active low), pad bits |
 | 17 | core | input sequence number (changes every 0.5 ms while the core is listening) |
@@ -80,19 +80,27 @@ until a live program is present.
 - **PiTrex Mode Off:** the core makes no DDR accesses at all.
 - **PiTrex Mode On:** the core only *listens*. The 6809 keeps running (BIOS, cartridge) while
   the core writes words 8-17, including the `"PTXC"` signature and a moving sequence number.
-- **Program start (read-only until confirmed):** `/tmp/CORENAME` must be `VECTREX`. The program
-  then waits, reading only, until word 11 shows `"PTXC"` and word 17 is moving. Only then does
-  it write the header: `wr_idx` starts at the core's `rd_idx`, then the heartbeat, then the
-  magic.
+- **Program start (read-only until confirmed):** `/tmp/CORENAME` must be `Vectrex-PiTrex` (or
+  `VECTREX` for a direct load). The program then waits, reading only, until word 11 shows `"PTXC"`
+  and word 17 is moving. Only then does it write the header: it clears the magic (B7 attaches only
+  after seeing it clear), writes its session id, `wr_idx` = the core's `rd_idx`, records the epoch,
+  then the heartbeat, then the magic.
 - **Heartbeat:** the ARM bumps word 3 every frame and in every wait. The core accepts a sample
   only if the magic is right, the high half matches `~low ^ "PTRX"`, and the low half differs
   from the last accepted value. A leftover magic plus a stray write from another program will
   not pass.
-- **Takeover:** on the first valid heartbeat the core resets the machine, holds the 6809 in
-  reset and starts fetching.
+- **Takeover:** the header must say version 0 and ring log2 16. From B7 the first valid heartbeat
+  is only a baseline: the core takes over when a later, different one arrives, so a stale header
+  left in memory cannot start a takeover. The core then resets the machine, holds the 6809 in reset
+  and starts fetching once that reset has finished (B7: no command is consumed earlier).
 - **Hand-back:** when the magic is cleared (normal exit, or SIGINT/SIGTERM/SIGHUP), or no valid
   new heartbeat arrives for 100 ms (a crash), the core resets the machine and the 6809 runs
   again.
+- **Reset (B7):** any machine or video reset drops the takeover and the 6809 boots the BIOS; the
+  epoch in word 11 advances. The core will not take over again while the magic stays set, so the
+  program sees the epoch change, clears the magic and exits. Starting the program again attaches
+  normally.
+- **Pause (B7):** the PCM channel stops consuming samples while the machine is paused.
 - **Watchdog on the ARM:** before every publish and every batch of ring writes the program
   checks that `/tmp/CORENAME` still names our core (`Vectrex-PiTrex`, or `VECTREX` for a direct
   load; re-read whenever the file changes), that word 17 moved within 200 ms, that word 8
