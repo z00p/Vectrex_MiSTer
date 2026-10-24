@@ -51,7 +51,8 @@ src = src.replace(old_play, "int uvmc2_sample_muted(int idx);   /* src/uvm2_mist
                             "void v_playSample(int idx, int voice, int loop)\n{\n"
                             "    if (uvmc2_sample_muted(idx)) return;\n"
                             "    const void *p = v_sampleData(idx);")
-assert "svc #" not in src.split("uvm2_svc_dispatch")[0][-4000:] or True
+# every cartridge-only trap must be gone: no inline-asm `svc` may remain (comments mentioning svc are fine)
+assert not re.search(r"_{0,2}asm_{0,2}\s*(?:_{0,2}volatile_{0,2}\s*)?\([^;]*\bsvc\b", src),"sdk_rp2350.c: an inline-asm svc trap is still there"
 (OUT / "sdk_rp2350.c").write_text(src, encoding="utf-8", newline="\n")
 
 # --- uvm2_svc.c: the number comes in frame[7] ------------------------------------------
@@ -59,6 +60,7 @@ svc = (SDK / "uvm2-sdk/uvm2_svc.c").read_text(encoding="utf-8")
 pat = re.compile(r"const uint8_t \*pc\s*=\s*\(const uint8_t \*\)\(uintptr_t\)frame\[6\];\s*\n\s*uint32_t\s+num\s*=\s*pc\[-2\];")
 assert len(pat.findall(svc)) == 1, "uvm2_svc.c: dispatcher prologue not found"
 svc = pat.sub("uint32_t       num = frame[7];   /* UVMC2 on MiSTer: passed, not decoded */", svc)
+assert "pc[-2]" not in svc, "uvm2_svc.c: the instruction-decoded call number is still there"
 (OUT / "uvm2_svc.c").write_text(svc, encoding="utf-8", newline="\n")
 # --- uvm2_smp.c: load the sample bundle from a file (the host build skips it) -----------
 smp = (SDK / "uvm2-sdk/uvm2_smp.c").read_text(encoding="utf-8")

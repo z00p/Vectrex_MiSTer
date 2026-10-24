@@ -24,7 +24,7 @@ renderer's framebuffer and artwork areas. Offsets below are in 64-bit words.
 | Word | Written by | Content |
 |---|---|---|
 | 0 | ARM | bits 31..0 magic `"PTRX"` (`0x58525450`), bits 63..32 version (0) |
-| 1 | ARM | ring size as log2 of the entry count (16) |
+| 1 | ARM | bits 31..0 ring size as log2 of the entry count (16); bits 63..32 session id (random per run; the program stops if it ever reads back a different one) |
 | 2 | ARM | `wr_idx`: entries written so far (free-running, 64-bit) |
 | 3 | ARM | heartbeat: bits 31..0 counter, bits 63..32 = `~counter ^ "PTRX"` |
 | 4 | ARM | B6: audio `wr`: PCM words written (free-running; the core uses bits 13..0) |
@@ -93,9 +93,13 @@ until a live program is present.
 - **Hand-back:** when the magic is cleared (normal exit, or SIGINT/SIGTERM/SIGHUP), or no valid
   new heartbeat arrives for 100 ms (a crash), the core resets the machine and the 6809 runs
   again.
-- **Watchdog on the ARM:** while running, the program checks that word 17 moves (within
-  500 ms) and that `/tmp/CORENAME` is still `VECTREX` (once a second). If either fails, it
-  exits without writing anything else.
+- **Watchdog on the ARM:** before every publish and every batch of ring writes the program
+  checks that `/tmp/CORENAME` still names our core (`Vectrex-PiTrex`, or `VECTREX` for a direct
+  load; re-read whenever the file changes), that word 17 moved within 200 ms, that word 8
+  (`rd_idx`) has not gone backwards and that its session id is still in word 1. If any check
+  fails it exits without writing anything else. `pitrexd` also stops every PiTrex program as
+  soon as `/tmp/CORENAME` changes to another core. A user-space program cannot be revoked
+  instantly: on hardware it stops about 0.4 s after another core is loaded.
 
 ## ARM side (`pitrex/src/`)
 - **Stream time:** `ptx_core.c` keeps stream time in E cycles. Every write takes one cycle, and

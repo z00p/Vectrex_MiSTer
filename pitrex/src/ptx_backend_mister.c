@@ -7,7 +7,8 @@
  * approach as Main_MiSTer's shmem_map().
  *
  * Layout (byte offsets from PTX_DDR_BASE; see PROTOCOL.md):
- *   0x0000 ARM header : magic, version, log2 entries, wr_idx (u64), heartbeat
+ *   0x0000 ARM header : magic, version, log2 entries + session id (word 1; the core ignores
+ *                       the id), wr_idx (u64), heartbeat
  *   0x0040 core status: rd_idx (u64), core_cycles (u64), frames, underruns
  *   0x0080 core input : ptx_input_t
  *   0x1000 ring       : (1 << PTX_RING_LOG2) x 64-bit commands
@@ -26,6 +27,7 @@
 #include <strings.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -42,9 +44,12 @@
 #define PTX_MAP_SIZE   (0x1000u + PTX_RING_N * 8u + PTX_AUD_N * 8u)
 #define PTX_PUBLISH    32u                    /* = one 256-byte DDR burst */
 #define PTX_LEAD_FRAMES 2u                    /* frames the ARM may run ahead */
+#define PTX_SEQ_TIMEOUT_MS 200                /* core input counter must move at least this often */
+#define PTX_NAME_RECHECK_MS 1000              /* re-read /tmp/CORENAME at least this often, changed or not */
 
 typedef struct {
-	volatile uint32_t magic, version, log2n, pad0;
+	volatile uint32_t magic, version, log2n;
+	volatile uint32_t session;               /* word 1 high half: our random id; the core never reads it */
 	volatile uint64_t wr_idx;
 	volatile uint32_t hb_lo, hb_hi;          /* coded heartbeat: hi = ~lo ^ PTX_MAGIC */
 	volatile uint64_t aud_wr;                /* PCM words written (B6) */
@@ -72,9 +77,32 @@ static uint64_t wr, published;
 static uint64_t frame_end[8];
 static uint32_t n_frames;
 static uint32_t hb;
-static int core_lost;                  /* set once the core stops answering: never write again */
-static uint32_t last_seq;
+static volatile sig_atomic_t core_lost;   /* set once we no longer own the block: never write again */
+static uint32_t session;               /* random id written to the header; another value read back = another producer */
+static uint32_t last_seq, last_rd_lo;
 static long last_seq_ms, last_name_ms;
+static struct stat name_st;            /* /tmp/CORENAME as last read: re-read only when this changes */
+static int name_st_ok, name_ours;
+
+/* Core ownership.
+ *
+ * The block at PTX_DDR_BASE is only ours while the Vectrex-PiTrex core is the loaded core;
+ * after a core change another core may use that DDR region, and our /dev/mem mapping stays
+ * valid regardless. User space cannot revoke a mapping, so the rule is: prove ownership
+ * before every publish and at the start of every ring batch, and never write once it fails.
+ * A check passes only if all of these hold:
+ *   - /tmp/CORENAME (MiSTer Main writes it when it loads a core) names our core. It is stat()ed
+ *     every time (cheap) and re-read only when inode/mtime/size change, or every second;
+ *   - the core's signature is still there and its input counter keeps moving (it stops when
+ *     the FPGA is reconfigured or PiTrex Mode is turned off) and its read index never goes
+ *     backwards (it restarts from zero on a reload);
+ *   - the session id we put in the header is still there (otherwise another producer took over).
+ *
+ * What remains: Main reconfigures the FPGA before it updates /tmp/CORENAME, and the input
+ * counter is only judged stalled after PTX_SEQ_TIMEOUT_MS, so for up to that long after the
+ * old core has gone this process can still write: at most one ring batch (<= 32 entries) plus
+ * one header word per check. scripts/pitrexd.sh also kills the program when CORENAME changes.
+ * Both are best effort; only the core-loading lifecycle could close the window entirely. */
 
 static long now_ms(void)
 {
@@ -83,17 +111,53 @@ static long now_ms(void)
 	return t.tv_sec * 1000L + t.tv_nsec / 1000000L;
 }
 
-/* Rule 1 (no writes unless the Vectrex core is running): MiSTer Main names the
-   loaded core in /tmp/CORENAME. */
+/* Raw syscalls only, so the signal handler can use it too. Returns the name's length. */
+static int read_corename(char *name, size_t sz)
+{
+	int fd = open("/tmp/CORENAME", O_RDONLY | O_CLOEXEC);
+	if (fd < 0) return 0;
+	ssize_t n = read(fd, name, sz - 1);
+	close(fd);
+	if (n < 0) n = 0;
+	while (n && (name[n - 1] == '\n' || name[n - 1] == '\r' || name[n - 1] == ' ')) n--;
+	name[n] = 0;
+	return (int)n;
+}
+
+static int name_is_ours(const char *name)
+{
+	return strcasecmp(name, "Vectrex-PiTrex") == 0 || strcmp(name, "VECTREX") == 0;
+}
+
+/* Rule 1 (no writes unless the Vectrex core is running): Main names the loaded core in
+   /tmp/CORENAME. Uncached; used while waiting and by the signal handler. */
 static int vectrex_core_loaded(void)
 {
-	char name[64] = {0};
-	FILE *f = fopen("/tmp/CORENAME", "r");
-	if (!f) return 0;
-	size_t n = fread(name, 1, sizeof name - 1, f);
-	fclose(f);
-	while (n && (name[n - 1] == '\n' || name[n - 1] == '\r' || name[n - 1] == ' ')) name[--n] = 0;
-	return strcasecmp(name, "Vectrex-PiTrex") == 0 || strcmp(name, "VECTREX") == 0;
+	char name[64];
+	return read_corename(name, sizeof name) && name_is_ours(name);
+}
+
+/* The same, but only as expensive as a stat() unless the file changed. A file caught empty
+   (Main truncates it before it writes the new name) is retried briefly, then counts as gone. */
+static int corename_ours(long t)
+{
+	struct stat s;
+	if (stat("/tmp/CORENAME", &s) != 0) { name_st_ok = 0; return 0; }
+	int same = name_st_ok && s.st_ino == name_st.st_ino && s.st_size == name_st.st_size &&
+	           s.st_mtim.tv_sec == name_st.st_mtim.tv_sec && s.st_mtim.tv_nsec == name_st.st_mtim.tv_nsec;
+	if (same && t - last_name_ms < PTX_NAME_RECHECK_MS) return name_ours;
+	int ours = vectrex_core_loaded();
+	for (int i = 0; !ours && i < 5; i++) {
+		char name[64];
+		if (read_corename(name, sizeof name)) break;   /* a real, different name */
+		struct timespec ts = { 0, 2 * 1000000L };
+		nanosleep(&ts, NULL);
+		ours = vectrex_core_loaded();
+	}
+	if (stat("/tmp/CORENAME", &name_st) == 0) name_st_ok = 1;
+	name_ours = ours;
+	last_name_ms = t;
+	return ours;
 }
 
 /* The core writes its status block (signature "PTXC", input sequence counter)
@@ -101,18 +165,30 @@ static int vectrex_core_loaded(void)
    which stale RAM cannot. */
 static int core_signature(void) { return st->build_magic == 0x43585450u; }
 
+/* 1 while we still own the block; otherwise 0 and *why says what failed. No exit, no writes. */
+static int still_ours(const char **why)
+{
+	if (core_lost) { *why = "ownership already lost"; return 0; }
+	long t = now_ms();
+	if (!corename_ours(t))              { *why = "another core was loaded"; return 0; }
+	if (!core_signature())              { *why = "the core's signature is gone (PiTrex Mode off?)"; return 0; }
+	uint32_t seq = in->seq;
+	if (seq != last_seq) { last_seq = seq; last_seq_ms = t; }
+	if (t - last_seq_ms >= PTX_SEQ_TIMEOUT_MS) { *why = "the core's input counter stopped"; return 0; }
+	uint32_t rd_lo = (uint32_t)st->rd_idx;
+	if ((int32_t)(rd_lo - last_rd_lo) < 0) { *why = "the core's read index went backwards (reloaded)"; return 0; }
+	last_rd_lo = rd_lo;
+	if (hdr->session != session)        { *why = "another producer took over the header"; return 0; }
+	return 1;
+}
+
 static void check_core_alive(void)
 {
-	if (core_lost) return;
-	long t = now_ms();
-	if (in->seq != last_seq) { last_seq = in->seq; last_seq_ms = t; }
-	int ok = core_signature() && t - last_seq_ms < 500;
-	if (ok && t - last_name_ms >= 1000) { last_name_ms = t; ok = vectrex_core_loaded(); }
-	if (!ok) {
-		core_lost = 1;
-		fprintf(stderr, "ptx: Vectrex core or PiTrex Mode gone - stopping (no further writes)\n");
-		exit(3);
-	}
+	const char *why;
+	if (still_ours(&why)) return;
+	core_lost = 1;
+	fprintf(stderr, "ptx: %s - stopping (no further writes)\n", why);
+	exit(3);
 }
 
 static void hb_tick(void)
@@ -135,20 +211,38 @@ static void nap_us(long us)
 	hb_tick();
 }
 
-static void publish(void)
+static void publish_raw(void)
 {
 	__sync_synchronize();           /* commands visible before the index */
 	hdr->wr_idx = wr;
 	published = wr;
 }
 
-/* Ctrl-C, kill or a dropped SSH session: clear the magic so the core hands
-   back at once (a real crash is still caught by the 100 ms heartbeat timeout). */
+static void publish(void)
+{
+	check_core_alive();             /* never publish into a block we may no longer own */
+	publish_raw();
+}
+
+/* Ctrl-C, kill or a dropped SSH session: clear the magic so the core hands back at once
+   (a real crash is still caught by the 100 ms heartbeat timeout) - but only if we can still
+   prove, right now and with async-signal-safe calls, that the block is ours. If the core has
+   changed (the supervisor in pitrexd.sh sends SIGTERM exactly then) we leave it untouched. */
 static void on_signal(int sig)
 {
 	(void)sig;
-	if (!core_lost && hdr) hdr->magic = 0;
+	if (!core_lost && hdr && hdr->session == session && vectrex_core_loaded() && core_signature())
+		hdr->magic = 0;
 	_exit(0);
+}
+
+static uint32_t new_session(void)
+{
+	uint32_t v = 0;
+	int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+	if (fd >= 0) { if (read(fd, &v, sizeof v) != (ssize_t)sizeof v) v = 0; close(fd); }
+	if (!v) v = (uint32_t)now_ms() * 2654435761u ^ (uint32_t)getpid();
+	return v ? v : 1;
 }
 
 static int m_open(void)
@@ -170,11 +264,8 @@ static int m_open(void)
 	void *p = mmap(0, PTX_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, memfd, PTX_DDR_BASE);
 	if (p == MAP_FAILED) { perror("ptx: mmap"); close(memfd); return -1; }
 	base = p;
-	hdr  = (arm_hdr_t *)(base + 0x0000);
 	st   = (core_status_t *)(base + 0x0040);
 	in   = (volatile ptx_input_t *)(base + 0x0080);
-	ring = (volatile uint64_t *)(base + 0x1000);
-	aud  = (volatile uint64_t *)(base + 0x1000 + PTX_RING_N * 8u);
 	/* Read-only until the core proves it is live with PiTrex Mode on. */
 	long t0 = now_ms(), told = t0;
 	last_seq = in->seq;
@@ -191,7 +282,24 @@ static int m_open(void)
 			fprintf(stderr, "ptx: waiting for the core - turn on OSD > System > PiTrex Mode\n");
 		}
 	}
-	last_seq = in->seq; last_seq_ms = last_name_ms = now_ms();
+	long t = now_ms();
+	last_seq = in->seq; last_seq_ms = t;
+	last_rd_lo = (uint32_t)st->rd_idx;
+	name_st_ok = 0;
+	if (!corename_ours(t)) {         /* the core changed between the signature and now */
+		fprintf(stderr, "ptx: the Vectrex core was unloaded\n");
+		munmap((void *)base, PTX_MAP_SIZE); base = NULL; close(memfd); return -1;
+	}
+	session = new_session();
+	hdr  = (arm_hdr_t *)(base + 0x0000);
+	ring = (volatile uint64_t *)(base + 0x1000);
+	aud  = (volatile uint64_t *)(base + 0x1000 + PTX_RING_N * 8u);
+	/* Handlers first: they only touch the block once session is in the header (and then only
+	   if ownership still holds), so a signal during setup cannot leave a stray magic. */
+	signal(SIGINT, on_signal);
+	signal(SIGTERM, on_signal);
+	signal(SIGHUP, on_signal);
+	hdr->session = session;          /* word 1 high half: ignored by the core, read back by every check */
 	wr = published = st->rd_idx;     /* resume wherever the core is */
 	hdr->version = PTX_VERSION;
 	hdr->log2n = PTX_RING_LOG2;
@@ -202,14 +310,12 @@ static int m_open(void)
 	hb_tick();
 	__sync_synchronize();
 	hdr->magic = PTX_MAGIC;          /* with a moving coded heartbeat: the core takes over */
-	signal(SIGINT, on_signal);
-	signal(SIGTERM, on_signal);
-	signal(SIGHUP, on_signal);
 	return 0;
 }
 
 static void m_push(uint64_t cmd)
 {
+	if (wr == published) check_core_alive();   /* start of a ring batch: the ring write below is a DDR write */
 	while (wr - st->rd_idx >= PTX_RING_N - PTX_PUBLISH) {   /* ring full: wait */
 		if (published != wr) publish();
 		nap_us(50);
@@ -222,8 +328,7 @@ static void m_push(uint64_t cmd)
 static void m_frame(uint64_t stream_cycles)
 {
 	(void)stream_cycles;
-	publish();
-	check_core_alive();
+	publish();                       /* checks ownership first */
 	hb_tick();
 	/* Stay at most PTX_LEAD_FRAMES frames ahead of what the core has fetched
 	   (its FIFO is tiny, so fetched ~ played): enough slack for Linux
@@ -266,9 +371,14 @@ static void m_status(ptx_status_t *o)
 static void m_close(void)
 {
 	if (!base) return;
-	if (!core_lost) {
-		publish();
-		hdr->magic = 0;              /* core hands back to the 6809 at once */
+	const char *why;
+	if (hdr && !core_lost) {
+		if (still_ours(&why)) {
+			publish_raw();
+			hdr->magic = 0;              /* core hands back to the 6809 at once */
+		} else {
+			core_lost = 1;               /* not ours any more (or a newer producer is): leave the block alone */
+		}
 	}
 	munmap((void *)base, PTX_MAP_SIZE);
 	close(memfd);
@@ -303,6 +413,7 @@ uint32_t ptx_audio_space(void)
 void ptx_audio_write(const int16_t *s, uint32_t n)
 {
 	if (!ptx_audio_ready()) return;
+	check_core_alive();              /* the PCM ring and aud_wr are DDR writes too */
 	while (n--) {
 		aud_part |= (uint64_t)(uint16_t)*s++ << (16 * aud_nsamp);
 		if (++aud_nsamp == 4) {
