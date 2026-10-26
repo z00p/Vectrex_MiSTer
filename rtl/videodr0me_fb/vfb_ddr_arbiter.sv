@@ -2,7 +2,8 @@
 // Fixed-priority DDRAM burst arbiter.
 // Copyright (C) 2026 Videodr0me
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Priority is readout, flush, fill, composition, PiTrex ring read/write,
+// Priority is readout, flush, fill, PiTrex ring read/write (B8: above composition, so a
+// long composition pass cannot starve the command FIFO), composition,
 // artwork upload, then artwork readout. The arbiter routes requests, drains in-flight bursts across reset,
 // and completes invalid bursts locally without accessing DDRAM.
 // ============================================================================
@@ -78,7 +79,7 @@ module vfb_ddr_arbiter (
 	input  wire  [7:0]  upload_write_be,
 	output wire         upload_write_advance,
 
-	// PiTrex command ring (between composition and artwork upload)
+	// PiTrex command ring (B8: above composition, below flush/fill)
 	input  wire         ptx_read_ready,
 	output logic        ptx_read_grant,
 	input  wire  [28:0] ptx_read_addr,
@@ -146,14 +147,14 @@ always_comb begin
 		arb_select = SELECT_FLUSH;
 	else if (fill_ready)
 		arb_select = SELECT_FILL;
-	else if (compose_read_ready)
-		arb_select = SELECT_COMPOSE_READ;
-	else if (compose_write_ready)
-		arb_select = SELECT_COMPOSE_WRITE;
 	else if (ptx_read_ready)
 		arb_select = SELECT_PTX_READ;
 	else if (ptx_write_ready)
 		arb_select = SELECT_PTX_WRITE;
+	else if (compose_read_ready)
+		arb_select = SELECT_COMPOSE_READ;
+	else if (compose_write_ready)
+		arb_select = SELECT_COMPOSE_WRITE;
 	else if (upload_write_ready)
 		arb_select = SELECT_UPLOAD_WRITE;
 	else if (artwork_read_ready)

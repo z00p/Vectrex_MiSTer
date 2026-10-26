@@ -23,7 +23,7 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    It adds:
    | Path | What |
    |---|---|
-   | `_Unstable/Vectrex-PiTrex_<build>_<date>.rbf` | the Vectrex core with PiTrex mode; the menu entries load it as "Vectrex-PiTrex", so its settings live in their own `config/Vectrex-PiTrex_v1.CFG` |
+   | `_Unstable/Vectrex-PiTrex_<YYYYMMDD>.rbf` | the Vectrex core with PiTrex mode; the menu entries load it as "Vectrex-PiTrex", so its settings live in their own `config/Vectrex-PiTrex_v1.CFG` |
    | `pitrex/` | the programs and the launcher |
    | `Scripts/PiTrex_*.sh` | Setup, Update, Stop and Uninstall |
    | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive, Tac/Scan and Gong Rider |
@@ -86,7 +86,8 @@ race, and button 3 cycles through the rest. None are included.
 | The **PiTrex & UVMC2** folder is missing or a game isn't in it | Run Scripts > PiTrex_Setup. An entry only appears for a program that is in `/media/fat/pitrex` (Tac/Scan needs nothing built, only the romset). |
 | The picture freezes or stutters | Another heavy job is running on the ARM (e.g. an update or a network copy). Stop it, or run PiTrex_Stop and start the program again. |
 | SSH or the network can't reach the MiSTer | A VPN on your PC can block local network traffic. Turn it off, or allow local network access. |
-| A main-menu entry loads the core but the game doesn't start | Run Scripts > PiTrex_Setup (it starts `pitrexd` and sets `log_file_entry=1`), then try again. |
+| A main-menu entry loads the core but the game doesn't start | Run Scripts > PiTrex_Setup (it starts `pitrexd` and sets `log_file_entry=1`), then try again. If it still fails, note the cause byte in `devmem 0x3400005C 32` (bits 15..8, see [PROTOCOL.md](PROTOCOL.md)) and report it. |
+| SSH or scripts are very slow while a game runs | Expected: MiSTer Main runs at real-time priority and keeps the CPU busy, and PiTrex programs and `pitrexd` run just above it (`chrt -r 49`) so they keep their timing. |
 | A UVMC2 picture looks too big or too small | Set `scale=<n>` in `/media/fat/pitrex/uvmc2.cfg` (default 120; larger means bigger). |
 | You want to see what a program is doing | Its output goes to `/tmp/pitrex.log` on the MiSTer (`/tmp/pitrexd.log` for menu starts). |
 

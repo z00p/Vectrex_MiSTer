@@ -69,4 +69,4 @@ static void file_input(ptx_input_t *o)
 }
 static void file_status(ptx_status_t *o) { o->valid = 0; }
 
-const ptx_backend_t ptx_backend_file = { file_open, file_push, file_frame, file_input, file_status, file_close };
+const ptx_backend_t ptx_backend_file = { file_open, file_push, file_frame, file_input, file_status, file_close, NULL };

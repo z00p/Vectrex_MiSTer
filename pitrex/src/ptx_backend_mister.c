@@ -169,6 +169,7 @@ static int core_signature(void) { return st->build_magic == 0x43585450u; }
    A change means the core reset the machine and stopped listening to us; it will not take
    over again until it has seen the magic cleared. Older cores keep it at 0. */
 static uint16_t epoch0;
+static long     attach_ms;
 static int      epoch_changed;
 static uint16_t core_epoch(void) { return (uint16_t)(st->build >> 16); }
 
@@ -190,10 +191,35 @@ static int still_ours(const char **why)
 	return 1;
 }
 
+static long last_chk_ms;
 static void check_core_alive(void)
 {
 	const char *why;
+	/* at most once per millisecond: the ownership test costs a stat() plus several uncached DDR reads, and a producer that publishes a
+	 * 32-command batch every ~30 us (UVMC2 images) spent most of its time here.  The window it leaves is about 1 ms of stream. */
+	{ long t = now_ms(); if (t == last_chk_ms && !core_lost) return; last_chk_ms = t; }
 	if (still_ours(&why)) return;
+	/* B7 also drops the takeover when Main downloads a file into the core, and an MGL menu entry
+	   sends the overlay and the .ptx a second or two after the core loads. Early on, attach again
+	   instead of exiting; later, an epoch change is a real reset and we hand the Vectrex back. */
+	static int reattached;
+	if (epoch_changed && hdr && reattached < 4 && now_ms() - attach_ms < 8000) {
+		reattached++;
+		hdr->magic = 0;
+		__sync_synchronize();
+		{ struct timespec ts = { 0, 200000L }; nanosleep(&ts, NULL); }
+		epoch0 = core_epoch();
+		epoch_changed = 0;
+		wr = published = st->rd_idx;
+		hdr->wr_idx = wr;
+		last_rd_lo = (uint32_t)wr;
+		hdr->hb_lo = ++hb;
+		hdr->hb_hi = ~hb ^ PTX_MAGIC;
+		__sync_synchronize();
+		hdr->magic = PTX_MAGIC;
+		fprintf(stderr, "ptx: the core dropped the takeover during start-up (a file load?) - attached again\n");
+		return;
+	}
 	if (epoch_changed && hdr) {      /* still our core and our block: release it so it can attach again */
 		hdr->magic = 0;
 		__sync_synchronize();
@@ -326,18 +352,24 @@ static int m_open(void)
 	aud_nsamp = 0;
 	hdr->aud_wr = aud_wr;
 	epoch0 = core_epoch();
+	attach_ms = now_ms();
 	hb_tick();
 	__sync_synchronize();
 	hdr->magic = PTX_MAGIC;          /* with a moving coded heartbeat: the core takes over */
 	return 0;
 }
 
+static uint64_t rd_cache;
 static void m_push(uint64_t cmd)
 {
 	if (wr == published) check_core_alive();   /* start of a ring batch: the ring write below is a DDR write */
-	while (wr - st->rd_idx >= PTX_RING_N - PTX_PUBLISH) {   /* ring full: wait */
-		if (published != wr) publish();
-		nap_us(50);
+	if (wr - rd_cache >= PTX_RING_N - PTX_PUBLISH) {      /* rd_idx only ever grows: re-read the (uncached) DDR word only when the cached one says full */
+		rd_cache = st->rd_idx;
+		while (wr - rd_cache >= PTX_RING_N - PTX_PUBLISH) {   /* ring full: wait */
+			if (published != wr) publish();
+			nap_us(50);
+			rd_cache = st->rd_idx;
+		}
 	}
 	ring[wr & (PTX_RING_N - 1)] = cmd;
 	wr++;
@@ -404,7 +436,15 @@ static void m_close(void)
 	base = NULL;
 }
 
-const ptx_backend_t ptx_backend_mister = { m_open, m_push, m_frame, m_input, m_status, m_close };
+/* Heartbeat only, from a helper thread (um2run: the guest can be busy for seconds between bus operations).  Ownership checks
+ * stay on the producing thread (publish/nap), so nothing here races with the reattach logic. */
+static void m_poll(void)
+{
+	if (core_lost || !hdr) return;
+	hb_tick();
+}
+
+const ptx_backend_t ptx_backend_mister = { m_open, m_push, m_frame, m_input, m_status, m_close, m_poll };
 
 /* PCM audio (B6 cores): 16-bit mono at 32 kHz into the core's mixer. Samples are packed
  * four to a word (first in bits 15:0); the core reports the words it has fetched in its

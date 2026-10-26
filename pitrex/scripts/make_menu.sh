@@ -11,13 +11,17 @@ PITREX=$FAT/pitrex
 MENU="$FAT/_PiTrex & UVMC2"
 PTX=$FAT/games/Vectrex/PiTrex
 OVL=$FAT/games/Vectrex/Overlays
-CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_*.rbf 2>/dev/null | sort -V | tail -1)
+# standard MiSTer naming from B8: Vectrex-PiTrex_YYYYMMDD.rbf (older releases: Vectrex-PiTrex_B<n>_<date>.rbf)
+CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_[0-9]*.rbf 2>/dev/null | sort | tail -1)
+[ -n "$CORE" ] || CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_*.rbf 2>/dev/null | sort -V | tail -1)
 [ -n "$CORE" ] || CORE=$(ls -1 $FAT/_Unstable/Vectrex_PiTrex_B*.rbf 2>/dev/null | sort -V | tail -1)
 [ -n "$CORE" ] || { echo "No PiTrex core in _Unstable"; exit 1; }
 RBF=${CORE#$FAT/}; RBF=${RBF%.rbf}
 mkdir -p "$MENU" "$PTX"
 # the core is now Vectrex-PiTrex_*.rbf: drop the older Vectrex_PiTrex_B* files once one is there
 case "$CORE" in */Vectrex-PiTrex_*) rm -f $FAT/_Unstable/Vectrex_PiTrex_B*.rbf ;; esac
+# and the B<n>-named files once a dated one is there
+case "$CORE" in */Vectrex-PiTrex_[0-9]*) rm -f $FAT/_Unstable/Vectrex-PiTrex_B*.rbf ;; esac
 python3 - <<'PYEOF'
 # PiTrex Mode = OSD status bit 36 (byte 4, bit 4). Our core loads as "Vectrex-PiTrex" (the MGL's
 # setname), so its settings live in their own file; clear the bit older releases set in the

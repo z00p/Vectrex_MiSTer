@@ -26,6 +26,8 @@ static uint8_t ora, orb, ddra, ddrb, acr, pcr, ier, ifr_static;
 static uint8_t t1_latch_lo, t1_latch_hi, t2_latch_lo;
 static uint64_t t1_start;  static uint32_t t1_n; static int t1_armed;
 static uint64_t t2_start;  static uint32_t t2_n; static int t2_armed;
+static int t2_sync_pending;        /* re-phase the sub-cycle remainder when the program sees T2 expire */
+static int no_t2_sync;             /* PTX_NOSYNC=1: old behaviour, for A/B comparison */
 
 /* ---- shadow PSG -------------------------------------------------------- */
 static uint8_t psg_reg[16];
@@ -110,6 +112,7 @@ int ptx_init(void)
 	be = (b && !strcmp(b, "mister")) ? &ptx_backend_mister : &ptx_backend_file;
 	if (be->open()) return -1;
 	now_cycles = emit_end = 0;
+	no_t2_sync = getenv("PTX_NOSYNC") != NULL;
 	be->push(ptx_cmd(PTX_OP_RESET_SYNC, 0, 0, 0));
 	return 0;
 }
@@ -132,6 +135,8 @@ uint32_t ptx_now_us(void) { return (uint32_t)(now_cycles * 2 / 3); }
 
 void ptx_get_status(ptx_status_t *o) { be->status(o); }
 void ptx_get_input(ptx_input_t *o) { be->input(o); }
+
+void ptx_poll(void) { if (be && be->poll) be->poll(); }
 
 void ptx_frame(void)
 {
@@ -171,7 +176,7 @@ void ptx_write(uint16_t addr, uint8_t data)
 		break;
 	case 0x9:
 		t2_n = (uint32_t)data << 8 | t2_latch_lo;
-		t2_start = t; t2_armed = 1; ifr_static &= ~0x20;
+		t2_start = t; t2_armed = 1; ifr_static &= ~0x20; t2_sync_pending = 1;
 		break;
 	case 0x0: case 0x1: case 0xF:
 		psg_bus_update();
@@ -210,6 +215,15 @@ uint8_t ptx_read(uint16_t addr)
 	case 0xC: r = pcr; break;
 	case 0xD: {
 		uint8_t f = ifr_static & 0x7F;
+		/* The program has just seen the frame timer expire (the T2 wait at the top of every
+		 * frame). Restart the sub-cycle (quarter/eighth-cycle) rounding from zero here, so every
+		 * frame rounds its short delays identically: without this, the leftover from the previous
+		 * frame made event spacing differ by one E cycle between frames (jitter on ZERO/REF and
+		 * ramp sequences, visible as jumping dots). */
+		if ((f & 0x20) && t2_sync_pending) {
+			t2_sync_pending = 0;
+			if (!no_t2_sync) ns_remainder = 0;
+		}
 		r = f | ((f & ier) ? 0x80 : 0);
 		break;
 	}

@@ -31,7 +31,7 @@ renderer's framebuffer and artwork areas. Offsets below are in 64-bit words.
 | 8 | core | `rd_idx`: entries fetched so far |
 | 9 | core | stream time in E cycles |
 | 10 | core | bits 31..0 frames, bits 63..32 underruns |
-| 11 | core | bits 31..0 signature `"PTXC"` (`0x43585450`), bits 39..32 build number, bits 63..48 (B7) epoch: counts every dropped takeover (reset, timeout, hand-back) |
+| 11 | core | bits 31..0 signature `"PTXC"` (`0x43585450`), bits 39..32 build number, bits 47..40 (B8) cause of the last reset or drop (see below), bits 63..48 (B7) epoch: counts every dropped takeover (reset, timeout, hand-back) |
 | 12 | core | B6: audio `rd`: PCM words fetched, 14 bits (wraps at 16,384) |
 | 16 | core | input: x1, y1, x2, y2 (signed 8-bit pots), PSG port A (buttons, active low), pad bits |
 | 17 | core | input sequence number (changes every 0.5 ms while the core is listening) |
@@ -93,13 +93,25 @@ until a live program is present.
   is only a baseline: the core takes over when a later, different one arrives, so a stale header
   left in memory cannot start a takeover. The core then resets the machine, holds the 6809 in reset
   and starts fetching once that reset has finished (B7: no command is consumed earlier).
+  From B8 the core also waits until its own boot sequence is over (cartridge/BIOS load, save
+  hold and the delayed warm reset about 0.2 s later) before it accepts a heartbeat, so that reset
+  can no longer land on a fresh takeover.
 - **Hand-back:** when the magic is cleared (normal exit, or SIGINT/SIGTERM/SIGHUP), or no valid
   new heartbeat arrives for 100 ms (a crash), the core resets the machine and the 6809 runs
   again.
 - **Reset (B7):** any machine or video reset drops the takeover and the 6809 boots the BIOS; the
   epoch in word 11 advances. The core will not take over again while the magic stays set, so the
   program sees the epoch change, clears the magic and exits. Starting the program again attaches
-  normally.
+  normally. From B8 this applies only when a live takeover was dropped (the epoch moved); a reset
+  that comes before any takeover leaves a waiting program alone, and it is taken over normally.
+  Loading the overlay or the `.ptx` file (ioctl index 2 and 3) no longer resets the machine in
+  PiTrex mode; the framework's `status[0]` is ignored during those downloads, for 0.5 s after
+  them and for 4 s after a takeover begins.
+- **Drop cause (B8):** word 11 bits 47..40 hold the cause of the last reset the core saw, latched
+  when it rises: bit 0 video reset (framework, PLL, reset button or `status[0]`), bit 1
+  `status[0]` seen (masked or not), bit 2 OSD Reset, bit 3 cartridge/BIOS load, bit 4 save hold,
+  bit 5 delayed warm reset, bit 6 BIOS change, bit 7 arbiter client reset. Read it after a failed
+  start (`devmem 0x3400005C 32`, bits 15..8 of that 32-bit word).
 - **Pause (B7):** the PCM channel stops consuming samples while the machine is paused.
 - **Watchdog on the ARM:** before every publish and every batch of ring writes the program
   checks that `/tmp/CORENAME` still names our core (`Vectrex-PiTrex`, or `VECTREX` for a direct

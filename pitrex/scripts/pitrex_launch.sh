@@ -6,7 +6,8 @@
 # waits, read-only, for the Vectrex core and PiTrex Mode), then loads the core.
 PITREX=/media/fat/pitrex
 FAT=/media/fat
-CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_*.rbf 2>/dev/null | sort -V | tail -1)
+CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_[0-9]*.rbf 2>/dev/null | sort | tail -1)
+[ -n "$CORE" ] || CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_*.rbf 2>/dev/null | sort -V | tail -1)
 [ -n "$CORE" ] || CORE=$(ls -1 $FAT/_Unstable/Vectrex_PiTrex_B*.rbf 2>/dev/null | sort -V | tail -1)
 PROG="$1"; shift
 
@@ -22,13 +23,13 @@ sleep 1
 cd "$PITREX" || exit 1
 if [ "$(cat /tmp/CORENAME 2>/dev/null)" = "Vectrex-PiTrex" ]; then
 	# our core already running: just switch programs
-	PTX_BACKEND=mister nohup "$PITREX/$PROG" "$@" > /tmp/pitrex.log 2>&1 &
+	PTX_BACKEND=mister nohup chrt -r 49 "$PITREX/$PROG" "$@" > /tmp/pitrex.log 2>&1 &
 	echo "Starting $PROG on the running Vectrex-PiTrex core"
 else
 	# Load our core through an MGL so it runs as "Vectrex-PiTrex" with its own settings
 	# (the official Vectrex core also reports VECTREX, so that name proves nothing).
 	# The program waits, reading /tmp/CORENAME only, until the core is up.
-	PTX_BACKEND=mister PTX_WAIT_CORE=60 nohup "$PITREX/$PROG" "$@" > /tmp/pitrex.log 2>&1 &
+	PTX_BACKEND=mister PTX_WAIT_CORE=60 nohup chrt -r 49 "$PITREX/$PROG" "$@" > /tmp/pitrex.log 2>&1 &
 	echo "Starting $PROG on $(basename "$CORE")"
 python3 - <<'PYEOF'
 # PiTrex Mode = OSD status bit 36 (byte 4, bit 4). Our core loads as "Vectrex-PiTrex" (the MGL's

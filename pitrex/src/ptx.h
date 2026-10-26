@@ -62,6 +62,7 @@ typedef struct {
 	void (*input)(ptx_input_t *out);            /* latest input block */
 	void (*status)(ptx_status_t *out);          /* core status, for diagnostics */
 	void (*close)(void);
+	void (*poll)(void);                         /* optional: keep the takeover alive from a helper thread (heartbeat) */
 } ptx_backend_t;
 
 extern const ptx_backend_t ptx_backend_file;    /* PC harness: raw stream file */
@@ -78,6 +79,7 @@ void     ptx_wait_until_cycle(uint64_t cycle);
 uint64_t ptx_now_cycles(void);
 uint32_t ptx_now_us(void);
 void     ptx_frame(void);                /* call once per frame (v_WaitRecal) */
+void     ptx_poll(void);                 /* heartbeat + ownership check; safe from another thread (um2run) */
 void     ptx_get_status(ptx_status_t *out);
 void     ptx_get_input(ptx_input_t *out);
 

@@ -7,8 +7,13 @@
 PITREX=/media/fat/pitrex
 RUN=/tmp/ptx
 
+# Main runs at SCHED_FIFO 48 and keeps the CPU almost fully busy, so a normal-priority daemon
+# sees a file pick seconds late. Run above it, like the programs (the loop sleeps between polls).
+if [ -z "$PITREXD_RT" ]; then PITREXD_RT=1 exec chrt -r 49 "$0" "$@"; fi
+
 stamp() { stat -c %Y.%Z /tmp/FILESELECT 2>/dev/null; }
 last=$(stamp)
+last_f=""; last_t=0
 
 core_is_ours() { local c; read -r c 2>/dev/null < /tmp/CORENAME; case "$c" in Vectrex-PiTrex|VECTREX) return 0 ;; esac; return 1; }
 
@@ -57,12 +62,15 @@ while sleep 0.2; do
 	f=$(cat /tmp/FULLPATH 2>/dev/null)
 	case "${f,,}" in *.ptx) ;; *) continue ;; esac
 	[ -f "$f" ] || continue
+	# Main can report one MGL file load twice: leave a program just started from the same file alone
+	if [ "$f" = "$last_f" ] && [ $(( $(date +%s) - last_t )) -lt 10 ] && [ -n "$(ptx_pids)" ]; then continue; fi
+	last_f=$f; last_t=$(date +%s)
 
 	# one program at a time: stop what is running (launcher or OSD started)
 	stop_programs
 	name=$(basename "$f"); name=${name%.*}; name=${name// /_}
 	mkdir -p "$RUN" && cp "$f" "$RUN/$name" && chmod +x "$RUN/$name" || continue
 	cd "$PITREX" 2>/dev/null || cd /tmp
-	PTX_BACKEND=mister nohup "$RUN/$name" > /tmp/pitrex.log 2>&1 &
+	PTX_BACKEND=mister nohup chrt -r 49 "$RUN/$name" > /tmp/pitrex.log 2>&1 &
 	echo "$(date +%T) started $name from $f" >> /tmp/pitrexd.log
 done

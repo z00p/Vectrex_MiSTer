@@ -52,5 +52,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/vectrex_video.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/pitrex/pitrex_player.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/pitrex/pitrex_ddr.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/pitrex/pitrex_audio.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/pitrex/pitrex_reset.sv
 set_global_assignment -name SDC_FILE Vectrex.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Vectrex.sv

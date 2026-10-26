@@ -63,7 +63,7 @@ assign HDMI_BOB_DEINT = 0;
 `include "build_id.v"
 // PiTrex mode build number: shown in Core Info and reported in the ring's
 // status block. Bump both together for every build that goes on a MiSTer.
-localparam [7:0] PTX_BUILD = 8'd7;
+localparam [7:0] PTX_BUILD = 8'd8;
 
 localparam CONF_STR = {
 	"VECTREX;;",
@@ -215,7 +215,7 @@ localparam CONF_STR = {
 	"P5-,DE10-Lite core, with;",
 	"P5-,additional work by alanswx.;",
 	"P5-;",
-	"P5-,PiTrex mode: build B7;",
+	"P5-,PiTrex mode: build B8;",
 	"P5-;",
 	"P5-,If you enjoy reliving the;",
 	"P5-,golden age of vector games,;",
@@ -445,7 +445,7 @@ wire bios_reset = bios_reset_cnt != 0;
 
 // Cartridge loading and menu reset stop machine/source timing while the
 // current framebuffer continues presenting. Framework resets restart both.
-wire video_reset = !machine_pll_lock_sync[1] | RESET | status[0] | buttons[1];
+wire video_reset;
 wire delayed_reset = (reset_timeout != 23'd0) &&
 	(reset_timeout <= 23'd999);
 // PiTrex mode: a short machine reset on every mode change (clean VIA state on
@@ -471,7 +471,28 @@ wire ptx_mode_reset = ptx_mode_reset_cnt != 5'd0;
 wire ptx_entry_busy = (ptx_mode_q != ptx_active) || ptx_mode_reset;
 wire machine_reset = video_reset | status[7] | rom_download | save_hold_reset | delayed_reset | ptx_mode_reset;
 // every reset that destroys VIA state except our own entry reset: drops a live takeover
-wire ptx_user_reset = video_reset | status[7] | rom_download | save_hold_reset | delayed_reset | bios_reset;
+wire ptx_user_reset;
+wire [6:0] ptx_drop_cause;
+// B8: overlay/launcher downloads (ioctl index 2, 3) never reset the machine or drop a PiTrex takeover
+pitrex_reset pitrex_reset
+(
+	.clk            (clk_sys),
+	.active         (ptx_active),
+	.ptx_mode       (status[36]),
+	.ioctl_download (ioctl_download),
+	.rom_download   (rom_download),
+	.pll_unlocked   (!machine_pll_lock_sync[1]),
+	.fw_reset       (RESET),
+	.status0        (status[0]),
+	.button_reset   (buttons[1]),
+	.menu_reset     (status[7]),
+	.save_hold      (save_hold_reset),
+	.delayed_reset  (delayed_reset),
+	.bios_reset     (bios_reset),
+	.video_reset    (video_reset),
+	.user_reset     (ptx_user_reset),
+	.cause          (ptx_drop_cause)
+);
 wire core_reset = machine_reset | bios_reset;
 
 // A delayed warm reset preserves RAM state and skips the GCE startup animation.
@@ -597,6 +618,19 @@ reg       ptx_user_reset_q = 1'b0;               // glitch-free source for the s
 reg [1:0] ptx_drop_125 = 2'b00;
 always_ff @(posedge clk_sys) ptx_user_reset_q <= ptx_user_reset;
 always_ff @(posedge clk_125) ptx_drop_125 <= {ptx_drop_125[0], ptx_user_reset_q};
+// The core's own boot sequence (cartridge/BIOS load, save hold, then the delayed warm reset
+// about 0.2 s later) must finish before a program may take over: otherwise the delayed reset
+// lands on a fresh takeover and drops it (seen on MGL launches once programs ran at RT priority).
+reg       ptx_boot_busy_q = 1'b0;
+always_ff @(posedge clk_sys) ptx_boot_busy_q <= rom_download | save_hold_reset | (reset_timeout != 23'd0);
+reg [1:0] ptx_boot_125 = 2'b00;
+always_ff @(posedge clk_125) ptx_boot_125 <= {ptx_boot_125[0], ptx_boot_busy_q};
+// drop cause (latched in clk_sys at the rising edge of the drop, static afterwards) for status word 11
+(* altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS"} *)
+reg [6:0] ptx_cause_m = 7'd0;
+(* altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS"} *)
+reg [6:0] ptx_cause_125 = 7'd0;
+always_ff @(posedge clk_125) begin ptx_cause_m <= ptx_drop_cause; ptx_cause_125 <= ptx_cause_m; end
 
 vfb_async_fifo #(.WIDTH(64), .DEPTH(128), .ALMOST_FULL_MARGIN(40)) pitrex_fifo
 (
@@ -674,6 +708,8 @@ pitrex_ddr #(.BUILD(PTX_BUILD)) pitrex_ddr
 	.enable           (ptx_enable_125[1]),
 	.reset            (ptx_client_reset),
 	.drop             (ptx_drop_125[1]),
+	.drop_cause       (ptx_cause_125),
+	.boot_busy        (ptx_boot_125[1]),
 	.present          (ptx_present_125),
 	.rd_ready         (ptx_read_ready),
 	.rd_grant         (ptx_read_grant),

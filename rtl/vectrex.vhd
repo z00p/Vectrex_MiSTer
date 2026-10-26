@@ -434,7 +434,12 @@ port map
 process (clock)
 begin
 	if rising_edge(clock) then
-		cpu_phase <= cpu_phase + 1;
+		-- B8: in PiTrex mode a pause (command underrun, manual pause) freezes the phase too, so
+		-- the beam/integrator enables keep their exact 8-per-E-cycle pattern across the pause.
+		-- Otherwise the free-running phase could lose or gain one 12 MHz tick per pause.
+		if pause = '0' or ptx_enable = '0' then
+			cpu_phase <= cpu_phase + 1;
+		end if;
 		clken_12  <= '0';
 		cpu_en    <= '0';
 		if pause = '0' then

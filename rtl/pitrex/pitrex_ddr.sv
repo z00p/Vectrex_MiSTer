@@ -15,7 +15,7 @@
 //   word 9      core_cycles (stream time)    core
 //   word 10     {underruns, frames}          core
 //   word 4      audio wr_idx (words)         ARM (B6)
-//   word 11     {epoch, 0, build, "PTXC"}    core (identifies the core build; bits 63..48
+//   word 11     {epoch, cause, build, "PTXC"} core (identifies the core build; bits 63..48
 //                                            count every takeover the core dropped, B7)
 //   word 12     audio rd_idx (words fetched) core (B6)
 //   word 16     {pad, psg_ioa, y2, x2, y1, x1}  core
@@ -53,6 +53,8 @@ module pitrex_ddr #(
 	input  wire         enable,          // synchronised to clk by the caller
 	input  wire         reset,           // arbiter-coordinated client reset (see above)
 	input  wire         drop,            // machine reset level, synchronised to clk by the caller
+	input  wire  [6:0]  drop_cause,      // B8: why `drop` rose (pitrex_reset.cause, quasi-static, synchronised)
+	input  wire         boot_busy,       // the core's boot load/save hold/delayed reset is pending: no takeover yet
 	output logic        present = 1'b0,  // a live ARM program is streaming (coded heartbeat)
 
 	// arbiter read client
@@ -97,6 +99,7 @@ localparam logic [31:0] VERSION   = 32'd0;          // header word 0, bits 63..3
 localparam logic [28:0] RING_BASE = PTX_BASE + 29'h200;
 localparam integer      RING_LOG2 = 16;
 localparam logic [15:0] POLL_GAP  = 16'd250;        // 2 us between idle polls
+localparam logic [15:0] POLL_GAP_FULL = 16'd2000;  // B8: 16 us while the FIFO holds >= 58 us of work
 localparam logic [15:0] STATUS_GAP = 16'd62500;     // 0.5 ms between status writes
 
 // PCM audio ring (B6): after the command ring, 8192 words of four samples each
@@ -126,6 +129,10 @@ logic [15:0] status_timer = '0;
 logic        status_due = 1'b0;
 
 wire kill = reset | drop;         // drop the takeover
+
+// B8: cause of the last drop, reported in word 11 bits 47..40 (bit 7 = arbiter client reset)
+logic [7:0] cause_r = '0;
+always_ff @(posedge clk) if (kill) cause_r <= {reset, drop_cause};
 
 // takeover epoch: counts every present 1 -> 0 (reset, hand-back, crash) for the ARM
 logic        present_q = 1'b0;
@@ -194,6 +201,7 @@ logic        wr_stale = 1'b0;          // an abandoned burst is still draining
 logic [63:0] st_rd_idx = '0;
 logic [47:0] st_cycles = '0;
 logic [15:0] st_frames = '0, st_underruns = '0, st_epoch = '0;
+logic [7:0]  st_cause = '0;
 logic [13:0] st_aud_rd = '0;
 logic [31:0] st_pots = '0, st_seq = '0;
 logic [7:0]  st_ioa = 8'hFF;
@@ -205,7 +213,7 @@ always_comb begin
 		4'd0: wr_data = st_rd_idx;
 		4'd1: wr_data = {16'd0, st_cycles};
 		4'd2: wr_data = {16'd0, st_underruns, 16'd0, st_frames};
-		4'd3: wr_data = {st_epoch, 8'd0, BUILD, 32'h43585450};   // "PTXC"
+		4'd3: wr_data = {st_epoch, st_cause, BUILD, 32'h43585450};   // "PTXC"
 		4'd4: wr_data = {50'd0, st_aud_rd};                      // audio words fetched
 		4'd8: wr_data = {24'd0, st_ioa, st_pots};
 		4'd9: wr_data = {32'd0, st_seq};
@@ -247,7 +255,9 @@ always_ff @(posedge clk) begin
 			present     <= 1'b0;
 			hb_timer    <= '0;
 			hb_have     <= 1'b0;
-			need_detach <= 1'b1;
+			// only a dropped takeover (the ARM sees the epoch move) must be re-attached; a reset
+			// before any takeover (the core's own boot reset) leaves the waiting program alone
+			if (present) need_detach <= 1'b1;
 		end
 
 		if (reset) begin
@@ -268,6 +278,7 @@ always_ff @(posedge clk) begin
 					st_frames     <= cap_frames;
 					st_underruns  <= cap_underruns;
 					st_epoch      <= epoch;
+					st_cause      <= cause_r;
 					st_aud_rd     <= aud_rd;
 					st_pots       <= cap_pots;
 					st_ioa        <= cap_ioa;
@@ -315,7 +326,10 @@ always_ff @(posedge clk) begin
 					// accept a heartbeat only if it is coded correctly; the first one is a
 					// baseline and takeover needs a later, different one (a header left in
 					// memory by a program that is gone never moves)
-					if (magic_ok && !kill && !need_detach &&
+					// (not while the core's own boot reset is still pending: re-baseline after it)
+					if (boot_busy && !present)
+						hb_have <= 1'b0;
+					else if (magic_ok && !kill && !need_detach &&
 					    rd_data[63:32] == (~rd_data[31:0] ^ MAGIC)) begin
 						if (!hb_have) begin
 							hb_have <= 1'b1;
@@ -329,7 +343,10 @@ always_ff @(posedge clk) begin
 				end
 				if (beat == 3'd4) begin
 					aud_wr_lo  <= rd_data[13:0];
-					poll_timer <= POLL_GAP;
+					// B8: the arbiter now serves us ahead of composition, so do not burn DDR time
+					// on 2 us header polls while the FIFO is nearly full (it holds at least 88
+					// commands = 58 us of stream at the fastest possible consumption rate).
+					poll_timer <= fifo_almost_full ? POLL_GAP_FULL : POLL_GAP;
 					state      <= S_SETTLE;
 				end
 			end
