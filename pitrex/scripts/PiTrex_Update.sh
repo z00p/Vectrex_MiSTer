@@ -23,7 +23,8 @@ curl -fsSL $CA -o "$TMP" "$url" || { echo "Download failed."; exit 1; }
 
 unzip -o -q "$TMP" -d /media/fat || { echo "Unpacking failed."; exit 1; }
 rm -f "$TMP"
-chmod +x /media/fat/pitrex/* /media/fat/Scripts/PiTrex_*.sh 2>/dev/null
+chmod +x /media/fat/pitrex/* /media/fat/pitrex/um2run/um2run /media/fat/pitrex/um2run/mister_run.sh /media/fat/Scripts/PiTrex_*.sh 2>/dev/null
+mkdir -p /media/fat/games/Vectrex-PiTrex/UVMC2 /media/fat/pitrex/uvmc2
 # games now start from the main-menu folder: drop the per-game Scripts entries of B6 and older
 rm -f /media/fat/Scripts/PiTrex_Cube_demo.sh /media/fat/Scripts/PiTrex_Gyrocks.sh \
 	/media/fat/Scripts/PiTrex_Selftest.sh /media/fat/Scripts/PiTrex_VecBreak.sh \

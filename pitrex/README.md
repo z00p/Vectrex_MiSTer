@@ -7,7 +7,8 @@ ARM processor, and the Vectrex core takes the place of the console. You don't ne
 cartridge.
 
 The same route also runs games written for the **UVMC2** multicart, rebuilt for the ARM: see
-[UVMC2.md](UVMC2.md).
+[UVMC2.md](UVMC2.md). And, as an unofficial **alpha**, the UVMC2 cartridge images themselves
+(`.um2` files, unmodified), picked in the core's OSD: see [UVMC2_GAMES.md](UVMC2_GAMES.md).
 
 With **PiTrex Mode** off (the default), the core behaves exactly like
 [Videodr0me's Vectrex core](https://github.com/MiSTer-devel/Vectrex_MiSTer), which this builds on.
@@ -25,6 +26,8 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    |---|---|
    | `_Unstable/Vectrex-PiTrex_<YYYYMMDD>.rbf` | the Vectrex core with PiTrex mode; the menu entries load it as "Vectrex-PiTrex", so its settings live in their own `config/Vectrex-PiTrex_v1.CFG` |
    | `pitrex/` | the programs and the launcher |
+   | `pitrex/um2run/` | `um2run`, which runs UVMC2 cartridge images (alpha, see [UVMC2_GAMES.md](UVMC2_GAMES.md)) |
+   | `games/Vectrex-PiTrex/UVMC2/` | where you put your `.um2` images (created by PiTrex_Setup; no images are included) |
    | `Scripts/PiTrex_*.sh` | Setup, Update, Stop and Uninstall |
    | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive, Tac/Scan and Gong Rider |
 
@@ -45,6 +48,9 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
 - **From the main menu** (after PiTrex_Setup): **PiTrex & UVMC2** > e.g. **VecDrive**. The
   core, the overlay and the program load in one go. Games aren't in the Scripts menu; it
   only holds Setup, Update, Stop and Uninstall.
+- **UVMC2 cartridge images (`.um2`, alpha):** main menu > **PiTrex & UVMC2** > **UVMC2 Games**, then
+  OSD > **Load UVMC2 / PiTrex**. Card images, per-game settings and the tested games are in
+  [UVMC2_GAMES.md](UVMC2_GAMES.md).
 - **From a shell (SSH):** `/media/fat/pitrex/pitrex_launch.sh vecdrive` loads the PiTrex core
   if needed, switches PiTrex Mode on and starts the program.
 - **Overlays:** OSD > **Load Overlay**, then pick `VecDrive.art` or `VecBreak.art`.
@@ -89,6 +95,7 @@ race, and button 3 cycles through the rest. None are included.
 | A main-menu entry loads the core but the game doesn't start | Run Scripts > PiTrex_Setup (it starts `pitrexd` and sets `log_file_entry=1`), then try again. If it still fails, note the cause byte in `devmem 0x3400005C 32` (bits 15..8, see [PROTOCOL.md](PROTOCOL.md)) and report it. |
 | SSH or scripts are very slow while a game runs | Expected: MiSTer Main runs at real-time priority and keeps the CPU busy, and PiTrex programs and `pitrexd` run just above it (`chrt -r 49`) so they keep their timing. |
 | A UVMC2 picture looks too big or too small | Set `scale=<n>` in `/media/fat/pitrex/uvmc2.cfg` (default 120; larger means bigger). |
+| A `.um2` game doesn't start | See [UVMC2_GAMES.md](UVMC2_GAMES.md#troubleshooting): both ARM CPUs must be online (reboot after BigMig), and `/tmp/pitrexd.log` says why a pick was refused. |
 | You want to see what a program is doing | Its output goes to `/tmp/pitrex.log` on the MiSTer (`/tmp/pitrexd.log` for menu starts). |
 
 Problems and suggestions: please use this fork's
@@ -147,12 +154,13 @@ seed 5 (set in `Vectrex.qsf`) meets timing at all four corners. After a change, 
 | Path | What |
 |---|---|
 | `src/` | stream layer, shadow VIA/PSG, the MiSTer and file backends, `pitrexio-mister.c` |
-| `tests/` | `ptx_selftest.c` (bring-up without the library), `ptx_peek.c` (dumps the shared block) |
+| `tests/` | `ptx_selftest.c` (bring-up without the library), `ptx_peek.c` (dumps the shared block), `pitrexd_mock.sh` (tests pitrexd on a PC against a scratch directory) |
 | `games/vecdrive/`, `games/vecbreak/` | the two games, with their overlay generators (`make_overlay.py`) |
 | `games/gyrocks/` | Gyrocks with our additions (see its README) |
 | `games/doom/`, `games/gongrider/` | DOOM (MiSTer entry point and platform layer; see its README) and Roger Boesch's Gong Rider, each with its build line |
 | `games/uvmc2_tacscan/z80shim/`, `third_party/aae_z80/` | the Z80 core (Tim Cottrill's AAE core) and the adapter Tac/Scan is built with |
 | `scripts/` | the launcher, the menu builder, pitrexd and the Scripts-menu tools |
+| `um2run/` | runs UVMC2 cartridge images on the ARM (alpha): loader, RP2350 device model, SD card, cart audio, self test; see its README |
 | `tools/` | library patcher, build and run scripts, `ptxplay`, seed sweep and timing reports |
 | `../rtl/pitrex/` | the core side: `pitrex_ddr.sv` (ring reader) and `pitrex_player.sv` (bus player) |
 
@@ -165,7 +173,7 @@ seed 5 (set in `Vectrex.qsf`) meets timing at all four corners. After a change, 
 - **Daniel Ferrer:** UVMC2 (with the team) and [PureDOOM-pitrex](https://github.com/tullulah/PureDOOM-pitrex), the wireframe DOOM. **id Software:** the DOOM source (GPL).
 - **Roger Boesch:** Gong Rider ([source](https://rogerboesch.games/learn/gong-rider/), MIT licence).
 - **Tim Cottrill:** the AAE Z80 core that Tac/Scan runs on, used with his permission ([AAE issue 13](https://github.com/tcottrill/AAE/issues/13)). It is a modified port of **Edward Massey's** 1997 Z80 emulator (GNU LGPL v2, distributed here under the GPL as the LGPL allows); his readme and documentation are in `third_party/aae_z80/`. The earlier mz80 licensing issue no longer applies.
-- **The UVMC2 team** ([uvmc2-sdk](https://github.com/tullulah/uvmc2-sdk)): the UVMC2 runtime, beam model, libvpy and games, published here with their permission. See [UVMC2.md](UVMC2.md) for the full credits.
+- **The UVMC2 team** ([uvmc2-sdk](https://github.com/tullulah/uvmc2-sdk)): the UVMC2 runtime, beam model, libvpy and games, published here with their permission. See [UVMC2.md](UVMC2.md) for the full credits. `um2run` runs cartridge images built with their SDK; it contains no UVMC2 firmware and no images, and it is not an official UVMC2 tool.
 - The analogue model in `ptxplay` follows vecx's.
 - The coding and testing were AI-assisted (Claude), with everything checked on real hardware.
 

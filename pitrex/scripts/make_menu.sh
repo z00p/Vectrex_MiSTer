@@ -5,7 +5,10 @@
 #   /media/fat/games/Vectrex/PiTrex/<prog>.ptx   a small launch script the MGL hands the core
 # Picking an entry loads the PiTrex core, its overlay (if there is one) and the .ptx;
 # pitrexd (started at boot by PiTrex_Setup) sees the pick and runs the .ptx.
-# Run again after adding programs or overlays.
+# "UVMC2 Games" loads the core alone, as Vectrex-PiTrex: pick a .um2 game or a .ptx program in its OSD
+# (Load UVMC2 / PiTrex, folder games/Vectrex-PiTrex/UVMC2).
+# Every entry names the newest Vectrex-PiTrex core in _Unstable as it is NOW: run this again (PiTrex_Setup or PiTrex_Update do)
+# after copying a newer core in by hand.
 FAT=/media/fat
 PITREX=$FAT/pitrex
 MENU="$FAT/_PiTrex & UVMC2"
@@ -17,6 +20,7 @@ CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_[0-9]*.rbf 2>/dev/null | sort | tail 
 [ -n "$CORE" ] || CORE=$(ls -1 $FAT/_Unstable/Vectrex_PiTrex_B*.rbf 2>/dev/null | sort -V | tail -1)
 [ -n "$CORE" ] || { echo "No PiTrex core in _Unstable"; exit 1; }
 RBF=${CORE#$FAT/}; RBF=${RBF%.rbf}
+echo "Menu entries load $RBF"
 mkdir -p "$MENU" "$PTX"
 # the core is now Vectrex-PiTrex_*.rbf: drop the older Vectrex_PiTrex_B* files once one is there
 case "$CORE" in */Vectrex-PiTrex_*) rm -f $FAT/_Unstable/Vectrex_PiTrex_B*.rbf ;; esac
@@ -46,6 +50,16 @@ rm -f $FAT/Scripts/PiTrex_Cube_demo.sh $FAT/Scripts/PiTrex_Gyrocks.sh $FAT/Scrip
 	$FAT/Scripts/PiTrex_VecBreak.sh $FAT/Scripts/PiTrex_VecDrive.sh $FAT/Scripts/PiTrex_VecDrive_v2.sh \
 	$FAT/Scripts/UVMC2_Hello.sh $FAT/Scripts/UVMC2_TacScan.sh
 rm -f "$MENU"/*.mgl "$PTX"/*.ptx
+mkdir -p "$FAT/games/Vectrex-PiTrex/UVMC2"
+
+# core only: the games are picked in the OSD
+{
+	echo "<mistergamedescription>"
+	echo "  <rbf>$RBF</rbf>"
+	echo "  <setname>Vectrex-PiTrex</setname>"
+	echo "</mistergamedescription>"
+} > "$MENU/UVMC2 Games.mgl"
+echo "UVMC2 Games (core only; pick in the OSD)"
 
 # Tac/Scan sound: convert MAME's tacscan samples zip (games/mame/samples) once
 TS_ZIP=$FAT/games/mame/samples/tacscan.zip

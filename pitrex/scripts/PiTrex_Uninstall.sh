@@ -5,11 +5,15 @@
 # setup (pitrexd line in linux/user-startup.sh, log_file_entry from the MiSTer.ini backup).
 # Your Vectrex settings (config/VECTREX_v1.CFG) are left alone; PiTrex's own
 # (config/Vectrex-PiTrex_v1.CFG) go. NOTE: files you added under
-# /media/fat/pitrex (e.g. a UVMC2 romset in pitrex/uvmc2/) are removed with it.
+# /media/fat/pitrex (e.g. a UVMC2 romset or card image in pitrex/uvmc2/) are removed with it.
+# Your games in games/Vectrex-PiTrex (.um2 images and their sidecars, card images kept there) are NOT touched;
+# the folders are only removed when they are empty.
 [ -x /media/fat/Scripts/PiTrex_Stop.sh ] && /media/fat/Scripts/PiTrex_Stop.sh > /dev/null
 for p in $(ps | grep -v grep | grep pitrexd.sh | awk '{print $1}'); do kill "$p"; done
 
 rm -rf /media/fat/pitrex /media/fat/games/Vectrex/PiTrex "/media/fat/_PiTrex & UVMC2"
+rm -f /media/fat/games/Vectrex-PiTrex/UVMC2/README.txt
+rmdir /media/fat/games/Vectrex-PiTrex/UVMC2 /media/fat/games/Vectrex-PiTrex 2>/dev/null
 rm -f /media/fat/_Unstable/Vectrex_PiTrex_B*.rbf /media/fat/_Unstable/Vectrex-PiTrex_*.rbf
 rm -f /media/fat/config/Vectrex-PiTrex_v1.CFG
 rm -f /media/fat/games/Vectrex/Overlays/VecBreak.art /media/fat/games/Vectrex/Overlays/VecDrive.art /media/fat/games/Vectrex/Overlays/TacScan.art /media/fat/games/Vectrex/Overlays/GongRider.art
@@ -29,4 +33,5 @@ if [ -f "$INI.pitrex-bak" ]; then
 fi
 
 echo "PiTrex removed."
+[ -d /media/fat/games/Vectrex-PiTrex ] && echo "Your files in games/Vectrex-PiTrex were left in place."
 rm -f /media/fat/Scripts/PiTrex_*.sh /media/fat/Scripts/UVMC2_*.sh

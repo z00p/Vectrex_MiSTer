@@ -3,7 +3,9 @@
 # One-time setup for the main-menu folder "PiTrex & UVMC2" (run again after adding programs):
 #  - PiTrex Mode On in config/Vectrex-PiTrex_v1.CFG (our core's own settings file)
 #  - log_file_entry=1 in MiSTer.ini (Main reports the file an MGL loads; backup kept)
-#  - pitrexd, which starts the program a menu entry picks: now and at every boot
+#  - the folder games/Vectrex-PiTrex/UVMC2: the core's OSD file browser ("Load UVMC2 / PiTrex") opens games/<core name>,
+#    so put UVMC2 games (.um2) and PiTrex programs (.ptx) there
+#  - pitrexd, which starts the program or game a menu entry or an OSD pick selects: now and at every boot
 #  - builds the menu entries (make_menu.sh)
 # Undo with PiTrex_Uninstall.
 FAT=/media/fat
@@ -31,6 +33,12 @@ setbit("/media/fat/config/Vectrex-PiTrex_v1.CFG", True)
 setbit("/media/fat/config/VECTREX_v1.CFG", False)
 PYEOF
 
+mkdir -p "$FAT/games/Vectrex-PiTrex/UVMC2" "$PITREX/uvmc2"
+chmod +x "$PITREX"/*.sh "$PITREX/um2run/um2run" "$PITREX/um2run/mister_run.sh" 2>/dev/null
+if [ ! -f "$PITREX/um2run/um2run" ]; then
+	echo "Note: $PITREX/um2run/um2run is missing, so .um2 games cannot start (unzip the release again)."
+fi
+
 if grep -q '^log_file_entry=1' "$INI"; then
 	echo "MiSTer.ini: log_file_entry already 1"
 else
@@ -50,4 +58,4 @@ if ! ps | grep -v grep | grep -q pitrexd.sh; then
 fi
 
 "$PITREX/make_menu.sh"
-echo "Done: main menu > PiTrex & UVMC2."
+echo "Done: main menu > PiTrex & UVMC2. UVMC2 games (.um2) go in games/Vectrex-PiTrex/UVMC2."
