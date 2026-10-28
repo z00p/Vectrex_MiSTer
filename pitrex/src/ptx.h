@@ -67,6 +67,7 @@ typedef struct {
 
 extern const ptx_backend_t ptx_backend_file;    /* PC harness: raw stream file */
 extern const ptx_backend_t ptx_backend_mister;  /* DE10-Nano: DDR ring via /dev/mem */
+extern volatile int ptx_boot_phase;             /* launcher sets it while no program picture exists yet (um2run loading indicator): a core drop then re-attaches */
 
 /* Stream layer API (ptx_core.c) */
 int      ptx_init(void);                 /* picks backend from PTX_BACKEND env */

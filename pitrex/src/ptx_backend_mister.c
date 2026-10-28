@@ -63,6 +63,8 @@ typedef struct {
 	volatile uint64_t aud_rd;               /* PCM words fetched (B6) */
 } core_status_t;
 
+volatile int ptx_boot_phase;   /* see ptx.h; defined for every platform */
+
 static int memfd = -1;
 static volatile uint8_t *base;
 static arm_hdr_t *hdr;
@@ -73,7 +75,7 @@ static volatile uint64_t *aud;         /* PCM ring */
 static uint64_t aud_wr;                /* PCM words written */
 static uint64_t aud_part;              /* samples collected for the next word */
 static unsigned aud_nsamp;
-static uint64_t wr, published;
+static uint64_t wr, published, rd_cache;   /* rd_cache: last rd_idx seen (it only grows between re-attaches) */
 static uint64_t frame_end[8];
 static uint32_t n_frames;
 static uint32_t hb;
@@ -187,7 +189,10 @@ static int still_ours(const char **why)
 	if ((int32_t)(rd_lo - last_rd_lo) < 0) { *why = "the core's read index went backwards (reloaded)"; return 0; }
 	last_rd_lo = rd_lo;
 	if (hdr->session != session)        { *why = "another producer took over the header"; return 0; }
-	if (core_epoch() != epoch0) { epoch_changed = 1; *why = "the core was reset (back to the BIOS)"; return 0; }
+	if (core_epoch() != epoch0) {
+		static char msg[96];         /* the drop cause (pitrex_reset: 0 video_reset 1 status0 2 OSD reset 3 rom_download 4 save_hold 5 delayed_reset 6 bios; bit 7 = arbiter reset; none = heartbeat timeout) */
+		snprintf(msg, sizeof msg, "the core was reset (back to the BIOS; epoch %u->%u, cause 0x%02x)", epoch0, core_epoch(), (unsigned)((st->build >> 8) & 0xFF));
+		epoch_changed = 1; *why = msg; return 0; }
 	return 1;
 }
 
@@ -203,14 +208,16 @@ static void check_core_alive(void)
 	   sends the overlay and the .ptx a second or two after the core loads. Early on, attach again
 	   instead of exiting; later, an epoch change is a real reset and we hand the Vectrex back. */
 	static int reattached;
-	if (epoch_changed && hdr && reattached < 4 && now_ms() - attach_ms < 8000) {
+	if (epoch_changed && hdr && reattached < 4 && (now_ms() - attach_ms < 8000 || n_frames == 0 || ptx_boot_phase)) {   /* n_frames == 0: no picture yet, a slow boot (27 Oct 2026) must not turn a start-up drop into a fatal reset; ptx_boot_phase: same while a launcher shows its own loading frames */
 		reattached++;
 		hdr->magic = 0;
 		__sync_synchronize();
 		{ struct timespec ts = { 0, 200000L }; nanosleep(&ts, NULL); }
 		epoch0 = core_epoch();
 		epoch_changed = 0;
-		wr = published = st->rd_idx;
+		wr = published = rd_cache = st->rd_idx;
+		n_frames = 0;                /* frame_end[] belongs to the old ring position: pacing on it would wait for ever (it is only read for n_frames > PTX_LEAD_FRAMES, after being rewritten) */
+		last_seq_ms = now_ms();      /* a fresh takeover: the core gets a full PTX_SEQ_TIMEOUT_MS to move its input counter again (review item 5, 27 Oct 2026) */
 		hdr->wr_idx = wr;
 		last_rd_lo = (uint32_t)wr;
 		hdr->hb_lo = ++hb;
@@ -359,7 +366,6 @@ static int m_open(void)
 	return 0;
 }
 
-static uint64_t rd_cache;
 static void m_push(uint64_t cmd)
 {
 	if (wr == published) check_core_alive();   /* start of a ring batch: the ring write below is a DDR write */

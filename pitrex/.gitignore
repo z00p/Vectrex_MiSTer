@@ -1,2 +1,5 @@
 build/
 upstream/
+# um2run build outputs (the release zip carries the ARM binary)
+um2run/um2run
+um2run/um2bus_replay
