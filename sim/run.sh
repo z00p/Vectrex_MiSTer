@@ -46,4 +46,7 @@ fi
 if [ "$what" = reset ] || [ "$what" = all ]; then
 	build reset tb_ptx_reset "$CORE/rtl/pitrex/pitrex_reset.sv" "$CORE/sim/tb_ptx_reset.sv" && run reset
 fi
+if [ "$what" = autoon ] || [ "$what" = all ]; then
+	[ "$which" = old ] || { build autoon tb_ptx_autoon "$CORE/rtl/pitrex/pitrex_autoon.sv" "$CORE/rtl/pitrex/pitrex_reset.sv" "$CORE/sim/tb_ptx_autoon.sv" && run autoon; }
+fi
 exit $fail

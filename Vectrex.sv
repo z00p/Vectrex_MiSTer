@@ -61,9 +61,9 @@ assign HDMI_BLACKOUT  = 0;
 assign HDMI_BOB_DEINT = 0;
 
 `include "build_id.v"
-// PiTrex mode build number: shown in Core Info and reported in the ring's
+// PiTrex mode build number: shown on the System page and reported in the ring's
 // status block. Bump both together for every build that goes on a MiSTer.
-localparam [7:0] PTX_BUILD = 8'd9;
+localparam [7:0] PTX_BUILD = 8'd10;
 
 localparam CONF_STR = {
 	"VECTREX;;",
@@ -191,6 +191,8 @@ localparam CONF_STR = {
 	"P3O[23:22],Beam Threshold,Z 20,Z 24,Z 28,Off;",
 	"P3O[12],Port 2,Joystick,VecVoice (SP0256);",
 	"P3O[36],PiTrex Mode,Off,On;",
+	// B10: the build line lives here, not in Core Info: Main loops when a page of only non-selectable lines is taller than the OSD
+	"P3-,PiTrex mode: build B10;",
 	"d8P3O[19:18],Speech Level,Normal,Low,High;",
 	"hFP3O[118],Cartridge Autosave,On,Off;",
 	"hFP3R[119],Save Cartridge;",
@@ -217,8 +219,6 @@ localparam CONF_STR = {
 	"P5-,port of Dar's original;",
 	"P5-,DE10-Lite core, with;",
 	"P5-,additional work by alanswx.;",
-	"P5-;",
-	"P5-,PiTrex mode: build B9;",
 	"P5-;",
 	"P5-,If you enjoy reliving the;",
 	"P5-,golden age of vector games,;",
@@ -460,6 +460,18 @@ wire delayed_reset = (reset_timeout != 23'd0) &&
 // the 6809 is released and boots the BIOS, the ARM sees the epoch in status word 11
 // change and has to re-attach (see pitrex_ddr.sv, PROTOCOL.md).
 wire      ptx_active;
+// B10: PiTrex mode is on if the OSD option is On OR a file was picked for the launcher slot (index 3: OSD
+// "Load UVMC2 / PiTrex", MGL <file index="3">) since the core was loaded. The sticky flag is not a status bit
+// (never saved, not cleared by the OSD Reset); everything below uses ptx_mode_on exactly as it used status[36].
+wire      ptx_auto_on;
+wire      ptx_mode_on = status[36] | ptx_auto_on;
+pitrex_autoon pitrex_autoon
+(
+	.clk            (clk_sys),
+	.ioctl_download (ioctl_download),
+	.ioctl_index    (ioctl_index),
+	.auto_on        (ptx_auto_on)
+);
 reg       ptx_mode_q = 1'b0;
 reg [4:0] ptx_mode_reset_cnt = 5'd0;
 always_ff @(posedge clk_sys) begin
@@ -481,7 +493,7 @@ pitrex_reset pitrex_reset
 (
 	.clk            (clk_sys),
 	.active         (ptx_active),
-	.ptx_mode       (status[36]),
+	.ptx_mode       (ptx_mode_on),
 	.ioctl_download (ioctl_download),
 	.rom_download   (rom_download),
 	.pll_unlocked   (!machine_pll_lock_sync[1]),
@@ -558,7 +570,7 @@ assign rom_download = ioctl_download && (ioctl_index[4:0] <= 1) &&
 // FIFO into pitrex_player (clk_sys), which drives the machine bus while the
 // 6809 is held in reset. Stream format: PiTrex-on-MiSTer PROTOCOL.md.
 // ---------------------------------------------------------------------------
-wire        ptx_enable = status[36];      // option on: listen for a program
+wire        ptx_enable = ptx_mode_on;     // option on (or a launcher file picked): listen for a program
 wire        ptx_present_125;
 (* altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS"} *)
 reg [1:0]   ptx_present_sys = 2'b00;
