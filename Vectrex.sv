@@ -63,13 +63,16 @@ assign HDMI_BOB_DEINT = 0;
 `include "build_id.v"
 // PiTrex mode build number: shown in Core Info and reported in the ring's
 // status block. Bump both together for every build that goes on a MiSTer.
-localparam [7:0] PTX_BUILD = 8'd8;
+localparam [7:0] PTX_BUILD = 8'd9;
 
 localparam CONF_STR = {
 	"VECTREX;;",
 	"-;",
 	"f1,ART;",
 	"FS1,VECBINROM;",
+	// B9: UVMC2 first. Index 3 is the launcher index the MGL menu entries already use (pitrex_reset: no reset,
+	// no dropped takeover); the core ignores the file, Main reports the pick and pitrexd runs it.
+	"F3,UM2PTX,Load UVMC2 / PiTrex;",
 	"F2,ART,Load Overlay;",
 	"-;",
 	// Fixed profiles and two independently saved custom profiles.
@@ -215,7 +218,7 @@ localparam CONF_STR = {
 	"P5-,DE10-Lite core, with;",
 	"P5-,additional work by alanswx.;",
 	"P5-;",
-	"P5-,PiTrex mode: build B8;",
+	"P5-,PiTrex mode: build B9;",
 	"P5-;",
 	"P5-,If you enjoy reliving the;",
 	"P5-,golden age of vector games,;",
@@ -473,7 +476,7 @@ wire machine_reset = video_reset | status[7] | rom_download | save_hold_reset | 
 // every reset that destroys VIA state except our own entry reset: drops a live takeover
 wire ptx_user_reset;
 wire [6:0] ptx_drop_cause;
-// B8: overlay/launcher downloads (ioctl index 2, 3) never reset the machine or drop a PiTrex takeover
+// B8: overlay/launcher downloads (ioctl index 2, 3; B9: index 3 is also the OSD's Load UVMC2 / PiTrex) never reset the machine or drop a PiTrex takeover
 pitrex_reset pitrex_reset
 (
 	.clk            (clk_sys),
