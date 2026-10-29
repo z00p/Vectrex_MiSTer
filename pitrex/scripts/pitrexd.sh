@@ -4,7 +4,7 @@
 # an MGL menu entry. A .ptx file is the ARM program itself; a .um2 file is a UVMC2 cartridge
 # image, run unmodified by um2run (see start_um2 below).
 # Main reports the pick in /tmp/FILESELECT + /tmp/FULLPATH + /tmp/CURRENTPATH (needs log_file_entry=1
-# in MiSTer.ini; PiTrex_Setup.sh sets it). Started from linux/user-startup.sh.
+# in MiSTer.ini; PiTrex_Setup.sh sets it for our core only, in a [Vectrex-PiTrex] section). Started from linux/user-startup.sh.
 # Paths. The PITREXD_* variables are test hooks (the mock test on a PC points them at a scratch directory); on the MiSTer leave them unset.
 FAT=${PITREXD_FAT:-/media/fat}
 PITREX=$FAT/pitrex

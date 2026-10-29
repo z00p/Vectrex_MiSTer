@@ -1,14 +1,27 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Remove PiTrex-on-MiSTer: the programs, the PiTrex cores in _Unstable, the overlays it
-# installed, its Scripts entries (this one last) and, if present, the optional OSD-loader
-# setup (pitrexd line in linux/user-startup.sh, log_file_entry from the MiSTer.ini backup).
+# installed, its Scripts entries (this one last) and the OSD-loader setup (pitrexd line in
+# linux/user-startup.sh, log_file_entry=1 in the [Vectrex-PiTrex] section of MiSTer.ini).
 # Your Vectrex settings (config/VECTREX_v1.CFG) are left alone; PiTrex's own
 # (config/Vectrex-PiTrex_v1.CFG) go. Your own files are NOT touched: pitrex/uvmc2/ (card images,
 # the Tac/Scan romset) and games/Vectrex-PiTrex (.um2 images, sidecars, card images); those folders
 # are only removed when nothing of yours is left in them.
 [ -x /media/fat/Scripts/PiTrex_Stop.sh ] && /media/fat/Scripts/PiTrex_Stop.sh > /dev/null
 for p in $(ps | grep -v grep | grep pitrexd.sh | awk '{print $1}'); do kill "$p"; done
+
+# MiSTer.ini first, while the helper is still there (it also undoes the [MiSTer] change of older releases)
+INI=/media/fat/MiSTer.ini
+if [ -f /media/fat/pitrex/pitrex_ini.py ]; then
+	python3 /media/fat/pitrex/pitrex_ini.py uninstall "$INI"
+elif [ -f "$INI.pitrex-bak" ]; then
+	# an older release without the helper: log_file_entry back as it was in its backup
+	if grep -q '^log_file_entry=0' "$INI.pitrex-bak"; then
+		sed -i 's/^log_file_entry=1/log_file_entry=0/' "$INI"
+		echo "MiSTer.ini: log_file_entry back to 0"
+	fi
+	rm -f "$INI.pitrex-bak"
+fi
 
 find /media/fat/pitrex -mindepth 1 -maxdepth 1 ! -name uvmc2 -exec rm -rf {} + 2>/dev/null
 rm -f /media/fat/pitrex/uvmc2/tacscan/README.txt
@@ -27,18 +40,6 @@ if grep -q pitrexd "$START" 2>/dev/null; then
 	sed -i '/# PiTrex: start programs picked in the Vectrex OSD/d; /pitrexd/d' "$START"
 	echo "Removed pitrexd from user-startup.sh"
 fi
-INI=/media/fat/MiSTer.ini
-if [ -f "$INI.pitrex-bak" ]; then
-	if grep -q '^log_file_entry=0' "$INI.pitrex-bak"; then
-		sed -i 's/^log_file_entry=1/log_file_entry=0/' "$INI"
-		echo "MiSTer.ini: log_file_entry back to 0"
-	elif ! grep -q '^log_file_entry=' "$INI.pitrex-bak"; then
-		sed -i '/^log_file_entry=1$/d' "$INI"
-		echo "MiSTer.ini: removed the log_file_entry line Setup added"
-	fi
-	rm -f "$INI.pitrex-bak"
-fi
-
 echo "PiTrex removed."
 [ -d /media/fat/games/Vectrex-PiTrex ] && echo "Your files in games/Vectrex-PiTrex were left in place."
 [ -d /media/fat/pitrex/uvmc2 ] && echo "Your files in pitrex/uvmc2 (card images, romsets) were left in place."

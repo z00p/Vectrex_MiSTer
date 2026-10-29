@@ -39,8 +39,10 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    so the normal Vectrex entry and its updates (e.g. from update_all) carry on as before.
 3. **Required:** run Scripts > **PiTrex_Setup** once. It adds the **PiTrex & UVMC2** folder
    to the main menu, where each entry loads the core, its overlay and the program in one go.
-   - It switches PiTrex Mode on and sets `log_file_entry=1` in `MiSTer.ini`, so the MiSTer
-     reports which file a menu entry loads. It keeps a backup of the ini.
+   - It switches PiTrex Mode on and adds a `[Vectrex-PiTrex]` section with `log_file_entry=1`
+     to `MiSTer.ini`, so the MiSTer reports which file a menu entry or an OSD pick loads. Only
+     our core is affected; your other settings are left alone (details in
+     [UVMC2_GAMES.md](UVMC2_GAMES.md#what-pitrex_setup-changes)).
    - It starts a small helper, `pitrexd`, at boot.
    - PiTrex_Uninstall undoes all of it.
 
@@ -92,7 +94,7 @@ race, and button 3 cycles through the rest. None are included.
 | The **PiTrex & UVMC2** folder is missing or a game isn't in it | Run Scripts > PiTrex_Setup. An entry only appears for a program that is in `/media/fat/pitrex` (Tac/Scan needs nothing built, only the romset). |
 | The picture freezes or stutters | Another heavy job is running on the ARM (e.g. an update or a network copy). Stop it, or run PiTrex_Stop and start the program again. |
 | SSH or the network can't reach the MiSTer | A VPN on your PC can block local network traffic. Turn it off, or allow local network access. |
-| A main-menu entry loads the core but the game doesn't start | Run Scripts > PiTrex_Setup (it starts `pitrexd` and sets `log_file_entry=1`), then try again. If it still fails, note the cause byte in `devmem 0x3400005C 32` (bits 15..8, see [PROTOCOL.md](PROTOCOL.md)) and report it. |
+| A main-menu entry loads the core but the game doesn't start | Run Scripts > PiTrex_Setup (it starts `pitrexd` and adds the `[Vectrex-PiTrex]` section to `MiSTer.ini`), then try again. If it still fails, note the cause byte in `devmem 0x3400005C 32` (bits 15..8, see [PROTOCOL.md](PROTOCOL.md)) and report it. |
 | SSH or scripts are very slow while a game runs | Expected: MiSTer Main runs at real-time priority and keeps the CPU busy, and PiTrex programs and `pitrexd` run just above it (`chrt -r 49`) so they keep their timing. |
 | A UVMC2 picture looks too big or too small | Set `scale=<n>` in `/media/fat/pitrex/uvmc2.cfg` (default 120; larger means bigger). |
 | A `.um2` game doesn't start | See [UVMC2_GAMES.md](UVMC2_GAMES.md#troubleshooting): both ARM CPUs must be online (reboot after BigMig), and `/tmp/pitrexd.log` says why a pick was refused. |

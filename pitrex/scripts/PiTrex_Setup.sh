@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # One-time setup for the main-menu folder "PiTrex & UVMC2" (run again after adding programs):
 #  - PiTrex Mode On in config/Vectrex-PiTrex_v1.CFG (our core's own settings file)
-#  - log_file_entry=1 in MiSTer.ini (Main reports the file an MGL loads; backup kept)
+#  - log_file_entry=1 for our core only, in a [Vectrex-PiTrex] section of MiSTer.ini (Main then reports the file an OSD pick
+#    or an MGL loads; the [MiSTer] settings and other cores are left alone; see pitrex/pitrex_ini.py)
 #  - the folder games/Vectrex-PiTrex/UVMC2: the core's OSD file browser ("Load UVMC2 / PiTrex") opens games/<core name>,
 #    so put UVMC2 games (.um2) and PiTrex programs (.ptx) there
 #  - pitrexd, which starts the program or game a menu entry or an OSD pick selects: now and at every boot
@@ -39,18 +40,7 @@ if [ ! -f "$PITREX/um2run/um2run" ]; then
 	echo "Note: $PITREX/um2run/um2run is missing, so .um2 games cannot start (unzip the release again)."
 fi
 
-if grep -q '^log_file_entry=1' "$INI"; then
-	echo "MiSTer.ini: log_file_entry already 1"
-else
-	cp "$INI" "$INI.pitrex-bak"
-	sed -i 's/^log_file_entry=0/log_file_entry=1/' "$INI"
-	# no such line yet: it belongs in the [MiSTer] section (a line at the end of the file could land in a core's section)
-	if ! grep -q '^log_file_entry=1' "$INI"; then
-		if grep -q '^\[MiSTer\]' "$INI"; then sed -i '/^\[MiSTer\]/a log_file_entry=1' "$INI"
-		else printf '\nlog_file_entry=1\n' >> "$INI"; fi
-	fi
-	echo "MiSTer.ini: log_file_entry=1 (backup MiSTer.ini.pitrex-bak)"
-fi
+python3 "$PITREX/pitrex_ini.py" setup "$INI"
 
 if ! grep -q pitrexd "$START" 2>/dev/null; then
 	printf '\n# PiTrex: start programs picked in the Vectrex OSD\n[ -x %s/pitrexd.sh ] && %s/pitrexd.sh &\n' "$PITREX" "$PITREX" >> "$START"

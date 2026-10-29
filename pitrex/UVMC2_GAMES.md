@@ -12,7 +12,7 @@ images are included**: bring your own (and your own MAME ROM sets for the games 
 
 **Contents:** [What you need](#what-you-need) · [Where files go](#where-files-go) ·
 [Playing](#playing) · [Sidecar settings](#sidecar-settings) · [Card images](#card-images-how-to-make-one) ·
-[Tested games](#tested-games) · [Troubleshooting](#troubleshooting)
+[Tested games](#tested-games) · [What PiTrex_Setup changes](#what-pitrex_setup-changes) · [Troubleshooting](#troubleshooting)
 
 ## What you need
 - A MiSTer (DE10-Nano) with the Vectrex-PiTrex core from this release, and **Scripts > PiTrex_Setup**
@@ -33,7 +33,8 @@ images are included**: bring your own (and your own MAME ROM sets for the games 
 The core's file browser opens `games/<core name>`. The menu entry **UVMC2 Games** loads the core
 as "Vectrex-PiTrex", so it opens `games/Vectrex-PiTrex`. If you load the core by hand from
 `_Unstable` instead, it runs as "VECTREX", opens `games/Vectrex`, uses the Vectrex settings
-file and cannot change Orientation or View Area for you (see below).
+file, cannot change Orientation or View Area for you (see below), and **a pick in the OSD does not
+start anything** (see [What PiTrex_Setup changes](#what-pitrex_setup-changes)).
 
 ## Playing
 1. Main menu > **PiTrex & UVMC2** > **UVMC2 Games**. This loads the core with PiTrex mode on.
@@ -166,16 +167,39 @@ Veccy Road needs no sidecar. `view=open` only works when the core was loaded fro
 A game picked from the OSD does not load an overlay, and the last cartridge's overlay can stay
 on screen: OSD > Video Overlay & Geometry > Overlay = Off.
 
+## What PiTrex_Setup changes
+- **MiSTer.ini:** it adds this section at the end of the file:
+  ```
+  [Vectrex-PiTrex]
+  log_file_entry=1
+  ```
+  `log_file_entry` is a standard MiSTer.ini option: with it on, the MiSTer's menu program writes
+  the name of the file you pick in the OSD to a few small files in `/tmp`. `pitrexd` reads them to
+  know which game to start. In a `[Vectrex-PiTrex]` section it is only on while our core runs under
+  that name (the PiTrex & UVMC2 menu entries load it that way); your `[MiSTer]` settings and every
+  other core are left as they were. If you use an alternative ini (`MiSTer_alt_1.ini` and so on),
+  add the same two lines to that file yourself.
+- **Older releases** (B8 and earlier) set `log_file_entry=1` for all cores in `[MiSTer]` and kept a
+  backup, `MiSTer.ini.pitrex-bak`. Setup now puts that line back as it was in the backup, then
+  deletes the backup.
+- **config/Vectrex-PiTrex_v1.CFG:** PiTrex Mode on (our core's own settings file; the official
+  core's `VECTREX_v1.CFG` is not used).
+- **linux/user-startup.sh:** one line that starts `pitrexd` at boot.
+- **Folders:** `games/Vectrex-PiTrex/UVMC2`, `pitrex/uvmc2`, and the menu folder `_PiTrex & UVMC2`.
+
+**PiTrex_Uninstall** undoes all of it (it removes the two MiSTer.ini lines, and the section header
+when nothing else is in it) and leaves your own files alone.
+
 ## Troubleshooting
 | Symptom | What to do |
 |---|---|
-| Nothing happens after the pick | `cat /tmp/pitrexd.log` over SSH. `REFUSED ... CPUs` means a reboot is needed (BigMig). `ignored a stale file report` is normal after a restart of the MiSTer's menu program. Check OSD > System > PiTrex Mode = On. |
+| Nothing happens after the pick | `cat /tmp/pitrexd.log` over SSH. `REFUSED ... CPUs` means a reboot is needed (BigMig). `ignored a stale file report` is normal after a restart of the MiSTer's menu program. Check OSD > System > PiTrex Mode = On. If `/tmp/pitrexd.log` shows nothing at all for the pick, load the core from **PiTrex & UVMC2 > UVMC2 Games** (a core loaded by hand does not report picks) and check that MiSTer.ini (or the alternative ini you use) has the `[Vectrex-PiTrex]` section. |
 | "Missing directory: Vectrex-PiTrex" in the OSD | Run PiTrex_Setup (it creates the folder) or create `games/Vectrex-PiTrex/UVMC2` yourself. |
 | The game says ROMS NOT FOUND or MISSING | See [Card images](#card-images-how-to-make-one): folder, name, and a card named in the sidecar. |
 | Black screen for a long time | Wait for the LOADING screen to finish. If the screen stays black or the MiSTer's menu stops responding: Scripts > PiTrex_Stop, or SSH `killall um2run`. |
 | Static at the start | Expected for the first second or two. |
 | The picture is cropped at the sides | Landscape game on a portrait screen. OSD > View Area = Open Matte shows it all, or put `view=open` in the sidecar. |
 | An old overlay is on top of the game | OSD > Video Overlay & Geometry > Overlay = Off. |
-| The OSD browser opens `games/Vectrex` | The core was loaded by hand from `_Unstable`. Go up a folder and into `Vectrex-PiTrex/UVMC2`, or use the UVMC2 Games menu entry. |
+| The OSD browser opens `games/Vectrex` | The core was loaded by hand from `_Unstable`, so picks will not start. Load it from PiTrex & UVMC2 > UVMC2 Games. |
 | A game started again by itself after a restart | Fixed in this release (stale file reports are ignored). |
 | Log of the last game | `/tmp/um2.log` (the game), `/tmp/pitrexd.log` (picks and settings). |
