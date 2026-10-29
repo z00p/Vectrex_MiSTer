@@ -83,7 +83,7 @@ race, and button 3 cycles through the rest. None are included.
   builds (delete those by hand if you like); the main-menu entries switch to the newest. It
   never touches the official core in `_Console`.
 - **PiTrex_Uninstall** removes everything PiTrex added, including the optional extras and all
-  PiTrex cores in `_Unstable` and `config/Vectrex-PiTrex_v1.CFG`. The official core and your Vectrex settings are kept.
+  PiTrex cores in `_Unstable` and `config/Vectrex-PiTrex_v1.CFG`. The official core, your Vectrex settings and your own files (`games/Vectrex-PiTrex`, `pitrex/uvmc2`) are kept.
 
 ## Troubleshooting
 | Symptom | Likely cause and fix |

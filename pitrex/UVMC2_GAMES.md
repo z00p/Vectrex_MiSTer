@@ -28,7 +28,7 @@ images are included**: bring your own (and your own MAME ROM sets for the games 
 |---|---|
 | `.um2` images | `/media/fat/games/Vectrex-PiTrex/UVMC2/` (PiTrex_Setup creates the folder; subfolders are fine). `.ptx` programs also show up in the same OSD list. |
 | Sidecar settings `Game.um2.cfg` | next to the image, same name plus `.cfg` |
-| Card images (`.img`) | next to the image, or in `/media/fat/pitrex/uvmc2/` (a file called `sd.img` there is the default card for every game without an `sd=` key). The OSD list shows only `.um2` and `.ptx`, so the images do not clutter it. PiTrex_Uninstall removes `pitrex/`, including the card images in it, but leaves `games/Vectrex-PiTrex` alone. |
+| Card images (`.img`) | next to the image, or in `/media/fat/pitrex/uvmc2/` (a file called `sd.img` there is the default card for every game without an `sd=` key). The OSD list shows only `.um2` and `.ptx`, so the images do not clutter it. PiTrex_Uninstall leaves your files in both places alone. |
 
 The core's file browser opens `games/<core name>`. The menu entry **UVMC2 Games** loads the core
 as "Vectrex-PiTrex", so it opens `games/Vectrex-PiTrex`. If you load the core by hand from
