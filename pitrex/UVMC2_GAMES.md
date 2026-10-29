@@ -42,7 +42,7 @@ file and cannot change Orientation or View Area for you (see below).
 3. A LOADING screen with a progress bar shows while the cartridge boots from its card; the big images take 10 to 20 seconds. The first second or two of sound can be static.
 4. Picking another game stops the running one and starts the new one. **Scripts > PiTrex_Stop** stops it.
 
-Controls are the cartridge's own. BattleZone: button 1 starts, button 4 fires. The OSD is slow while a game runs
+Controls are the cartridge's own. BattleZone: button 1 starts, button 4 fires. **The OSD is sluggish while a game runs**
 (the MiSTer's menu program shares a CPU with the game): it works, give it a moment.
 
 ## Sidecar settings
@@ -129,16 +129,42 @@ If a game says it cannot find its ROMs, the usual causes are a wrong folder, a m
 different MAME version (the games check the files' checksums).
 
 ## Tested games
-On a DE10-Nano, 26 to 28 October 2026, with the images the author had. Other builds of the same games
-may behave differently.
+On a DE10-Nano, 26 to 29 October 2026 (the B10 core on 29 October), with the images named below.
+Other builds of the same games may behave differently. These are the images used for testing. They were shared in UVMC2 community groups; download links will be added once their authors are happy for us to link them.
 
-| Game | Card | Notes |
+| Game (image tested) | Card | How it ran |
 |---|---|---|
-| BattleZone | its own copy, no ROMs | plays well, cart audio good; about 23 frames/s |
-| Star Wars | your MAME `starwars` + `starwar1` sets | music and speech good; about 40 frames/s; sides cropped (landscape) |
-| Pac-Man | a card image with the folders, no ROMs | cart audio good; about 26 frames/s, game speed right |
-| Punch-Out | your MAME `punchout.zip` | plays but about two thirds speed (the MiSTer manages ~38 of its 60 frames/s), speech sounds slow; sound comes through the Vectrex PSG; its JACK audio route is untested |
-| Veccy Road | none | plays well, about 39 frames/s |
+| Star Wars (`Star_Wars.um2`) | your MAME `starwars` + `starwar1` zips in `roms/` | music and speech good; about 40 frames/s; whole picture with Open Matte |
+| BattleZone 0.3a (`BattleZone_0_3a.um2`) | its **own** copy, no ROMs (it writes to the card) | plays well, cart audio good; about 23 frames/s; whole picture with Open Matte. Button 1 starts, button 4 fires |
+| Pac-Man (`pacman-uvmc2-SD-card.um2`) | a card image with the folders, no ROMs | cart audio good; about 26 frames/s, game speed right |
+| Punch-Out (`Punchout.um2`) | your MAME `punchout.zip` | plays but about two thirds speed (the MiSTer manages ~38 of its 60 frames/s), so sound and speech are a bit off; sound comes through the Vectrex PSG; its JACK audio route is untested |
+| Veccy Road 0.10 (`veccy_road_v010.um2`) | none | plays well, about 39 frames/s |
+
+The sidecar files used for these runs (the card names are up to you):
+```
+# Star_Wars.um2.cfg
+sd=uvmc2_sd.img
+view=open
+```
+```
+# BattleZone_0_3a.um2.cfg
+sd=bz_sd.img
+view=open
+```
+```
+# pacman-uvmc2-SD-card.um2.cfg
+sd=uvmc2_sd.img
+```
+```
+# Punchout.um2.cfg
+frame_cycles=25000
+sd=uvmc2_sd.img
+```
+Veccy Road needs no sidecar. `view=open` only works when the core was loaded from
+**PiTrex & UVMC2 > UVMC2 Games** (see [Where files go](#where-files-go)); otherwise set OSD > View Area = Open Matte yourself.
+
+A game picked from the OSD does not load an overlay, and the last cartridge's overlay can stay
+on screen: OSD > Video Overlay & Geometry > Overlay = Off.
 
 ## Troubleshooting
 | Symptom | What to do |
@@ -148,6 +174,8 @@ may behave differently.
 | The game says ROMS NOT FOUND or MISSING | See [Card images](#card-images-how-to-make-one): folder, name, and a card named in the sidecar. |
 | Black screen for a long time | Wait for the LOADING screen to finish. If the screen stays black or the MiSTer's menu stops responding: Scripts > PiTrex_Stop, or SSH `killall um2run`. |
 | Static at the start | Expected for the first second or two. |
-| The picture is cropped at the sides | Landscape game on a portrait screen. Try OSD > View Area = Open Matte, or the experimental `orient` / `view` keys above. |
+| The picture is cropped at the sides | Landscape game on a portrait screen. OSD > View Area = Open Matte shows it all, or put `view=open` in the sidecar. |
+| An old overlay is on top of the game | OSD > Video Overlay & Geometry > Overlay = Off. |
+| The OSD browser opens `games/Vectrex` | The core was loaded by hand from `_Unstable`. Go up a folder and into `Vectrex-PiTrex/UVMC2`, or use the UVMC2 Games menu entry. |
 | A game started again by itself after a restart | Fixed in this release (stale file reports are ignored). |
 | Log of the last game | `/tmp/um2.log` (the game), `/tmp/pitrexd.log` (picks and settings). |
