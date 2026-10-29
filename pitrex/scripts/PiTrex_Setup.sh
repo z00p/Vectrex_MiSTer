@@ -44,7 +44,11 @@ if grep -q '^log_file_entry=1' "$INI"; then
 else
 	cp "$INI" "$INI.pitrex-bak"
 	sed -i 's/^log_file_entry=0/log_file_entry=1/' "$INI"
-	grep -q '^log_file_entry=1' "$INI" || printf '\nlog_file_entry=1\n' >> "$INI"
+	# no such line yet: it belongs in the [MiSTer] section (a line at the end of the file could land in a core's section)
+	if ! grep -q '^log_file_entry=1' "$INI"; then
+		if grep -q '^\[MiSTer\]' "$INI"; then sed -i '/^\[MiSTer\]/a log_file_entry=1' "$INI"
+		else printf '\nlog_file_entry=1\n' >> "$INI"; fi
+	fi
 	echo "MiSTer.ini: log_file_entry=1 (backup MiSTer.ini.pitrex-bak)"
 fi
 
