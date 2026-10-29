@@ -19,6 +19,8 @@ UM2SD_DIR=$PITREX/uvmc2
 LOG=$T/pitrexd.log
 # A "selected" report whose FULLPATH / CURRENTPATH are more than this many seconds older than FILESELECT is not a pick (see the main loop)
 STALE=${PITREXD_STALE:-2}
+# ... and more than this many seconds older than the current core load (CORENAME)
+CORE_SLACK=${PITREXD_CORE_SLACK:-5}
 
 # Main runs at SCHED_FIFO 48 and keeps the CPU almost fully busy, so a normal-priority daemon
 # sees a file pick seconds late. Run above it, like the programs (the loop sleeps between polls).
@@ -213,15 +215,17 @@ while sleep 0.2; do
 	[ "$(cat $T/FILESELECT 2>/dev/null)" = "selected" ] || continue
 	core_is_ours || continue
 	# Stale reports. After Main restarts or loads a core it writes FILESELECT="selected" again with the OLD FULLPATH /
-	# CURRENTPATH (28 Oct: the last game restarted by itself). A real pick writes the path files and FILESELECT together
-	# (a menu MGL: FULLPATH; an OSD pick: FULLPATH + CURRENTPATH), so whichever of the two path files is newer must be at most
-	# $STALE s (default 2, whole seconds) older than FILESELECT. A core load alone is no reason to ignore a pick: the
-	# PiTrex & UVMC2 menu entries load the core and the program in one go.
+	# CURRENTPATH (28 Oct: the last game restarted by itself). Main writes the path files while the user browses, not when
+	# the file is picked (29 Oct: entering the folder, then picking its first file 9 s later), so old path files alone do
+	# not make a report stale. Stale = whichever path file is newer is more than $STALE s (default 2, whole seconds) older
+	# than FILESELECT AND more than $CORE_SLACK s older than the current core load (CORENAME): every real OSD pick browses
+	# after the core was loaded; a menu MGL writes FULLPATH and FILESELECT together, so it never gets here.
 	fs=$(stat -c %Y $T/FILESELECT 2>/dev/null || echo 0)
 	pt=$(stat -c %Y $T/FULLPATH 2>/dev/null || echo 0)
 	ct=$(stat -c %Y $T/CURRENTPATH 2>/dev/null || echo 0)
+	cn=$(stat -c %Y $T/CORENAME 2>/dev/null || echo 0)
 	[ "$ct" -gt "$pt" ] && pt=$ct
-	if [ $(( fs - pt )) -gt "$STALE" ]; then
+	if [ $(( fs - pt )) -gt "$STALE" ] && [ $(( cn - pt )) -gt "$CORE_SLACK" ]; then
 		echo "$(date +%T) ignored a stale file report ($(cat $T/FULLPATH 2>/dev/null)/$(cat $T/CURRENTPATH 2>/dev/null), $(( fs - pt )) s older than FILESELECT)" >> $LOG
 		continue
 	fi

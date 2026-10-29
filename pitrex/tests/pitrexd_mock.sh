@@ -81,6 +81,15 @@ check "ignore is logged" 'grep -q "ignored a stale file report" "$T/pitrexd.log"
 echo -n selected > "$T/FILESELECT"; sleep 1.5
 check "a second stale report is also ignored" '[ $(runs) -eq $n ]'
 
+echo "== 2b. browse into the folder, wait, pick its first file (path files 9 s older than FILESELECT, newer than the core load)"
+sleep 11; n=$(runs); ns=$(grep -c "ignored a stale" "$T/pitrexd.log")
+echo -n Vectrex-PiTrex > "$T/CORENAME"; touch -d '12 seconds ago' "$T/CORENAME"
+echo -n games/Vectrex-PiTrex/UVMC2 > "$T/FULLPATH"; echo -n Plain.um2 > "$T/CURRENTPATH"
+touch -d '9 seconds ago' "$T/FULLPATH" "$T/CURRENTPATH"
+echo -n selected > "$T/FILESELECT"
+check "slow pick of the first file starts" 'waitfor "[ \$(runs) -gt $n ]" 30'
+check "and is not logged as stale" '[ $(grep -c "ignored a stale" "$T/pitrexd.log") -eq $ns ]'
+
 echo "== 3. a genuine re-pick of the same file right after is a new pick (paths rewritten)"
 sleep 11   # past the 10 s double-report guard
 pick games/Vectrex-PiTrex/UVMC2 Plain.um2
