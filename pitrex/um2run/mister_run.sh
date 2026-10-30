@@ -19,6 +19,8 @@ for a in "$@"; do if [ "$a" = "--no-hold" ]; then hold=""; else args="$args $a";
 # The guard is only needed right after a core load: with the core up for 15 s or more (age of /tmp/CORENAME) it shrinks to 1 / 2 s.  The long
 # guard costs cart audio (BattleZone: static for the first 10 s and then a 20 s fast catch-up, seen on hardware 28 Oct; with 1 / 2 s it was clean).
 st=8; c1=10; ca=$(( $(date +%s) - $(stat -c %Y /tmp/CORENAME 2>/dev/null || date +%s) )); [ "$ca" -ge 15 ] && { st=1; c1=2; }
-case "$args" in *--cpu*|*--rt*) ;; *) args="--cpu 0 --cpu1 1 --donate 3000 --settle ${SETTLE:-$st} --cpu1-after ${CPU1_AFTER:-$c1}$args";; esac
+# whole words only: $args is " a1 a2 ..." (a space before each arg), so with a space added at the end every arg,
+# first or last, is " arg "; --cpu1 / --cpu1-after alone do not count as picking the placement
+case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3000 --settle ${SETTLE:-$st} --cpu1-after ${CPU1_AFTER:-$c1}$args";; esac
 PTX_BACKEND=mister PTX_WAIT_CORE=60 nohup chrt -r 50 ./um2run --bus $hold $args "$img" > /tmp/um2.log 2>&1 &
 echo "started um2run --bus $hold $args $img (pid $!), log /tmp/um2.log"
