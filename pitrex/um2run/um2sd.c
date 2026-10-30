@@ -79,6 +79,7 @@ void um2sd_select(int on) {
 	g_selected = on;
 	if (!on) { g_ncmd = 0; qclear(); g_multi = 0; g_wstate = 0; }
 }
+uint8_t um2sd_peek(void) { return (!g_f || (!g_selected && g_cs_seen) || g_qh >= g_qn) ? 0xFF : g_q[g_qh]; }   /* the byte the next um2sd_xfer returns (bit-banged SPI shifts it out before the host byte is complete) */
 uint8_t um2sd_xfer(uint8_t out) {
 	if (!g_f || (!g_selected && g_cs_seen)) return 0xFF;
 	uint8_t in = 0xFF;

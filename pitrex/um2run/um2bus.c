@@ -937,12 +937,28 @@ static uint32_t gpio_in(void) {
 }
 
 static uint32_t g_hi_out;       /* GPIO32..47 output latch: the SD card's CS is GPIO39 = bit 7, active low */
+/* The card sits on the SPI0 pins SCK GPIO34, TX GPIO35, RX GPIO36 (+ CS GPIO39).  Some images (Contrex, Jukebox, Glint ...) bit-bang it through SIO instead of using
+ * the PL022: mode 0, MSB first, MOSI sampled on the rising SCK edge, MISO read from GPIO_HI_IN bit 4.  Only while SPI0 is disabled. */
+static struct { int sck, n; uint8_t out, in; volatile int miso; unsigned long bytes; } g_bb = { 0, 0, 0, 0xFF, 1, 0 };
+static void hi_set(uint32_t nv) {
+	uint32_t old = g_hi_out; g_hi_out = nv;
+	um2sd_select(!(nv & 0x80));
+	if ((old ^ nv) & 0x80) { g_bb.n = 0; g_bb.miso = 1; }
+	int sck = (nv >> 2) & 1;
+	if (sck && !g_bb.sck && !(g_spi0.cr1 & 2)) {
+		if (!g_bb.n) g_bb.in = um2sd_peek();
+		g_bb.out = (uint8_t)(g_bb.out << 1 | ((nv >> 3) & 1));
+		g_bb.miso = (g_bb.in >> (7 - g_bb.n)) & 1;
+		if (++g_bb.n == 8) { g_bb.n = 0; (void)um2sd_xfer(g_bb.out); g_bb.bytes++; }
+	}
+	g_bb.sck = sck;
+}
 static void sio_gpio_set(uint32_t off, uint32_t v) {
 	switch (off) {
-	case 0x14: g_hi_out = v; um2sd_select(!(g_hi_out & 0x80)); return;
-	case 0x1C: g_hi_out |= v; um2sd_select(!(g_hi_out & 0x80)); return;
-	case 0x24: g_hi_out &= ~v; um2sd_select(!(g_hi_out & 0x80)); return;
-	case 0x2C: g_hi_out ^= v; um2sd_select(!(g_hi_out & 0x80)); return;
+	case 0x14: hi_set(v); return;
+	case 0x1C: hi_set(g_hi_out | v); return;
+	case 0x24: hi_set(g_hi_out & ~v); return;
+	case 0x2C: hi_set(g_hi_out ^ v); return;
 	case 0x10: g_sio_out = v; break;
 	case 0x18: g_sio_out |= v; break;
 	case 0x20: g_sio_out &= ~v; break;
@@ -987,6 +1003,7 @@ static int sio_load(uint32_t off, int size, uint32_t *v, int core) {
 	(void)size;
 	if (off == 0x00) { *v = (uint32_t)core; return 1; }
 	if (off == 0x04) { *v = gpio_in(); cap(CAP_SIO_GPIN, 4, 0xD0000004u, 0); return 1; }
+	if (off == 0x08) { *v = (uint32_t)g_bb.miso << 4; return 1; }        /* GPIO_HI_IN: only the card's MISO (GPIO36) is modelled */
 	if (off >= 0x10 && off <= 0x2C) { *v = g_sio_out; return 1; }
 	if (off >= 0x30 && off <= 0x4C) { *v = g_sio_oe; return 1; }
 	if (off == 0x50) { MISC_LOCK(); int rq = core == 0 ? 1 : 0; *v = (g_qc[rq] ? 1u : 0u) | 2u; MISC_UNLOCK(); return 1; }
@@ -1194,6 +1211,7 @@ void um2bus_stats(FILE *f) {
 		(unsigned long long)S.pushes, (unsigned long long)S.wr_words, (unsigned long long)S.silence_words, (unsigned long long)S.park_words, (unsigned long long)S.park_cycles, (unsigned long long)S.pio_instrs);
 	fprintf(f, "um2bus: stream latches write %llu, non-VIA %llu; SIO: writes %llu reads %llu clock edges %llu\n",
 		(unsigned long long)S.latches_write, (unsigned long long)S.non_via_writes, (unsigned long long)S.sio_writes, (unsigned long long)S.sio_reads, (unsigned long long)S.sio_edges);
+	if (g_bb.bytes) fprintf(f, "um2bus: SD card bit-banged over SIO: %lu bytes\n", g_bb.bytes);
 	if (g_spi_sr || g_spi_drr || g_spi_drw) fprintf(f, "um2bus: SPI0 DR writes %lu, DR reads %lu, SR reads %lu, DR-read hash %016llx\n", g_spi_drw, g_spi_drr, g_spi_sr, (unsigned long long)g_spi_h);
 	fprintf(f, "um2bus: DMA runs %llu words %llu; frames %llu (forced %llu) cycles/frame min %llu avg %llu max %llu; idle pad %llu; unsupported %llu\n",
 		(unsigned long long)S.dma_runs, (unsigned long long)S.dma_words, (unsigned long long)S.frames, (unsigned long long)S.forced_frames,
