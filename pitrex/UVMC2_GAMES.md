@@ -197,7 +197,7 @@ when nothing else is in it) and leaves your own files alone.
 | "Missing directory: Vectrex-PiTrex" in the OSD | Run PiTrex_Setup (it creates the folder) or create `games/Vectrex-PiTrex/UVMC2` yourself. |
 | The game says ROMS NOT FOUND or MISSING | See [Card images](#card-images-how-to-make-one): folder, name, and a card named in the sidecar. |
 | Black screen for a long time | Wait for the LOADING screen to finish. If the screen stays black or the MiSTer's menu stops responding: Scripts > PiTrex_Stop, or SSH `killall um2run`. |
-| Static at the start | Expected for the first second or two. |
+| Static at the start | Expected for the first second or two. Up to about 10 seconds when the pick had to switch View Area (the core reloads first, see `/tmp/pitrexd.log`); the next pick starts clean. |
 | The picture is cropped at the sides | Landscape game on a portrait screen. OSD > View Area = Open Matte shows it all, or put `view=open` in the sidecar. |
 | An old overlay is on top of the game | OSD > Video Overlay & Geometry > Overlay = Off. |
 | The OSD browser opens `games/Vectrex` | The core was loaded by hand from `_Unstable`, so picks will not start. Load it from PiTrex & UVMC2 > UVMC2 Games. |
