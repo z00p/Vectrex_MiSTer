@@ -61,7 +61,8 @@ These are the games tested on the MiSTer (see [UVMC2_GAMES.md](UVMC2_GAMES.md#te
   like `BattleZone_0_3a.um2`) is in the UVMC2 folder, the card builder also makes `bz_sd.img`,
   with the same files and BattleZone's own saves. If the image has no settings file yet, it
   writes one, `<image>.um2.cfg`, with the line `sd=bz_sd.img`. It never changes a settings file
-  you already have: it tells you what it found, and you can add `sd=bz_sd.img` yourself.
+  you already have: if yours names another card, `bz_sd.img` is not made and it tells you what
+  it found. To use `bz_sd.img`, put `sd=bz_sd.img` in the file yourself and build again.
 - **Other games:** if a game says ROMS NOT FOUND, ROMS NO or MISSING, it wants files from your
   card. Copy the whole card to `pitrex/uvmc2/card/` and build it again.
 

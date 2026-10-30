@@ -9,6 +9,7 @@
 # and the old image is kept as sd.img.bak (one backup). sd.img.list records what a build put on the card.
 # BattleZone writes to its card: if its image is in games/Vectrex-PiTrex/UVMC2, bz_sd.img is made too
 # (same files, its own saves) and, if the image has no sidecar yet, one is written with sd=bz_sd.img.
+# A sidecar that names another card is left alone and bz_sd.img is not made.
 #   make_card.sh               build now
 #   make_card.sh --if-needed   build only if sd.img is missing or the card folder changed since the last build
 #                              (PiTrex_Setup uses this); quiet when there is nothing to do
@@ -386,6 +387,11 @@ BZ_TARGETS=""
 if [ -n "$BZ_IMGS" ]; then
 	while IFS= read -r g; do
 		t=$(resolve bz_sd.img "${g%/*}")
+		# a sidecar that names another card (or none): nothing would use bz_sd.img, so it is not made (reported in step 6)
+		if [ -f "$g.cfg" ]; then
+			sd=$(py cfg "$g.cfg" sd)
+			if [ -z "$sd" ] || [ "$(resolve "$sd" "${g%/*}")" != "$t" ]; then continue; fi
+		fi
 		# pitrexd refuses card paths with spaces, so such a card would never be used
 		case "$t" in *[[:space:]]*) say "BattleZone: $t has a space in its path, which pitrexd does not accept: not made"; continue ;; esac
 		case " $BZ_TARGETS " in *" $t "*) ;; *) BZ_TARGETS="$BZ_TARGETS $t" ;; esac
@@ -526,11 +532,11 @@ if [ -n "$BZ_IMGS" ]; then
 		if [ -f "$g.cfg" ]; then
 			sd=$(py cfg "$g.cfg" sd)
 			if [ -z "$sd" ]; then
-				say "BattleZone: $name.cfg has no sd= line, so this game uses sd.img (shared). Add the line sd=bz_sd.img to give it its own card. The file was left as it is."
+				say "BattleZone: $name.cfg has no sd= line, so this game uses sd.img (shared) and bz_sd.img was not made. To give it its own card, add the line sd=bz_sd.img and build again. The file was left as it is."
 			elif [ "$(resolve "$sd" "${g%/*}")" = "$(resolve bz_sd.img "${g%/*}")" ]; then
 				say "BattleZone: $name.cfg already says sd=$sd (left as it is)"
 			else
-				say "BattleZone: $name.cfg says sd=$sd, so this game does not use bz_sd.img. The file was left as it is; change it to sd=bz_sd.img to use the new card."
+				say "BattleZone: $name.cfg says sd=$sd, so bz_sd.img was not made. The file was left as it is; to use a card of its own, change it to sd=bz_sd.img and build again."
 			fi
 		else
 			if printf 'sd=bz_sd.img\n' > "$g.cfg"; then say "BattleZone: wrote $name.cfg with sd=bz_sd.img (its own card)"
