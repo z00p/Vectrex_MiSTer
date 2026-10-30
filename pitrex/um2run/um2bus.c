@@ -765,6 +765,7 @@ static void aud_abort(uint32_t mask) {
 	for (int ch = 0; ch < 16; ch++) if ((mask >> ch & 1) && g_ad[ch].act) {
 		g_ad[ch].act = 0; g_sm_end[g_ad[ch].pio][g_ad[ch].sm] = g_ad[ch].t_last; g_sm_acc[g_ad[ch].pio][g_ad[ch].sm] = g_ad[ch].acc;
 		__sync_fetch_and_and(&g_aud_busy, ~(1u << ch)); AS.aborts++;
+		g_dma[ch].read = g_ad[ch].rd; dma_sync(ch);        /* the guest polls BUSY on the mirror page after an abort */
 	}
 	pthread_mutex_unlock(&g_aud_m);
 }
