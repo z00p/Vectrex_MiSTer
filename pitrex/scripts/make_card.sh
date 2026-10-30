@@ -4,8 +4,9 @@
 #   /media/fat/pitrex/uvmc2/card/   the files from your real UVMC2 SD card, or just your ROM zips (input)
 #   /media/fat/pitrex/uvmc2/sd.img  the card every UVMC2 game without an sd= key in its sidecar sees (output)
 # The card is a FAT32 image of a whole card without a partition table ("superfloppy"), the layout um2run
-# was tested with. Rebuilding keeps the player's saves: config/ and scores/ are copied out of the old
-# sd.img and back into the new one, and the old image is kept as sd.img.bak (one backup).
+# was tested with. Rebuilding keeps the player's saves: every config and scores folder (any case, at
+# any depth: config/ and scores/ at the top, PORTDATA/<Game>/CONFIG) is copied out of the old sd.img
+# and back into the new one, and the old image is kept as sd.img.bak (one backup).
 # BattleZone writes to its card: if its image is in games/Vectrex-PiTrex/UVMC2, bz_sd.img is made too
 # (same files, its own saves) and, if the image has no sidecar yet, one is written with sd=bz_sd.img.
 #   make_card.sh               build now
@@ -172,14 +173,25 @@ def cmd_copy(src, dst):
     print(n)
 
 def saves(root):
-    return [e for e in sorted(os.listdir(root)) if e.lower() in ("config", "scores") and os.path.isdir(os.path.join(root, e))]
+    """folders named config or scores (any case), at any depth: the games keep settings and scores in
+    config/ and scores/ at the top, and some in PORTDATA/<Game>/CONFIG (Punch-Out: PUNCHOUT.NV)"""
+    out = []
+    for r, dirs, files in os.walk(root):
+        keep = []
+        for d in sorted(dirs):
+            if d.lower() in ("config", "scores"):
+                out.append(os.path.relpath(os.path.join(r, d), root))
+            else:
+                keep.append(d)
+        dirs[:] = keep
+    return out
 
 def cmd_saves_out(mnt, dst):
-    # config/ and scores/ (any case) from a card into dst; prints the number of files
+    # the save folders of a card into dst, same paths; prints the number of files
     n = 0
-    for e in saves(mnt):
-        os.mkdir(os.path.join(dst, e))
-        n += merge(os.path.join(mnt, e), os.path.join(dst, e))
+    for rel in saves(mnt):
+        os.makedirs(os.path.join(dst, rel))
+        n += merge(os.path.join(mnt, rel), os.path.join(dst, rel))
     print(n)
 
 def cmd_saves_in(src, mnt):
@@ -360,7 +372,7 @@ need_on "$UV" "$need"
 say "card size: $MIB MiB, FAT32 with 512-byte clusters"
 
 # 3. Saves from the old cards
-# saves_from <card> <folder>: copy config/ and scores/ out of an existing card image
+# saves_from <card> <folder>: copy every config and scores folder (any depth) out of an existing card image
 saves_from() {
 	local img=$1 dst=$2 n
 	mkdir -p "$dst"
@@ -368,8 +380,8 @@ saves_from() {
 	attach "$img" "$WORK/mnt_old" ro || die "cannot mount the old ${img##*/} (is it a FAT card image?). Move it away to build a new one."
 	n=$(py saves_out "$WORK/mnt_old" "$dst") || die "cannot copy the saves out of ${img##*/}"
 	detach "$WORK/mnt_old"
-	if [ "$n" = 0 ]; then say "the old ${img##*/} has no saves yet (no files in config/ or scores/)"
-	else say "kept the saves of the old ${img##*/} ($n file(s) in config/ and scores/)"; fi
+	if [ "$n" = 0 ]; then say "the old ${img##*/} has no saves yet (no files in config or scores folders)"
+	else say "kept the saves of the old ${img##*/} ($n file(s) in config and scores folders)"; fi
 }
 saves_from "$OUT" "$WORK/saves_main"
 
