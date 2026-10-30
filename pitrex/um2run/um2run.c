@@ -2512,6 +2512,14 @@ int main(int argc, char **argv) {
     if (g_filesz < 20 || memcmp(g_file, "2CMU", 4) || rd32(g_file + 12) != IMG_BASE) { fprintf(stderr, "not a 2CMU image loading at 0x20000000\n"); return 1; }
     uint32_t words = rd32(g_file + 16);
     if (words > (g_filesz - 20) / 4 || words > (IMG_TOP - IMG_BASE) / 4) { fprintf(stderr, "bad length\n"); return 1; }     /* no words * 4: it wraps for a malformed header */
+    {   uint32_t ver = rd32(g_file + 4), blocks = rd32(g_file + 8), sp0 = words ? rd32(g_file + 20) : 0, rst = words > 1 ? rd32(g_file + 24) : 0;
+        if (ver != 0x1 && ver != 0x101) fprintf(stderr, "um2run: header version 0x%x: made for a newer UVMC2 format, may not run\n", ver);    /* seen: 0x1, 0x101 (BattleZone 0.3a) */
+        if (blocks != 1) fprintf(stderr, "um2run: header says %u blocks: only the first is loaded, may not run\n", blocks);
+        if (sp0 < IMG_BASE || sp0 > 0x20082000u || (sp0 & 3) || !(rst & 1) || (rst & ~1u) < IMG_BASE || (rst & ~1u) >= IMG_BASE + words * 4) {    /* an Arm image starts with its vector table */
+            fprintf(stderr, "um2run: %s has no Cortex-M vector table (SP %08x, reset %08x): not an Arm image (RISC-V UVMC2 images are not supported)\n", opt.file, sp0, rst);
+            return 3;
+        }
+    }
     g_entry = rd32(g_file + 20 + 4) & ~1u;
     if (!g_noprepatch) prepatch(g_file + 20, words);
     if (!getenv("UM2_NOBTGT")) btgt_scan(g_file + 20, words);     /* UM2_NOBTGT=1 (test): only the local scan, as before */
