@@ -213,8 +213,10 @@ static uint32_t *sh_slot(uint32_t a, int create) {
     }
     return NULL;
 }
+static uint32_t g_bootlock;                  /* BOOTRAM BOOTLOCK0..7 held (a read claims a free lock and returns nonzero, any write releases) */
 static void mmio_store_base(uint32_t addr, int size, uint32_t val) {
     uint32_t base = addr & ~3u, sh = (addr & 3) * 8;
+    if (base >= 0x400E080Cu && base <= 0x400E0828u) { __atomic_fetch_and(&g_bootlock, ~(1u << ((base - 0x400E080Cu) >> 2)), __ATOMIC_SEQ_CST); return; }
     if (size == 4 && addr >= 0x40000000 && addr < 0x60000000 && (addr & 0x3000)) {   /* atomic aliases */
         uint32_t *p = sh_slot(addr & ~0x3000u, 1); if (!p) return;
         switch ((addr >> 12) & 3) { case 1: *p ^= val; break; case 2: *p |= val; break; case 3: *p &= ~val; break; }
@@ -476,18 +478,24 @@ static uint32_t dwt_now(void) {
 
 static unsigned g_tm_reads[32], g_tm_broken[32];
 static const uint32_t g_lb_cyc[15] = { 0xFFFFFFFFu, 0, 1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80, 0x100, 0x1000, 0x10000, 0x80000000u, 0xFFFF0000u };
+static __thread uint32_t tl_lb_pc, tl_lb_a, tl_lb_act, tl_lb_run;
 static uint32_t mmio_load_base(uint32_t addr, int size, uint32_t pc) {
     uint32_t base = addr & ~3u, v = 0, *p = sh_slot(base, 0);
+    int known = 2;                                    /* 2: canned (a model), 1: only what the image wrote, 0: nothing to go by */
     if (p) v = *p;
     if (!opt.no_canned && addr < 0x8000) {            /* bootrom: fake header + function table pointers (guess at RP2350 layout) */
         if ((addr & ~3u) == 0x10) v = 0x01754D;       /* 'M' 'u' 0x01 magic */
         else if ((addr & ~3u) == 0x14) v = ROM_FUNCTAB | ((uint32_t)ROM_LOOKUP << 16);   /* u16 @0x14 func table, u16 @0x16 lookup fn */
     } else if (!opt.no_canned) {
         uint32_t blk = addr & ~0x7FFFu, off = addr & 0x7FFF;
-        if (addr == 0x40020008) v = 0xFFFFFFFFu;                                       /* RESETS.RESET_DONE: all done */
+        if (base >= 0x400E080Cu && base <= 0x400E0828u) { uint32_t b = 1u << ((base - 0x400E080Cu) >> 2); v = (__atomic_fetch_or(&g_bootlock, b, __ATOMIC_SEQ_CST) & b) ? 0 : b; }   /* BOOTLOCKn */
+        else if (base == 0x400E0808u) v = g_bootlock;                                  /* BOOTLOCK_STAT */
+        else if (base == 0x400100A4u) v = 0x10;                                        /* FC0_STATUS: DONE (the frequency counter answers at once) */
+        else if (base == 0x400100A8u) { uint32_t s = shv(0x400100A0) & 0xFF; double k = s == 5 || s == 8 ? 12000 : s == 2 || s == 0x0B ? 48000 : sysclk_hz() / 1000; v = (uint32_t)k << 5; }   /* FC0_RESULT (kHz << 5): xosc/clk_ref 12 MHz, pll_usb/clk_usb 48 MHz, else clk_sys (source numbers from the datasheet, unverified) */
+        else if (addr == 0x40020008) v = 0xFFFFFFFFu;                                  /* RESETS.RESET_DONE: all done */
         else if (blk == 0x40050000 || blk == 0x40058000) v |= 0x80000000u;             /* PLL CS.LOCK */
         else if (blk == 0x40048000 || blk == 0x400E8000) v |= 0x80000000u;             /* XOSC/ROSC STATUS.STABLE (bit 31) */
-        else if (blk == 0x40010000 && off <= 0x74 && off % 12 == 8) v = 0xFFFFFFFFu;   /* CLK_x_SELECTED */
+        else if (blk == 0x40010000 && off <= 0x74 && off % 12 == 8) v = off == 0x38 ? 1u << (shv(0x40010030) & 3) : off == 0x44 ? 1u << (shv(0x4001003C) & 1) : 1;   /* CLK_x_SELECTED: one-hot SRC of the glitchless muxes (clk_ref, clk_sys; the SDK waits for == 1), else hardwired 1 */
         else if ((blk == 0x400B0000 || blk == 0x400B8000) && (off == 0x0C || off == 0x28)) { v = micros(); if (opt.bus) timer_poll_nap(pc); }  /* TIMELR/TIMERAWL */
         else if (addr == 0xE0001004) v = dwt_now();                                    /* DWT_CYCCNT */
         else if (addr == 0xE000E010) v |= 0x10000;                                     /* SYST_CSR.COUNTFLAG */
@@ -497,19 +505,26 @@ static uint32_t mmio_load_base(uint32_t addr, int size, uint32_t pc) {
         else if (addr == 0xD0000000) v = 0;                                            /* CPUID */
         else if (addr == 0xE000ED08 && !p) v = IMG_BASE;                               /* SCB.VTOR: the image's own vector table */
         else if (addr == 0xE000ED00) v = 0x410FD214;                                   /* SCB.CPUID: Cortex-M33 r0p4 */
-    }
-    /* loop breaker: the same pc re-reading hundreds of times probably waits on a status bit */
-    static int tbrk = -1; if (tbrk < 0) tbrk = getenv("UM2_TIMERBREAK") != NULL;
+        else known = p != NULL;
+    } else known = p != NULL;
+    /* Loop breaker: a pc that re-reads a register we know nothing about, with no other MMIO access in between, probably waits on a status bit; after 16 such reads it gets a
+     * cycling list of values.  A register the image wrote gets the fakes OR-ed into what it wrote, and only after 256 such reads.  Never for a canned register (DWT, CLOCKS
+     * SELECTED), nor for reads that merely repeat across calls (B11: the old count-per-pc rule faked DWT_CYCCNT in the clock calibration of every image, and config
+     * read-modify-writes).  UM2_LBOLD=1: the old rule (any 16 reads at one pc). */
+    static int tbrk = -1, lbold; if (tbrk < 0) { tbrk = getenv("UM2_TIMERBREAK") != NULL; lbold = getenv("UM2_LBOLD") != NULL; }
     int tmr = (addr & ~0x7FFFu) == 0x400B0000u || (addr & ~0x7FFFu) == 0x400B8000u;
     int usb = (addr & ~0x3FFFu) == 0x50110000u;   /* USBCTRL regs (+ aliases): nothing is attached, a USB host polling them must read idle */
     Ev *e = (addr >= 0x40000000 && !(addr >= 0x60000000 && addr < 0xD0000000) && !(tmr && !tbrk && opt.bus_verbose < 2)) ? ev_get(K_OTHER, pc, addr, NULL) : NULL;   /* timer reads: no census entry unless asked (never a loop-breaker case) */
     if (e) {
         e->n++;
-        if (tmr) { g_tm_reads[(addr & 0x7FFF) >> 2 & 31]++; if (e->n > 16) g_tm_broken[(addr & 0x7FFF) >> 2 & 31]++; }
-        if (e->n > 16 && !(tmr && !tbrk) && !usb) {   /* the timer is a clock, never a status bit */
-            unsigned k = (unsigned)((e->n / 16) % 15);
-            if (e->n == 17) { e->y = v; e->z = 1; snprintf(e->note, sizeof e->note, "loop-breaker @%08x addr %08x", pc, addr); }   /* y: the value it would have read, x: which fakes went out (lb_dump) */
-            e->x |= 1u << k; v = g_lb_cyc[k];
+        if (pc == tl_lb_pc && addr == tl_lb_a && tl_act == tl_lb_act + 1) tl_lb_run++; else tl_lb_run = 1;
+        tl_lb_pc = pc; tl_lb_a = addr; tl_lb_act = tl_act;
+        uint64_t n = lbold ? e->n : tl_lb_run;
+        if (tmr) { g_tm_reads[(addr & 0x7FFF) >> 2 & 31]++; if (n > 16) g_tm_broken[(addr & 0x7FFF) >> 2 & 31]++; }
+        if (n > (known == 1 && !lbold ? 256u : 16u) && (lbold ? !(tmr && !tbrk) : (known < 2 || (tmr && tbrk))) && !usb) {   /* the timer is a clock, never a status bit */
+            unsigned k = (unsigned)((n / 16) % 15);
+            if (!(e->z & 1)) { e->y = v; e->z = 1; snprintf(e->note, sizeof e->note, "loop-breaker @%08x addr %08x", pc, addr); }   /* y: the value it would have read, x: which fakes went out (lb_dump) */
+            e->x |= 1u << k; v = known == 1 && !lbold ? v | g_lb_cyc[k] : g_lb_cyc[k];
         }
     }
     if (size == 1) return (v >> ((addr & 3) * 8)) & 0xFF;
