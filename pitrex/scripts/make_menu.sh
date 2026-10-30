@@ -52,6 +52,19 @@ rm -f $FAT/Scripts/PiTrex_Cube_demo.sh $FAT/Scripts/PiTrex_Gyrocks.sh $FAT/Scrip
 rm -f "$MENU"/*.mgl "$PTX"/*.ptx
 mkdir -p "$FAT/games/Vectrex-PiTrex/UVMC2"
 
+# Scripts > PiTrex_Make_UVMC2_Card: a tool, not a game, so it sits next to Setup, Update, Stop and Uninstall
+# (they print to the Scripts console; a main-menu entry would load the core and show nothing)
+if [ -f "$PITREX/make_card.sh" ]; then
+	cat > "$FAT/Scripts/PiTrex_Make_UVMC2_Card.sh" <<EOF
+#!/bin/bash
+# Build the UVMC2 card image $PITREX/uvmc2/sd.img from the files in $PITREX/uvmc2/card.
+# Written by make_menu.sh (PiTrex_Setup); removed by PiTrex_Uninstall.
+exec bash $PITREX/make_card.sh
+EOF
+	chmod +x "$FAT/Scripts/PiTrex_Make_UVMC2_Card.sh"
+	echo "Scripts > PiTrex_Make_UVMC2_Card"
+fi
+
 # core only: the games are picked in the OSD
 {
 	echo "<mistergamedescription>"
