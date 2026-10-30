@@ -202,4 +202,5 @@ when nothing else is in it) and leaves your own files alone.
 | An old overlay is on top of the game | OSD > Video Overlay & Geometry > Overlay = Off. |
 | The OSD browser opens `games/Vectrex` | The core was loaded by hand from `_Unstable`, so picks will not start. Load it from PiTrex & UVMC2 > UVMC2 Games. |
 | A game started again by itself after a restart | Fixed in this release (stale file reports are ignored). |
+| A controller button does something different from the normal Vectrex core (e.g. View) | The menu entries load the core as "Vectrex-PiTrex", and the MiSTer keeps controller mappings per core name, so it has its own mapping, separate from VECTREX's. Set it up once in the OSD (Define joystick buttons) while the core runs from the PiTrex & UVMC2 menu. |
 | Log of the last game | `/tmp/um2.log` (the game), `/tmp/pitrexd.log` (picks and settings). |
