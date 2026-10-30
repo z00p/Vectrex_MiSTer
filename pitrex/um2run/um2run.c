@@ -2321,7 +2321,7 @@ static int do_parse(void) {
     size_t paylen = (size_t)words * 4;
     printf("== %s\n  header: version=0x%x blocks=%u load=0x%08x words=0x%x (%zu bytes payload) file=%zu bytes, trailing=%lld bytes\n",
            opt.file, ver, blocks, load, words, paylen, g_filesz, (long long)g_filesz - 20 - (long long)paylen);
-    if (20 + paylen > g_filesz) { printf("  payload exceeds file!\n"); return 1; }
+    if (words > (g_filesz - 20) / 4) { printf("  payload exceeds file!\n"); return 1; }
     if (g_filesz > 20 + paylen) {
         const uint8_t *t = g_file + 20 + paylen; size_t n = g_filesz - 20 - paylen;
         printf("  trailer: first bytes"); for (size_t i = 0; i < 16 && i < n; i++) printf(" %02x", t[i]);
@@ -2473,7 +2473,7 @@ int main(int argc, char **argv) {
     if (opt.parse) return do_parse();
     if (g_filesz < 20 || memcmp(g_file, "2CMU", 4) || rd32(g_file + 12) != IMG_BASE) { fprintf(stderr, "not a 2CMU image loading at 0x20000000\n"); return 1; }
     uint32_t words = rd32(g_file + 16);
-    if (20 + (size_t)words * 4 > g_filesz || words * 4 > IMG_TOP - IMG_BASE) { fprintf(stderr, "bad length\n"); return 1; }
+    if (words > (g_filesz - 20) / 4 || words > (IMG_TOP - IMG_BASE) / 4) { fprintf(stderr, "bad length\n"); return 1; }     /* no words * 4: it wraps for a malformed header */
     g_entry = rd32(g_file + 20 + 4) & ~1u;
     if (!g_noprepatch) prepatch(g_file + 20, words);
     if (!getenv("UM2_NOBTGT")) btgt_scan(g_file + 20, words);     /* UM2_NOBTGT=1 (test): only the local scan, as before */
