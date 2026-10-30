@@ -34,7 +34,8 @@ find /media/fat/pitrex -mindepth 1 -maxdepth 1 ! -name uvmc2 ! -name um2run -exe
 rm -f /media/fat/pitrex/um2run/um2run /media/fat/pitrex/um2run/mister_run.sh \
 	/media/fat/pitrex/um2run/README.md /media/fat/pitrex/um2run/DESIGN.md
 rmdir /media/fat/pitrex/um2run 2>/dev/null
-rm -f /media/fat/pitrex/uvmc2/tacscan/README.txt /media/fat/pitrex/uvmc2/card/README.txt
+# TACSCAN.PCM is made by make_menu.sh from MAME's tacscan samples (made again by the next Setup)
+rm -f /media/fat/pitrex/uvmc2/tacscan/README.txt /media/fat/pitrex/uvmc2/tacscan/TACSCAN.PCM /media/fat/pitrex/uvmc2/card/README.txt
 rmdir /media/fat/pitrex/uvmc2/tacscan /media/fat/pitrex/uvmc2/card /media/fat/pitrex/uvmc2 /media/fat/pitrex 2>/dev/null
 rm -f /media/fat/games/Vectrex/PiTrex/*.ptx
 rmdir /media/fat/games/Vectrex/PiTrex 2>/dev/null
@@ -47,7 +48,18 @@ rm -f /media/fat/games/Vectrex/Overlays/VecBreak.art /media/fat/games/Vectrex/Ov
 
 START=/media/fat/linux/user-startup.sh
 if grep -q pitrexd "$START" 2>/dev/null; then
-	sed -i '/# PiTrex: start programs picked in the Vectrex OSD/d; /pitrexd/d' "$START"
+	# Setup appended a blank line, the comment and the start line: remove all three. The blank line goes only if
+	# it is blank and right before the comment (a file without a final newline got no blank line, so the line
+	# before the comment is then the user's own and stays).
+	awk '
+		/^# PiTrex: start programs picked in the Vectrex OSD/ { if (have && (prev == "" || prev == "\r")) have = 0; next }
+		/pitrexd/ { next }
+		{ if (have) print prev; prev = $0; have = 1 }
+		END { if (have) print prev }
+	' "$START" > "$START.pitrex-tmp" && mv "$START.pitrex-tmp" "$START"
+	rm -f "$START.pitrex-tmp"
+	# nothing left: Setup made the file
+	[ -s "$START" ] || rm -f "$START"
 	echo "Removed pitrexd from user-startup.sh"
 fi
 echo "PiTrex removed."
