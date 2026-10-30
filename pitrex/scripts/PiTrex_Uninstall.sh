@@ -5,8 +5,9 @@
 # linux/user-startup.sh, log_file_entry=1 in the [Vectrex-PiTrex] section of MiSTer.ini).
 # Your Vectrex settings (config/VECTREX_v1.CFG) are left alone; PiTrex's own
 # (config/Vectrex-PiTrex_v1.CFG) go. Your own files are NOT touched: pitrex/uvmc2/ (card images,
-# the Tac/Scan romset) and games/Vectrex-PiTrex (.um2 images, sidecars, card images); those folders
-# are only removed when nothing of yours is left in them.
+# the card folder, the Tac/Scan romset), anything of yours in pitrex/um2run/ (card images named by
+# sd=, images, sidecars) and games/Vectrex-PiTrex (.um2 images, sidecars, card images); those
+# folders are only removed when nothing of yours is left in them.
 [ -x /media/fat/Scripts/PiTrex_Stop.sh ] && /media/fat/Scripts/PiTrex_Stop.sh > /dev/null
 for p in $(ps | grep -v grep | grep pitrexd.sh | awk '{print $1}'); do kill "$p"; done
 
@@ -23,9 +24,14 @@ elif [ -f "$INI.pitrex-bak" ]; then
 	rm -f "$INI.pitrex-bak"
 fi
 
-find /media/fat/pitrex -mindepth 1 -maxdepth 1 ! -name uvmc2 -exec rm -rf {} + 2>/dev/null
-rm -f /media/fat/pitrex/uvmc2/tacscan/README.txt
-rmdir /media/fat/pitrex/uvmc2/tacscan /media/fat/pitrex/uvmc2 /media/fat/pitrex 2>/dev/null
+find /media/fat/pitrex -mindepth 1 -maxdepth 1 ! -name uvmc2 ! -name um2run -exec rm -rf {} + 2>/dev/null
+# pitrex/um2run: only the release's own files. sd= card names are looked up there too, so it can hold your card
+# images (BattleZone's saves), .um2 images, sidecars and .load files; those, and um2run.* copies, stay.
+rm -f /media/fat/pitrex/um2run/um2run /media/fat/pitrex/um2run/mister_run.sh \
+	/media/fat/pitrex/um2run/README.md /media/fat/pitrex/um2run/DESIGN.md
+rmdir /media/fat/pitrex/um2run 2>/dev/null
+rm -f /media/fat/pitrex/uvmc2/tacscan/README.txt /media/fat/pitrex/uvmc2/card/README.txt
+rmdir /media/fat/pitrex/uvmc2/tacscan /media/fat/pitrex/uvmc2/card /media/fat/pitrex/uvmc2 /media/fat/pitrex 2>/dev/null
 rm -f /media/fat/games/Vectrex/PiTrex/*.ptx
 rmdir /media/fat/games/Vectrex/PiTrex 2>/dev/null
 rm -rf "/media/fat/_PiTrex & UVMC2"
@@ -42,5 +48,6 @@ if grep -q pitrexd "$START" 2>/dev/null; then
 fi
 echo "PiTrex removed."
 [ -d /media/fat/games/Vectrex-PiTrex ] && echo "Your files in games/Vectrex-PiTrex were left in place."
-[ -d /media/fat/pitrex/uvmc2 ] && echo "Your files in pitrex/uvmc2 (card images, romsets) were left in place."
+[ -d /media/fat/pitrex/uvmc2 ] && echo "Your files in pitrex/uvmc2 (card images, the card folder, romsets) were left in place."
+[ -d /media/fat/pitrex/um2run ] && echo "Your files in pitrex/um2run (card images, images, sidecars) were left in place."
 rm -f /media/fat/Scripts/PiTrex_*.sh /media/fat/Scripts/UVMC2_*.sh
