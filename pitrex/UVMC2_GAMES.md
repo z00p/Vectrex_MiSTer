@@ -139,7 +139,7 @@ Other builds of the same games may behave differently. These are the images used
 | BattleZone 0.3a (`BattleZone_0_3a.um2`) | its **own** copy, no ROMs (it writes to the card) | plays well, cart audio good; about 23 frames/s; whole picture with Open Matte. Button 1 starts, button 4 fires |
 | Pac-Man (`pacman-uvmc2-SD-card.um2`) | a card image with the folders, no ROMs | cart audio good; about 26 frames/s, game speed right |
 | Punch-Out (`Punchout.um2`) | your MAME `punchout.zip` | plays but about two thirds speed (the MiSTer manages ~38 of its 60 frames/s), so sound and speech are a bit off; sound comes through the Vectrex PSG; its JACK audio route is untested |
-| Veccy Road 0.10 (`veccy_road_v010.um2`) | none | plays well, about 39 frames/s |
+| Veccy Road 0.10 (`veccy_road_v010.um2`) | none | plays well, with sound, about 39 frames/s |
 
 The sidecar files used for these runs (the card names are up to you):
 ```
