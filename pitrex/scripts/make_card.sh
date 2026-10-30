@@ -4,9 +4,9 @@
 #   /media/fat/pitrex/uvmc2/card/   the files from your real UVMC2 SD card, or just your ROM zips (input)
 #   /media/fat/pitrex/uvmc2/sd.img  the card every UVMC2 game without an sd= key in its sidecar sees (output)
 # The card is a FAT32 image of a whole card without a partition table ("superfloppy"), the layout um2run
-# was tested with. Rebuilding keeps the player's saves: every config and scores folder (any case, at
-# any depth: config/ and scores/ at the top, PORTDATA/<Game>/CONFIG) is copied out of the old sd.img
-# and back into the new one, and the old image is kept as sd.img.bak (one backup).
+# was tested with. Rebuilding keeps the player's saves: what the games wrote to the old sd.img (every
+# file the last build did not put there, and all config and scores folders) is copied into the new one,
+# and the old image is kept as sd.img.bak (one backup). sd.img.list records what a build put on the card.
 # BattleZone writes to its card: if its image is in games/Vectrex-PiTrex/UVMC2, bz_sd.img is made too
 # (same files, its own saves) and, if the image has no sidecar yet, one is written with sd=bz_sd.img.
 #   make_card.sh               build now
@@ -101,21 +101,37 @@ def fat_bytes(entries):
             total += (os.path.getsize(p) + 511) // 512 * 512
     return total
 
+def card_mib(fat, max_mib):
+    mib = 1 << 20
+    need = fat * 5 // 4 + 16 * mib    # contents x 1.25 + 16 MiB for new settings and scores
+    card = max(64, (need + mib - 1) // mib)
+    # near the limit: the 1.25 headroom may go, the 16 MiB for saves stays
+    if card > int(max_mib) and fat + 16 * mib <= int(max_mib) * mib:
+        card = int(max_mib)
+    return card
+
+def all_files(root):
+    out = []
+    for r, dirs, files in os.walk(root):
+        out += [(os.path.relpath(os.path.join(r, d), root), os.path.join(r, d), True) for d in dirs]
+        out += [(os.path.relpath(os.path.join(r, f), root), os.path.join(r, f), False) for f in files]
+    return out
+
 def cmd_scan(src, max_mib):
     # prints: files data_size card_mib skips
     entries, skips = walk(src)
     files = [e for e in entries if not e[2]]
     data = sum(os.path.getsize(p) for r, p, d in files)
     mib = 1 << 20
-    fat = fat_bytes(entries)
-    need = fat * 5 // 4 + 16 * mib    # contents x 1.25 + 16 MiB for config and scores
-    card = max(64, (need + mib - 1) // mib)
-    # near the limit: the 1.25 headroom may go, the 16 MiB for saves stays
-    if card > int(max_mib) and fat + 16 * mib <= int(max_mib) * mib:
-        card = int(max_mib)
     size = "%d KiB" % ((data + 1023) // 1024) if data < mib else "%d MiB" % ((data + mib // 2) // mib)
     s = ", ".join("%d %s" % (n, w) for w, n in sorted(skips.items())) or "-"
-    print(len(files), size.replace(" ", "_"), card, s)
+    print(len(files), size.replace(" ", "_"), card_mib(fat_bytes(entries), max_mib), s)
+
+def cmd_size(src, max_mib, *saved):
+    # card size for the folder plus the saves carried over from the old cards (the largest set counts)
+    base = fat_bytes(walk(src)[0])
+    extra = max([fat_bytes(all_files(d)) for d in saved] or [0])
+    print(card_mib(base + extra, max_mib))
 
 def cmd_list(src):
     # what the card is built from (compared by --if-needed): size, mtime, path
@@ -172,26 +188,47 @@ def cmd_copy(src, dst):
             sys.exit("make_card: ERROR: cannot copy %s to the card: %s" % (rel, e.strerror or e))
     print(n)
 
-def saves(root):
-    """folders named config or scores (any case), at any depth: the games keep settings and scores in
-    config/ and scores/ at the top, and some in PORTDATA/<Game>/CONFIG (Punch-Out: PUNCHOUT.NV)"""
-    out = []
-    for r, dirs, files in os.walk(root):
-        keep = []
-        for d in sorted(dirs):
-            if d.lower() in ("config", "scores"):
-                out.append(os.path.relpath(os.path.join(r, d), root))
-            else:
-                keep.append(d)
-        dirs[:] = keep
-    return out
+def in_save_dir(rel):
+    return any(p.lower() in ("config", "scores") for p in rel.split("/")[:-1])
 
-def cmd_saves_out(mnt, dst):
-    # the save folders of a card into dst, same paths; prints the number of files
+def cmd_saves_out(mnt, dst, listfile, card):
+    """Copy the player's files out of an old card into dst (same paths); prints the number of files.
+    The games do not all save in the same place (config/ and scores/ at the top, Punch-Out in
+    PORTDATA/Punchout/CONFIG, BattleZone makes a BATTLEZONE folder), so kept are:
+      - every file in a folder named config or scores (any case, any depth), and
+      - if this script built the card (its .list exists): every file and folder it did not put there,
+        i.e. what the games wrote;
+      - otherwise (a card made by hand): every file and folder the card folder does not provide,
+        so nothing of the player's is lost when this script first replaces it.
+    Files that are kept win over the card folder's files of the same name."""
+    built = set()
+    if os.path.isfile(listfile):
+        with open(listfile, encoding="utf-8", errors="surrogateescape") as f:
+            for line in f:
+                parts = line.rstrip("\n").split(" ", 2)
+                if len(parts) == 3:
+                    built.add(parts[2].lower())
+    else:
+        built = set(r.replace(os.sep, "/").lower() for r, p, d in walk(card)[0] if not d)
+    built_dirs = set()
+    for b in built:
+        parts = b.split("/")
+        for i in range(1, len(parts)):
+            built_dirs.add("/".join(parts[:i]))
     n = 0
-    for rel in saves(mnt):
-        os.makedirs(os.path.join(dst, rel))
-        n += merge(os.path.join(mnt, rel), os.path.join(dst, rel))
+    for r, dirs, files in os.walk(mnt):
+        dirs.sort()
+        for d in dirs:
+            rel = os.path.relpath(os.path.join(r, d), mnt).replace(os.sep, "/")
+            if rel.lower() not in built_dirs:
+                os.makedirs(os.path.join(dst, rel), exist_ok=True)
+        for f in sorted(files):
+            rel = os.path.relpath(os.path.join(r, f), mnt).replace(os.sep, "/")
+            if in_save_dir(rel) or rel.lower() not in built:
+                d = os.path.join(dst, rel)
+                os.makedirs(os.path.dirname(d), exist_ok=True)
+                copy_file(os.path.join(r, f), d)
+                n += 1
     print(n)
 
 def cmd_saves_in(src, mnt):
@@ -224,7 +261,7 @@ def cmd_cfg(path, key):
                 val = v.strip()
     print(val)
 
-cmds = {"scan": cmd_scan, "list": cmd_list, "copy": cmd_copy, "saves_out": cmd_saves_out,
+cmds = {"scan": cmd_scan, "size": cmd_size, "list": cmd_list, "copy": cmd_copy, "saves_out": cmd_saves_out,
         "saves_in": cmd_saves_in, "mkimg": cmd_mkimg, "free": cmd_free, "dev": cmd_dev, "cfg": cmd_cfg}
 cmds[sys.argv[1]](*sys.argv[2:])
 PYEOF
@@ -233,7 +270,7 @@ py() { python3 -c "$PYHELP" "$@"; }
 
 # ---------------------------------------------------------------------------------------------
 # Cleanup: whatever happens, unmount, detach the loop devices and remove the half-built files.
-MOUNTS=""; LOOPS=""; TMPFILES=""; WORK=""; LOCK=""
+MOUNTS=""; LOOPS=""; TMPFILES=""; WORK=""; LOCK=""; SAVES=""
 cleanup() {
 	local m l f
 	for m in $MOUNTS; do umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null; done
@@ -241,10 +278,11 @@ cleanup() {
 	for f in $TMPFILES; do rm -f "$f"; done
 	if [ -n "$WORK" ]; then
 		for m in "$WORK"/mnt*; do [ -d "$m" ] && rmdir "$m" 2>/dev/null; done
-		rm -rf "$WORK"/saves_*
 		rm -f "$WORK"/*.log
 		rmdir "$WORK" 2>/dev/null
 	fi
+	# the saves folder is ours (mktemp) and never a mount point
+	case "$SAVES" in "$UV"/.make_card.*) rm -rf "$SAVES" ;; esac
 	[ -n "$LOCK" ] && rm -rf "$LOCK"
 }
 trap cleanup EXIT
@@ -338,6 +376,8 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 	rm -rf "$LOCK"; mkdir "$LOCK" || { LOCK=""; die "cannot create $LOCK"; }
 fi
 echo $$ > "$LOCK/pid"
+# saves folders of a run that was killed hard (we hold the lock, so no other run uses them)
+for d in "$UV"/.make_card.*; do [ -d "$d" ] && rm -rf "$d"; done
 WORK=$(mktemp -d "$T/make_card.XXXXXX") || die "cannot create a work folder in $T"
 
 # BattleZone images and the bz_sd.img each would use (normally one, $UV/bz_sd.img)
@@ -352,6 +392,33 @@ if [ -n "$BZ_IMGS" ]; then
 	done <<EOF
 $BZ_IMGS
 EOF
+fi
+
+# 3. Saves from the old cards (see saves_out above for what is kept). They go to a folder next to the
+# cards, not to /tmp: on the MiSTer /tmp is in RAM, and a card made by hand may carry big files.
+SAVES=$(mktemp -d "$UV/.make_card.XXXXXX") || die "cannot create a work folder in $UV"
+# saves_from <card> <folder>
+saves_from() {
+	local img=$1 dst=$2 n
+	mkdir -p "$dst"
+	[ -f "$img" ] || return 0
+	attach "$img" "$WORK/mnt_old" ro || die "cannot mount the old ${img##*/} (is it a FAT card image?). Move it away to build a new one."
+	n=$(py saves_out "$WORK/mnt_old" "$dst" "$img.list" "$CARD") || die "cannot copy the saves out of ${img##*/}"
+	detach "$WORK/mnt_old"
+	if [ "$n" = 0 ]; then say "the old ${img##*/} has no saves yet"
+	elif [ -f "$img.list" ]; then say "kept the saves of the old ${img##*/} ($n file(s) the games wrote)"
+	else say "kept $n file(s) of the old ${img##*/} that are not in the card folder (it was not made by this script)"; fi
+}
+saves_from "$OUT" "$SAVES/main"
+i=0
+for t in $BZ_TARGETS; do i=$((i + 1)); saves_from "$t" "$SAVES/bz$i"; done
+
+# the card holds the folder's files plus the saves
+MIB=$(py size "$CARD" "$MAX_MIB" "$SAVES"/*) || die "cannot work out the card size"
+if [ "$MIB" -gt "$MAX_MIB" ]; then
+	say "with the saves of the old card, the card would be $MIB MiB, more than the $MAX_MIB MiB um2run can use."
+	say "Remove files the games do not need from $CARD, then run this again. Nothing was changed."
+	exit 1
 fi
 
 # Free space: the new card and every BattleZone copy exist next to the old ones until the end.
@@ -370,20 +437,6 @@ for t in $BZ_TARGETS; do
 done
 need_on "$UV" "$need"
 say "card size: $MIB MiB, FAT32 with 512-byte clusters"
-
-# 3. Saves from the old cards
-# saves_from <card> <folder>: copy every config and scores folder (any depth) out of an existing card image
-saves_from() {
-	local img=$1 dst=$2 n
-	mkdir -p "$dst"
-	[ -f "$img" ] || return 0
-	attach "$img" "$WORK/mnt_old" ro || die "cannot mount the old ${img##*/} (is it a FAT card image?). Move it away to build a new one."
-	n=$(py saves_out "$WORK/mnt_old" "$dst") || die "cannot copy the saves out of ${img##*/}"
-	detach "$WORK/mnt_old"
-	if [ "$n" = 0 ]; then say "the old ${img##*/} has no saves yet (no files in config or scores folders)"
-	else say "kept the saves of the old ${img##*/} ($n file(s) in config and scores folders)"; fi
-}
-saves_from "$OUT" "$WORK/saves_main"
 
 # 4. Build the new card under a temporary name
 # Cluster size: FAT32 needs at least 65525 clusters. With 512-byte clusters (-s 1, the layout um2run and the
@@ -405,7 +458,6 @@ BZ_OLD=""; BZ_FIRST=""; i=0
 for t in $BZ_TARGETS; do
 	i=$((i + 1))
 	if [ -f "$t" ]; then
-		saves_from "$t" "$WORK/saves_bz$i"
 		rm -f "$t.new"; TMPFILES="$TMPFILES $t.new"
 		cp "$NEW" "$t.new" || die "cannot write $t.new"
 		BZ_OLD="$BZ_OLD $i"
@@ -423,7 +475,7 @@ put_saves() {
 	detach "$WORK/mnt_new"
 	[ "$n" = 0 ] || say "put the $n saved file(s) back into ${1%.new}"
 }
-put_saves "$NEW" "$WORK/saves_main"
+put_saves "$NEW" "$SAVES/main"
 
 i=0
 for t in $BZ_TARGETS; do
@@ -432,7 +484,7 @@ for t in $BZ_TARGETS; do
 		rm -f "$t.new"; TMPFILES="$TMPFILES $t.new"
 		cp "$NEW" "$t.new" || die "cannot write $t.new" ;;
 	esac
-	case " $BZ_OLD " in *" $i "*) put_saves "$t.new" "$WORK/saves_bz$i" ;; esac
+	case " $BZ_OLD " in *" $i "*) put_saves "$t.new" "$SAVES/bz$i" ;; esac
 done
 
 # check what was built (fsck.vfat is part of dosfstools; skipped if missing)
@@ -462,6 +514,7 @@ for t in $BZ_TARGETS; do
 	b=0; [ -f "$t" ] && b=1
 	swap "$t"
 	TMPFILES=""
+	printf '%s\n' "$LIST" > "$t.list.new" && mv "$t.list.new" "$t.list"
 	if [ "$b" = 1 ]; then say "done: $t, BattleZone's own card (the old one is ${t##*/}.bak)"; else say "done: $t, BattleZone's own card"; fi
 done
 sync
