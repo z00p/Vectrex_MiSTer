@@ -8,7 +8,9 @@ cartridge.
 
 The same route also runs games written for the **UVMC2** multicart, rebuilt for the ARM: see
 [UVMC2.md](UVMC2.md). And, as an unofficial **alpha**, the UVMC2 cartridge images themselves
-(`.um2` files, unmodified), picked in the core's OSD: see [UVMC2_GAMES.md](UVMC2_GAMES.md).
+(`.um2` files, unmodified), picked in the core's OSD: start with [ADDING_GAMES.md](ADDING_GAMES.md)
+(where your images and the files from your UVMC2 SD card go), and see [UVMC2_GAMES.md](UVMC2_GAMES.md)
+for the details.
 
 With **PiTrex Mode** off (the default), the core behaves exactly like
 [Videodr0me's Vectrex core](https://github.com/MiSTer-devel/Vectrex_MiSTer), which this builds on.
@@ -49,9 +51,11 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
 ## Playing
 - **From the main menu** (after PiTrex_Setup): **PiTrex & UVMC2** > e.g. **VecDrive**. The
   core, the overlay and the program load in one go. Games aren't in the Scripts menu; it
-  only holds Setup, Update, Stop and Uninstall.
+  only holds Setup, Update, Stop, Uninstall and Make_UVMC2_Card (which builds the UVMC2 card image,
+  see [ADDING_GAMES.md](ADDING_GAMES.md)).
 - **UVMC2 cartridge images (`.um2`, alpha):** main menu > **PiTrex & UVMC2** > **UVMC2 Games**, then
-  OSD > **Load UVMC2 / PiTrex**. Card images, per-game settings and the tested games are in
+  OSD > **Load UVMC2 / PiTrex**. How to add your games and the files from your UVMC2 SD card:
+  [ADDING_GAMES.md](ADDING_GAMES.md). Per-game settings and the tested games are in
   [UVMC2_GAMES.md](UVMC2_GAMES.md).
 - **From a shell (SSH):** `/media/fat/pitrex/pitrex_launch.sh vecdrive` loads the PiTrex core
   if needed, switches PiTrex Mode on and starts the program.
@@ -85,7 +89,7 @@ race, and button 3 cycles through the rest. None are included.
   builds (delete those by hand if you like); the main-menu entries switch to the newest. It
   never touches the official core in `_Console`.
 - **PiTrex_Uninstall** removes everything PiTrex added, including the optional extras and all
-  PiTrex cores in `_Unstable` and `config/Vectrex-PiTrex_v1.CFG`. The official core, your Vectrex settings and your own files (`games/Vectrex-PiTrex`, `pitrex/uvmc2`) are kept.
+  PiTrex cores in `_Unstable` and `config/Vectrex-PiTrex_v1.CFG`. The official core, your Vectrex settings and your own files (`games/Vectrex-PiTrex`, `pitrex/uvmc2` with your card folder and card images, and anything of yours in `pitrex/um2run`) are kept.
 
 ## Troubleshooting
 | Symptom | Likely cause and fix |
