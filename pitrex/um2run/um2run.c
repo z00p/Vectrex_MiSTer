@@ -500,11 +500,12 @@ static uint32_t mmio_load_base(uint32_t addr, int size, uint32_t pc) {
     /* loop breaker: the same pc re-reading hundreds of times probably waits on a status bit */
     static int tbrk = -1; if (tbrk < 0) tbrk = getenv("UM2_TIMERBREAK") != NULL;
     int tmr = (addr & ~0x7FFFu) == 0x400B0000u || (addr & ~0x7FFFu) == 0x400B8000u;
+    int usb = (addr & ~0x3FFFu) == 0x50110000u;   /* USBCTRL regs (+ aliases): nothing is attached, a USB host polling them must read idle */
     Ev *e = (addr >= 0x40000000 && !(addr >= 0x60000000 && addr < 0xD0000000) && !(tmr && !tbrk && opt.bus_verbose < 2)) ? ev_get(K_OTHER, pc, addr, NULL) : NULL;   /* timer reads: no census entry unless asked (never a loop-breaker case) */
     if (e) {
         e->n++;
         if (tmr) { g_tm_reads[(addr & 0x7FFF) >> 2 & 31]++; if (e->n > 16) g_tm_broken[(addr & 0x7FFF) >> 2 & 31]++; }
-        if (e->n > 16 && !(tmr && !tbrk)) {   /* the timer is a clock, never a status bit */
+        if (e->n > 16 && !(tmr && !tbrk) && !usb) {   /* the timer is a clock, never a status bit */
             static const uint32_t cyc[] = { 0xFFFFFFFFu, 0, 1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80, 0x100, 0x1000, 0x10000, 0x80000000u, 0xFFFF0000u };
             v = cyc[(e->n / 16) % 15];
             if (e->n == 17) { snprintf(e->note, sizeof e->note, "loop-breaker @%08x addr %08x", pc, addr); }
