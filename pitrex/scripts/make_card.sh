@@ -10,9 +10,13 @@
 # BattleZone writes to its card: if its image is in games/Vectrex-PiTrex/UVMC2, bz_sd.img is made too
 # (same files, its own saves) and, if the image has no sidecar yet, one is written with sd=bz_sd.img.
 # A sidecar that names another card is left alone and bz_sd.img is not made.
+# .um2 games in the card folder are not put on the card: they are copied (subfolders kept) to
+# games/Vectrex-PiTrex/UVMC2, so a whole UVMC2 SD card can be copied into the card folder in one go.
+# Nothing there is overwritten: a different file of the same name is left alone and reported.
 #   make_card.sh               build now
-#   make_card.sh --if-needed   build only if sd.img is missing or the card folder changed since the last build
-#                              (PiTrex_Setup uses this); quiet when there is nothing to do
+#   make_card.sh --if-needed   build only if sd.img is missing, the card folder changed since the last build, or
+#                              BattleZone has no card of its own yet (PiTrex_Setup uses this); quiet when there is
+#                              nothing to do. The .um2 games are copied either way.
 # Needs: bash, mkfs.vfat, losetup, mount, python3 (3.9). No mtools. Undo: delete sd.img (and bz_sd.img).
 # PITREX_FAT and PITREX_TMP are test hooks (the PC test points them at a scratch tree); on the MiSTer leave them unset.
 FAT=${PITREX_FAT:-/media/fat}
@@ -262,8 +266,54 @@ def cmd_cfg(path, key):
                 val = v.strip()
     print(val)
 
+def same_file(a, b):
+    if not os.path.isfile(b) or os.path.getsize(a) != os.path.getsize(b):
+        return False
+    with open(a, "rb") as fa, open(b, "rb") as fb:
+        while True:
+            x = fa.read(1 << 20)
+            if x != fb.read(1 << 20):
+                return False
+            if not x:
+                return True
+
+def cmd_um2(src, dst):
+    """Copy the .um2 files of the card folder (any case, any depth, same skip rules for folders) to the
+    games folder, keeping their subfolders. A copy, never a move, and nothing is ever overwritten.
+    Prints one line per file: C (copied), S (already there, same), D (a different file is there), E (error)."""
+    for root, dirs, files in os.walk(src):
+        top = os.path.samefile(root, src)
+        dirs[:] = sorted(d for d in dirs if not why_skip(os.path.join(root, d), d, True, top))
+        for f in sorted(files):
+            if not f.lower().endswith(".um2") or f.startswith("._"):
+                continue
+            p = os.path.join(root, f)
+            if not os.path.isfile(p):
+                continue
+            rel = os.path.relpath(p, src).replace(os.sep, "/")
+            d = os.path.join(dst, rel)
+            try:
+                if os.path.lexists(d):
+                    print("%s %s" % ("S" if same_file(p, d) else "D", rel))
+                    continue
+                if not os.path.isdir(os.path.dirname(d)):
+                    os.makedirs(os.path.dirname(d))
+                # under a temporary name first, so an interrupted copy never looks like a game
+                tmp = os.path.join(os.path.dirname(d), ".%s.%d.part" % (f, os.getpid()))
+                try:
+                    copy_file(p, tmp)
+                    os.rename(tmp, d)
+                finally:
+                    if os.path.lexists(tmp):
+                        os.remove(tmp)
+                print("C %s" % rel)
+            except OSError as e:
+                print("E %s: %s" % (rel, e.strerror or e))
+    sys.stdout.flush()
+
 cmds = {"scan": cmd_scan, "size": cmd_size, "list": cmd_list, "copy": cmd_copy, "saves_out": cmd_saves_out,
-        "saves_in": cmd_saves_in, "mkimg": cmd_mkimg, "free": cmd_free, "dev": cmd_dev, "cfg": cmd_cfg}
+        "saves_in": cmd_saves_in, "mkimg": cmd_mkimg, "free": cmd_free, "dev": cmd_dev, "cfg": cmd_cfg,
+        "um2": cmd_um2}
 cmds[sys.argv[1]](*sys.argv[2:])
 PYEOF
 )
@@ -333,27 +383,79 @@ if [ ! -d "$CARD" ] || [ -z "$(ls -A "$CARD" 2>/dev/null)" ]; then
 	exit 1
 fi
 command -v python3 > /dev/null || die "python3 not found"
+
+# One folder for the whole SD card: the .um2 games in it are not put on the card, they are copied
+# (subfolders kept) to the games folder, where the OSD finds them. Done on every run, also when the card
+# needs no rebuild, and before the BattleZone search below, so a BattleZone image that comes this way
+# gets its card and sidecar on this run. Nothing in the games folder is ever overwritten.
+mkdir -p "$GAMES" 2>/dev/null
+NUM2=0; NCOPIED=0
+while IFS= read -r l; do
+	[ -n "$l" ] || continue
+	NUM2=$((NUM2 + 1))
+	case "$l" in
+		"C "*) NCOPIED=$((NCOPIED + 1)) ;;
+		"D "*) say "${l#D }: a different file of that name is already in $GAMES, so it was not copied (left as it is)" ;;
+		"E "*) say "could not copy ${l#E } to $GAMES" ;;
+	esac
+done <<EOF
+$(py um2 "$CARD" "$GAMES")
+EOF
+[ "$NCOPIED" = 0 ] || say "copied $NCOPIED .um2 game(s) from the card folder to $GAMES (the OSD's UVMC2 folder)"
+
 scan=$(py scan "$CARD" "$MAX_MIB") || die "cannot read $CARD"
 set -f; set -- $scan; set +f
 NFILES=$1; DATA=$(echo "$2" | tr _ ' '); MIB=$3; shift 3; SKIPS="$*"
 [ "$SKIPS" = "-" ] && SKIPS="nothing"
 if [ "$NFILES" = 0 ]; then
+	if [ "$NUM2" -gt 0 ]; then
+		# only games: they are in the games folder now, and there is nothing to make a card from
+		[ "$IF_NEEDED" = 1 ] && [ "$NCOPIED" = 0 ] && exit 0
+		say "the card folder has only .um2 games, which go in the games folder, so no card was made."
+		say "Games that need ROMs or other files from the card: copy the rest of your UVMC2 SD card into $CARD too, then run this again."
+		exit 0
+	fi
 	[ "$IF_NEEDED" = 1 ] && exit 0
 	say "nothing to put on a card in $CARD (skipped: $SKIPS)."
 	say "Copy the files from your UVMC2 SD card (or just your ROM zips, in a roms folder) into it, then run this again."
 	exit 1
 fi
 
+# BattleZone images and the bz_sd.img each would use (normally one, $UV/bz_sd.img)
+BZ_IMGS=$(find "$GAMES" -type f -iname '*attle*one*.um2' ! -name '._*' 2>/dev/null | sort)
+BZ_TARGETS=""
+if [ -n "$BZ_IMGS" ]; then
+	while IFS= read -r g; do
+		t=$(resolve bz_sd.img "${g%/*}")
+		# a sidecar that names another card (or none): nothing would use bz_sd.img, so it is not made (reported in step 6)
+		if [ -f "$g.cfg" ]; then
+			sd=$(py cfg "$g.cfg" sd)
+			if [ -z "$sd" ] || [ "$(resolve "$sd" "${g%/*}")" != "$t" ]; then continue; fi
+		fi
+		# pitrexd refuses card paths with spaces, so such a card would never be used
+		case "$t" in *[[:space:]]*) say "BattleZone: $t has a space in its path, which pitrexd does not accept: not made"; continue ;; esac
+		case " $BZ_TARGETS " in *" $t "*) ;; *) BZ_TARGETS="$BZ_TARGETS $t" ;; esac
+	done <<EOF
+$BZ_IMGS
+EOF
+fi
+
 LIST=$(py list "$CARD") || die "cannot read $CARD"
 if [ "$IF_NEEDED" = 1 ] && [ -f "$OUT" ]; then
-	if [ -f "$OUT.list" ]; then
-		# built by this script: rebuild if the folder's file list (names, sizes, times) changed
-		[ "$LIST" = "$(cat "$OUT.list")" ] && exit 0
+	BZ_MISSING=0
+	for t in $BZ_TARGETS; do [ -f "$t" ] || BZ_MISSING=1; done
+	if [ "$BZ_MISSING" = 1 ]; then
+		say "BattleZone has no card of its own yet: building the cards"
 	else
-		# a card made some other way: rebuild only if the folder has a file newer than it
-		[ -z "$(find "$CARD" -type f -newer "$OUT" 2>/dev/null | head -1)" ] && exit 0
+		if [ -f "$OUT.list" ]; then
+			# built by this script: rebuild if the folder's file list (names, sizes, times) changed
+			[ "$LIST" = "$(cat "$OUT.list")" ] && exit 0
+		else
+			# a card made some other way: rebuild only if the folder has a file newer than it
+			[ -z "$(find "$CARD" -type f ! -iname '*.um2' -newer "$OUT" 2>/dev/null | head -1)" ] && exit 0
+		fi
+		say "the card folder has changed since sd.img was made: building it again"
 	fi
-	say "the card folder has changed since sd.img was made: building it again"
 fi
 
 say "card folder: $NFILES files, $DATA (skipped: $SKIPS)"
@@ -380,25 +482,6 @@ echo $$ > "$LOCK/pid"
 # saves folders of a run that was killed hard (we hold the lock, so no other run uses them)
 for d in "$UV"/.make_card.*; do [ -d "$d" ] && rm -rf "$d"; done
 WORK=$(mktemp -d "$T/make_card.XXXXXX") || die "cannot create a work folder in $T"
-
-# BattleZone images and the bz_sd.img each would use (normally one, $UV/bz_sd.img)
-BZ_IMGS=$(find "$GAMES" -type f -iname '*attle*one*.um2' ! -name '._*' 2>/dev/null | sort)
-BZ_TARGETS=""
-if [ -n "$BZ_IMGS" ]; then
-	while IFS= read -r g; do
-		t=$(resolve bz_sd.img "${g%/*}")
-		# a sidecar that names another card (or none): nothing would use bz_sd.img, so it is not made (reported in step 6)
-		if [ -f "$g.cfg" ]; then
-			sd=$(py cfg "$g.cfg" sd)
-			if [ -z "$sd" ] || [ "$(resolve "$sd" "${g%/*}")" != "$t" ]; then continue; fi
-		fi
-		# pitrexd refuses card paths with spaces, so such a card would never be used
-		case "$t" in *[[:space:]]*) say "BattleZone: $t has a space in its path, which pitrexd does not accept: not made"; continue ;; esac
-		case " $BZ_TARGETS " in *" $t "*) ;; *) BZ_TARGETS="$BZ_TARGETS $t" ;; esac
-	done <<EOF
-$BZ_IMGS
-EOF
-fi
 
 # 3. Saves from the old cards (see saves_out above for what is kept). They go to a folder next to the
 # cards, not to /tmp: on the MiSTer /tmp is in RAM, and a card made by hand may carry big files.

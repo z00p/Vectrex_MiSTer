@@ -9,7 +9,7 @@
 #  - pitrexd, which starts the program or game a menu entry or an OSD pick selects: now and at every boot
 #  - builds the menu entries (make_menu.sh)
 #  - the card folder pitrex/uvmc2/card, and the UVMC2 card image pitrex/uvmc2/sd.img built from it (make_card.sh)
-#    when the folder has files and the card is missing or older
+#    when the folder has files and the card is missing or older; .um2 games in it are copied to games/Vectrex-PiTrex/UVMC2
 # Undo with PiTrex_Uninstall.
 FAT=/media/fat
 PITREX=$FAT/pitrex
@@ -40,12 +40,13 @@ mkdir -p "$FAT/games/Vectrex-PiTrex/UVMC2" "$PITREX/uvmc2" "$PITREX/uvmc2/card"
 # the card folder: make_card.sh builds the card image pitrex/uvmc2/sd.img from it (written once, so its date stays old)
 if [ ! -f "$PITREX/uvmc2/card/README.txt" ]; then
 	cat > "$PITREX/uvmc2/card/README.txt" <<'EOF'
-Put the files from your UVMC2 SD card here, with their folders (roms, PORTDATA and loose
-files such as QBERT2.VSM). Or just your MAME ROM zips, in a folder called roms.
-Then run Scripts > PiTrex_Setup or Scripts > PiTrex_Make_UVMC2_Card: they build the card
-image /media/fat/pitrex/uvmc2/sd.img from this folder. Saves (config and scores) on the
-old card are kept. .um2 and .uf2 files, ASSETS folders and macOS files are not copied.
-Your .um2 files go in /media/fat/games/Vectrex-PiTrex/UVMC2.
+Copy everything from your UVMC2 SD card here, with its folders (roms, PORTDATA, loose
+files such as QBERT2.VSM and the .um2 games). Then run Scripts > PiTrex_Setup or
+Scripts > PiTrex_Make_UVMC2_Card. They copy the .um2 games to
+/media/fat/games/Vectrex-PiTrex/UVMC2 (nothing there is overwritten) and build the card
+image /media/fat/pitrex/uvmc2/sd.img from the rest. The saves on the old card are kept.
+.um2 and .uf2 files, ASSETS folders and macOS files are not put on the card.
+See ADDING_GAMES.md in the PiTrex guide.
 (This file is not copied to the card.)
 EOF
 fi
