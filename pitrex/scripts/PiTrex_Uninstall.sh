@@ -14,7 +14,11 @@ for p in $(ps | grep -v grep | grep pitrexd.sh | awk '{print $1}'); do kill "$p"
 # MiSTer.ini first, while the helper is still there (it also undoes the [MiSTer] change of older releases)
 INI=/media/fat/MiSTer.ini
 if [ -f /media/fat/pitrex/pitrex_ini.py ]; then
-	python3 /media/fat/pitrex/pitrex_ini.py uninstall "$INI"
+	if ! python3 /media/fat/pitrex/pitrex_ini.py uninstall "$INI"; then
+		echo "PROBLEM: MiSTer.ini could not be changed (see the error above), so the lines [Vectrex-PiTrex] and"
+		echo "log_file_entry=1 that PiTrex_Setup added may still be in it. They only affect the Vectrex-PiTrex core,"
+		echo "which is being removed, so they do no harm; to tidy up, delete them from $INI yourself."
+	fi
 elif [ -f "$INI.pitrex-bak" ]; then
 	# an older release without the helper: log_file_entry back as it was in its backup
 	if grep -q '^log_file_entry=0' "$INI.pitrex-bak"; then

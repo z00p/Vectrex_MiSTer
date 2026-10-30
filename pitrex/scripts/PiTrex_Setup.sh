@@ -55,7 +55,13 @@ if [ ! -f "$PITREX/um2run/um2run" ]; then
 	echo "Note: $PITREX/um2run/um2run is missing, so .um2 games cannot start (unzip the release again)."
 fi
 
-python3 "$PITREX/pitrex_ini.py" setup "$INI"
+INI_OK=1
+if ! python3 "$PITREX/pitrex_ini.py" setup "$INI"; then
+	INI_OK=0
+	echo "PROBLEM: MiSTer.ini could not be changed (see the error above), so picking a .um2 game or a .ptx program"
+	echo "in the OSD will not start it. Check that the SD card is not full or read-only, then run PiTrex_Setup again."
+	echo "Or add these two lines at the end of $INI yourself:  [Vectrex-PiTrex]  and  log_file_entry=1"
+fi
 
 if ! grep -q pitrexd "$START" 2>/dev/null; then
 	printf '\n# PiTrex: start programs picked in the Vectrex OSD\n[ -x %s/pitrexd.sh ] && %s/pitrexd.sh &\n' "$PITREX" "$PITREX" >> "$START"
@@ -73,4 +79,10 @@ fi
 if [ -f "$PITREX/make_card.sh" ]; then
 	bash "$PITREX/make_card.sh" --if-needed || echo "The UVMC2 card was not made (see above). Games that need no card still play."
 fi
-echo "Done: main menu > PiTrex & UVMC2. UVMC2 games (.um2) go in games/Vectrex-PiTrex/UVMC2."
+if [ "$INI_OK" = 1 ]; then
+	echo "Done: main menu > PiTrex & UVMC2. UVMC2 games (.um2) go in games/Vectrex-PiTrex/UVMC2."
+else
+	echo "Setup is not complete: MiSTer.ini could not be changed (see PROBLEM above). The PiTrex & UVMC2 menu entries"
+	echo "work, but OSD picks of .um2 games and .ptx programs will not start until it is fixed."
+	exit 1
+fi

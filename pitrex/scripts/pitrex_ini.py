@@ -10,9 +10,16 @@
 # Both modes also undo what releases up to B8 and the first alpha draft did: log_file_entry=1 in
 # [MiSTer], with the original file kept as MiSTer.ini.pitrex-bak. That is put back as it was in
 # the backup, and the backup is removed.
-# Only whole lines are touched; the file's line endings (LF or CRLF) are kept.
+# Only whole lines are touched; the file's line endings (LF or CRLF) are kept, and so are bytes that are
+# not valid UTF-8 (a comment saved by a Windows editor, say). The new file is written next to the old one
+# and renamed over it, so MiSTer.ini is never left half-written. Exit status 1 if it could not be changed.
+# Runs on the MiSTer's Python 3.9: no newer syntax.
 import os
+import shutil
 import sys
+
+# read and write the same way: any byte survives, line endings untouched
+TEXT = {"encoding": "utf-8", "errors": "surrogateescape", "newline": ""}
 
 SECTION = "vectrex-pitrex"
 LINE = "log_file_entry=1"
@@ -43,7 +50,7 @@ def undo_global(lines, ini):
     bak = ini + ".pitrex-bak"
     if not os.path.exists(bak):
         return lines, None
-    with open(bak, newline="") as f:
+    with open(bak, **TEXT) as f:
         b = [norm(l) for l in f.read().split("\n")]
     was = [l for l in b if l.startswith("log_file_entry=")]
     secs = section_of(lines)
@@ -58,7 +65,7 @@ def undo_global(lines, ini):
                 l = l[:k] + "0" + l[k + 1:]
                 msg = "MiSTer.ini: log_file_entry in [MiSTer] back to 0 (an older PiTrex release had set it)"
         out.append(l)
-    os.remove(bak)
+    # the backup is removed by main() once MiSTer.ini has been written
     return out, msg
 
 
@@ -99,29 +106,55 @@ def uninstall(lines, nl):
     return out, "MiSTer.ini: removed log_file_entry from [Vectrex-PiTrex]"
 
 
+def write_atomic(path, text):
+    """Write text to a temporary file in the same folder, then rename it over path."""
+    tmp = path + ".pitrex-tmp"
+    try:
+        with open(tmp, "w", **TEXT) as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            shutil.copymode(path, tmp)
+        except OSError:
+            pass  # a new file, or a FAT file system that has no modes
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     ini = sys.argv[2] if len(sys.argv) > 2 else "/media/fat/MiSTer.ini"
     if mode not in ("setup", "uninstall"):
         sys.exit("usage: pitrex_ini.py setup|uninstall [MiSTer.ini]")
     try:
-        with open(ini, newline="") as f:
+        with open(ini, **TEXT) as f:
             data = f.read()
-    except OSError:
+    except FileNotFoundError:
         if mode == "uninstall":
             return
         data = ""
     nl = "\r\n" if "\r\n" in data else "\n"
     lines = data.replace("\r\n", "\n").split("\n")
+    bak = ini + ".pitrex-bak"
+    had_bak = os.path.exists(bak)
     lines, m1 = undo_global(lines, ini)
     lines, m2 = (setup if mode == "setup" else uninstall)(lines, nl)
     new = nl.join(lines)
     if new != data:
-        with open(ini, "w", newline="") as f:
-            f.write(new)
+        write_atomic(ini, new)
+    if had_bak:
+        os.remove(bak)
     for m in (m1, m2):
         if m:
             print(m)
 
 
-main()
+try:
+    main()
+except (OSError, ValueError) as e:
+    # MiSTer.ini is never left half-written: it is as it was (or, if only removing the old backup failed, done)
+    sys.stderr.write("pitrex_ini.py: ERROR: %s\n" % e)
+    sys.exit(1)
