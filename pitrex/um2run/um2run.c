@@ -475,6 +475,7 @@ static uint32_t dwt_now(void) {
 }
 
 static unsigned g_tm_reads[32], g_tm_broken[32];
+static const uint32_t g_lb_cyc[15] = { 0xFFFFFFFFu, 0, 1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80, 0x100, 0x1000, 0x10000, 0x80000000u, 0xFFFF0000u };
 static uint32_t mmio_load_base(uint32_t addr, int size, uint32_t pc) {
     uint32_t base = addr & ~3u, v = 0, *p = sh_slot(base, 0);
     if (p) v = *p;
@@ -506,9 +507,9 @@ static uint32_t mmio_load_base(uint32_t addr, int size, uint32_t pc) {
         e->n++;
         if (tmr) { g_tm_reads[(addr & 0x7FFF) >> 2 & 31]++; if (e->n > 16) g_tm_broken[(addr & 0x7FFF) >> 2 & 31]++; }
         if (e->n > 16 && !(tmr && !tbrk) && !usb) {   /* the timer is a clock, never a status bit */
-            static const uint32_t cyc[] = { 0xFFFFFFFFu, 0, 1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80, 0x100, 0x1000, 0x10000, 0x80000000u, 0xFFFF0000u };
-            v = cyc[(e->n / 16) % 15];
-            if (e->n == 17) { snprintf(e->note, sizeof e->note, "loop-breaker @%08x addr %08x", pc, addr); }
+            unsigned k = (unsigned)((e->n / 16) % 15);
+            if (e->n == 17) { e->y = v; e->z = 1; snprintf(e->note, sizeof e->note, "loop-breaker @%08x addr %08x", pc, addr); }   /* y: the value it would have read, x: which fakes went out (lb_dump) */
+            e->x |= 1u << k; v = g_lb_cyc[k];
         }
     }
     if (size == 1) return (v >> ((addr & 3) * 8)) & 0xFF;
@@ -663,6 +664,7 @@ static int cpu_fault_mem(int sig, Cpu *c, uint32_t addr, uint16_t h1, uint16_t h
 }
 
 static void print_summary(int final);
+static void lb_dump(FILE *f);
 static uint32_t g_lastregs[17]; static int g_haveregs;
 static void (*g_wr16)(uint32_t, uint16_t);    /* guest halfword store (used to rewrite ARMv8 LDA/STL in place) */
 static uint32_t g_sys[256];                   /* shadow of the M-profile special registers (MRS/MSR SYSm) */
@@ -1532,8 +1534,23 @@ static void print_summary(int final) {
     { uint64_t cnt = g_events < 32 ? g_events : 32; for (uint64_t k = g_events - cnt + 1; k <= g_events; k++) { uint32_t *r = g_ring[k & 31]; printf(" [%d@%08x a=%08x]", (int)r[0], r[1], r[2]); } }
     putchar(10);
     if (g_haveregs) { printf("-- last sampled regs:"); for (int i = 0; i < 16; i++) printf(" %s=%08x", regn(i), g_lastregs[i]); printf(" cpsr=%08x", g_lastregs[16]); putchar(10); }
-    int nl = 0; for (int i = 0; i < EVCAP; i++) if (g_ev[i].kind == K_OTHER && g_ev[i].n > 16) { printf("   loop-breaker engaged: %s (%llu reads at pc)\n", g_ev[i].note, (unsigned long long)g_ev[i].n); nl++; }
+    if (!opt.bus) lb_dump(stdout);
     fflush(stdout);
+}
+/* end of run: every loop-breaker firing (same pc re-reading one unmodelled register > 16 times got fake values) */
+static void lb_dump(FILE *f) {
+    static Ev *l[256]; int n = 0;
+    for (int i = 0; i < EVCAP && n < 256; i++) if (g_ev[i].kind == K_OTHER && (g_ev[i].z & 1)) l[n++] = &g_ev[i];
+    if (!n) return;
+    qsort(l, n, sizeof *l, cmp_n);
+    fprintf(f, "um2run: loop breaker fired at %d site%s (pc re-reading one unmodelled register; fake values handed back):\n", n, n == 1 ? "" : "s");
+    for (int i = 0; i < n && i < 40; i++) {
+        Ev *e = l[i]; char fk[160]; int o = 0;
+        if (e->x == 0x7FFF) snprintf(fk, sizeof fk, "all 15");
+        else for (int k = 0; k < 15 && o < (int)sizeof fk - 12; k++) if (e->x >> k & 1) o += snprintf(fk + o, sizeof fk - o, "%s%x", o ? "," : "", g_lb_cyc[k]);
+        fprintf(f, "  %08x %-12s pc=%08x reads=%llu real=%08x fakes=%s\n", e->b, blockname(e->b), e->a, (unsigned long long)e->n, e->y, fk);
+    }
+    if (n > 40) fprintf(f, "  ... %d more\n", n - 40);
 }
 
 static void heartbeat(pid_t child) {
@@ -1916,6 +1933,7 @@ static void bus_finish(void) {
     if (!opt.bus) return;
     if (opt.bus_verbose) { print_summary(1); fflush(stdout); }
     fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb)\n", (unsigned long long)g_events, g_nstubs, g_nv8);
+    lb_dump(stderr);
     um2bus_stats(stderr); um2sd_stats();
     if (getenv("UM2_HASHMEM") && !opt.no_psram) {      /* test hook: FNV-1a of the guest's PSRAM (where the images stage what they read from the SD card): what the guest really received */
         uint64_t h = 0xcbf29ce484222325ull; const uint32_t *p = (const uint32_t *)(uintptr_t)PSRAM_BASE;
