@@ -204,14 +204,31 @@ static const char *blockname(uint32_t a) {
 /* ------------------------------------------------------------------ MMIO shadow / canned values */
 #define SHCAP 8192
 static struct { uint32_t a, v; uint8_t used; } g_sh[SHCAP];
+static __thread int tl_sh_new;               /* the last sh_slot(.., 1) created the slot: first store to that word */
 static uint32_t *sh_slot(uint32_t a, int create) {
     uint32_t h = (a >> 2) * 2654435761u;
+    tl_sh_new = 0;
     for (uint32_t i = 0; i < SHCAP; i++) {
         uint32_t k = (h + i) & (SHCAP - 1);
-        if (!g_sh[k].used) { if (!create) return NULL; g_sh[k].used = 1; g_sh[k].a = a; g_sh[k].v = 0; return &g_sh[k].v; }
+        if (!g_sh[k].used) { if (!create) return NULL; g_sh[k].used = 1; g_sh[k].a = a; g_sh[k].v = 0; tl_sh_new = 1; return &g_sh[k].v; }
         if (g_sh[k].a == a) return &g_sh[k].v;
     }
     return NULL;
+}
+/* Unmodelled MMIO, for the end-of-run summary: noted once per word (first store that creates its shadow slot, first read from a pc of a register with nothing behind it). */
+static struct { const char *blk; uint32_t first, pc; unsigned words, r, w; } g_um[64]; static int g_num; static pthread_mutex_t g_um_m = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t g_um_seen[1024];
+static void um_note(uint32_t a, uint32_t pc, int store) {
+    if (a < 0x40000000u || (a >= 0x60000000u && a < 0xD0000000u) || (a & 0xFFFF0000u) == 0x400B0000u || (a >= 0xE000E100u && a < 0xE000E500u)) return;   /* TIMER0/1 and the NVIC are modelled before the shadow */
+    a &= ~3u;
+    pthread_mutex_lock(&g_um_m);
+    uint32_t h = (a >> 2) * 2654435761u >> 22; int dup = 0;
+    for (int i = 0; i < 1024; i++) { uint32_t *s = &g_um_seen[(h + (uint32_t)i) & 1023]; if (*s == a) { dup = 1; break; } if (!*s) { *s = a; break; } }
+    const char *bn = blockname(a); int j;
+    for (j = 0; j < g_num; j++) if (g_um[j].blk == bn) break;
+    if (j == g_num && g_num < 64) { g_um[j].blk = bn; g_um[j].first = a; g_um[j].pc = pc; g_num++; }
+    if (j < g_num) { if (!dup) g_um[j].words++; if (store) g_um[j].w++; else g_um[j].r++; }
+    pthread_mutex_unlock(&g_um_m);
 }
 static uint32_t g_bootlock;                  /* BOOTRAM BOOTLOCK0..7 held (a read claims a free lock and returns nonzero, any write releases) */
 static void mmio_store_base(uint32_t addr, int size, uint32_t val) {
@@ -219,10 +236,12 @@ static void mmio_store_base(uint32_t addr, int size, uint32_t val) {
     if (base >= 0x400E080Cu && base <= 0x400E0828u) { __atomic_fetch_and(&g_bootlock, ~(1u << ((base - 0x400E080Cu) >> 2)), __ATOMIC_SEQ_CST); return; }
     if (size == 4 && addr >= 0x40000000 && addr < 0x60000000 && (addr & 0x3000)) {   /* atomic aliases */
         uint32_t *p = sh_slot(addr & ~0x3000u, 1); if (!p) return;
+        if (tl_sh_new) um_note(addr & ~0x3000u, 0, 1);
         switch ((addr >> 12) & 3) { case 1: *p ^= val; break; case 2: *p |= val; break; case 3: *p &= ~val; break; }
         return;
     }
     uint32_t *p = sh_slot(base, 1); if (!p) return;
+    if (tl_sh_new) um_note(base, 0, 1);
     if (size == 4) *p = val;
     else { uint32_t m = (size == 2 ? 0xFFFFu : 0xFFu) << sh; *p = (*p & ~m) | ((val << sh) & m); }
 }
@@ -482,7 +501,7 @@ static const uint32_t g_lb_cyc[15] = { 0xFFFFFFFFu, 0, 1, 2, 4, 8, 0x10, 0x20, 0
 static __thread uint32_t tl_lb_pc, tl_lb_a, tl_lb_act, tl_lb_run;
 static uint32_t mmio_load_base(uint32_t addr, int size, uint32_t pc) {
     uint32_t base = addr & ~3u, v = 0, *p = sh_slot(base, 0);
-    int known = 2;                                    /* 2: canned (a model), 1: only what the image wrote, 0: nothing to go by */
+    int known = 2, isnew = 0;                         /* known: 2 canned (a model), 1 only what the image wrote, 0 nothing to go by */
     if (p) v = *p;
     if (!opt.no_canned && addr < 0x8000) {            /* bootrom: fake header + function table pointers (guess at RP2350 layout) */
         if ((addr & ~3u) == 0x10) v = 0x01754D;       /* 'M' 'u' 0x01 magic */
@@ -515,9 +534,10 @@ static uint32_t mmio_load_base(uint32_t addr, int size, uint32_t pc) {
     static int tbrk = -1, lbold; if (tbrk < 0) { tbrk = getenv("UM2_TIMERBREAK") != NULL; lbold = getenv("UM2_LBOLD") != NULL; }
     int tmr = (addr & ~0x7FFFu) == 0x400B0000u || (addr & ~0x7FFFu) == 0x400B8000u;
     int usb = (addr & ~0x3FFFu) == 0x50110000u;   /* USBCTRL regs (+ aliases): nothing is attached, a USB host polling them must read idle */
-    Ev *e = (addr >= 0x40000000 && !(addr >= 0x60000000 && addr < 0xD0000000) && !(tmr && !tbrk && opt.bus_verbose < 2)) ? ev_get(K_OTHER, pc, addr, NULL) : NULL;   /* timer reads: no census entry unless asked (never a loop-breaker case) */
+    Ev *e = (addr >= 0x40000000 && !(addr >= 0x60000000 && addr < 0xD0000000) && !(tmr && !tbrk && opt.bus_verbose < 2)) ? ev_get(K_OTHER, pc, addr, &isnew) : NULL;   /* timer reads: no census entry unless asked (never a loop-breaker case) */
     if (e) {
         e->n++;
+        if (isnew && known < 2) um_note(addr, pc, 0);
         if (pc == tl_lb_pc && addr == tl_lb_a && tl_act == tl_lb_act + 1) tl_lb_run++; else tl_lb_run = 1;
         tl_lb_pc = pc; tl_lb_a = addr; tl_lb_act = tl_act;
         uint64_t n = lbold ? e->n : tl_lb_run;
@@ -681,6 +701,7 @@ static int cpu_fault_mem(int sig, Cpu *c, uint32_t addr, uint16_t h1, uint16_t h
 
 static void print_summary(int final);
 static void lb_dump(FILE *f);
+static void um_dump(FILE *f);
 static uint32_t g_lastregs[17]; static int g_haveregs;
 static void (*g_wr16)(uint32_t, uint16_t);    /* guest halfword store (used to rewrite ARMv8 LDA/STL in place) */
 static uint32_t g_sys[256];                   /* shadow of the M-profile special registers (MRS/MSR SYSm) */
@@ -1591,7 +1612,7 @@ static void print_summary(int final) {
     { uint64_t cnt = g_events < 32 ? g_events : 32; for (uint64_t k = g_events - cnt + 1; k <= g_events; k++) { uint32_t *r = g_ring[k & 31]; printf(" [%d@%08x a=%08x]", (int)r[0], r[1], r[2]); } }
     putchar(10);
     if (g_haveregs) { printf("-- last sampled regs:"); for (int i = 0; i < 16; i++) printf(" %s=%08x", regn(i), g_lastregs[i]); printf(" cpsr=%08x", g_lastregs[16]); putchar(10); }
-    if (!opt.bus) lb_dump(stdout);
+    if (!opt.bus) { lb_dump(stdout); um_dump(stdout); }
     fflush(stdout);
 }
 /* end of run: every loop-breaker firing (same pc re-reading one unmodelled register > 16 times got fake values) */
@@ -1608,6 +1629,23 @@ static void lb_dump(FILE *f) {
         fprintf(f, "  %08x %-12s pc=%08x reads=%llu real=%08x fakes=%s\n", e->b, blockname(e->b), e->a, (unsigned long long)e->n, e->y, fk);
     }
     if (n > 40) fprintf(f, "  ... %d more\n", n - 40);
+}
+/* end of run: unmodelled MMIO by block.  Blocks whose leftover registers only need to read back what was written (pad/pin/clock setup, the modelled blocks' other registers) go on one line. */
+static void um_dump(FILE *f) {
+    static const char *cfg[] = { "IO_BANK0", "IO_QSPI", "PADS_BANK0", "PADS_QSPI", "CLOCKS", "RESETS", "PLL_SYS", "PLL_USB", "XOSC", "ROSC", "SYSCFG", "SYSINFO", "BUSCTRL", "ACCESSCTRL",
+        "TICKS", "WATCHDOG", "XIP_CTRL", "QMI", "BOOTRAM", "PPB(SCS/NVIC/SysTick)", "PPB(ITM..)", "PPB", "SIO", "DMA", "PIO0", "PIO1", "PIO2", "SPI0" };
+    pthread_mutex_lock(&g_um_m);
+    int nu = 0; char line[1024]; int o = 0;
+    for (int j = 0; j < g_num; j++) {
+        int c = 0; for (unsigned k = 0; k < sizeof cfg / sizeof *cfg; k++) if (!strcmp(g_um[j].blk, cfg[k])) c = 1;
+        if (c) { if (o < (int)sizeof line - 40) o += snprintf(line + o, sizeof line - (size_t)o, " %s %u", g_um[j].blk, g_um[j].words); continue; }
+        if (!nu++) fprintf(f, "um2run: MMIO um2run does not model (once per word; reads give what was written, else 0):\n");
+        fprintf(f, "  %-12s %3u words (%u first reads, %u first writes), first %08x", g_um[j].blk, g_um[j].words, g_um[j].r, g_um[j].w, g_um[j].first);
+        if (g_um[j].pc) fprintf(f, " read at pc %08x", g_um[j].pc);
+        fputc('\n', f);
+    }
+    if (o) fprintf(f, "um2run: shadow-only registers (config, read back as written), words per block:%s\n", line);
+    pthread_mutex_unlock(&g_um_m);
 }
 
 static void heartbeat(pid_t child) {
@@ -1990,7 +2028,7 @@ static void bus_finish(void) {
     if (!opt.bus) return;
     if (opt.bus_verbose) { print_summary(1); fflush(stdout); }
     fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb); %u branch targets known, %lu patch attempts postponed (an exception returns inside)\n", (unsigned long long)g_events, g_nstubs, g_nv8, g_nbtgt, g_patch_frame);
-    lb_dump(stderr);
+    lb_dump(stderr); um_dump(stderr);
     um2bus_stats(stderr); um2sd_stats();
     if (getenv("UM2_HASHMEM") && !opt.no_psram) {      /* test hook: FNV-1a of the guest's PSRAM (where the images stage what they read from the SD card): what the guest really received */
         uint64_t h = 0xcbf29ce484222325ull; const uint32_t *p = (const uint32_t *)(uintptr_t)PSRAM_BASE;
