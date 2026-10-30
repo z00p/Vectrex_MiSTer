@@ -27,14 +27,15 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    | Path | What |
    |---|---|
    | `_Unstable/Vectrex-PiTrex_<YYYYMMDD>.rbf` | the Vectrex core with PiTrex mode; the menu entries load it as "Vectrex-PiTrex", so its settings live in their own `config/Vectrex-PiTrex_v1.CFG` |
-   | `pitrex/` | the programs and the launcher |
+   | `pitrex/` | the programs, the launcher and the UVMC2 card builder |
    | `pitrex/um2run/` | `um2run`, which runs UVMC2 cartridge images (alpha, see [UVMC2_GAMES.md](UVMC2_GAMES.md)) |
-   | `games/Vectrex-PiTrex/UVMC2/` | where you put your `.um2` images (created by PiTrex_Setup; no images are included) |
-   | `Scripts/PiTrex_*.sh` | Setup, Update, Stop and Uninstall |
+   | `games/Vectrex-PiTrex/UVMC2/` | where your `.um2` images go (no images are included) |
+   | `Scripts/PiTrex_*.sh` | Setup, Update, Stop and Uninstall. PiTrex_Setup adds PiTrex_Make_UVMC2_Card, which builds the UVMC2 card image |
    | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive, Tac/Scan and Gong Rider |
 
    Every program is pre-built; you never compile anything. The only extras are your own MAME
-   romset (Tac/Scan; usually already in `/media/fat/games/mame`).
+   romset (Tac/Scan; usually already in `/media/fat/games/mame`) and, for UVMC2 cartridge images,
+   your own images and the files from your UVMC2 SD card (see [ADDING_GAMES.md](ADDING_GAMES.md)).
 
    Unzipping changes nothing else on the card. In particular, **the official Vectrex core in
    `_Console` is not replaced or modified**: the PiTrex core is a separate file in `_Unstable`,
@@ -46,6 +47,8 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
      our core is affected; your other settings are left alone (details in
      [UVMC2_GAMES.md](UVMC2_GAMES.md#what-pitrex_setup-changes)).
    - It starts a small helper, `pitrexd`, at boot.
+   - It creates the card folder `pitrex/uvmc2/card`: copy your UVMC2 SD card there and run
+     PiTrex_Setup again (see [ADDING_GAMES.md](ADDING_GAMES.md)).
    - PiTrex_Uninstall undoes all of it.
 
 ## Playing
@@ -87,7 +90,8 @@ race, and button 3 cycles through the rest. None are included.
 - **PiTrex_Update** (Scripts) downloads the newest release from GitHub and unpacks it. It
   needs the MiSTer to be online. The new core goes into `_Unstable` next to the older PiTrex
   builds (delete those by hand if you like); the main-menu entries switch to the newest. It
-  never touches the official core in `_Console`.
+  never touches the official core in `_Console`. Run PiTrex_Setup once afterwards (coming from
+  the first UVMC2 alpha, see [ADDING_GAMES.md](ADDING_GAMES.md#updating-from-the-first-alpha)).
 - **PiTrex_Uninstall** removes everything PiTrex added, including the optional extras and all
   PiTrex cores in `_Unstable` and `config/Vectrex-PiTrex_v1.CFG`. The official core, your Vectrex settings and your own files (`games/Vectrex-PiTrex`, `pitrex/uvmc2` with your card folder and card images, and anything of yours in `pitrex/um2run`) are kept.
 

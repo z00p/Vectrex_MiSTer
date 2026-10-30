@@ -29,8 +29,8 @@ images are included**: bring your own (and your own MAME ROM sets for the games 
 |---|---|
 | `.um2` images | `/media/fat/games/Vectrex-PiTrex/UVMC2/` (PiTrex_Setup creates the folder; subfolders are fine). `.ptx` programs also show up in the same OSD list. |
 | Sidecar settings `Game.um2.cfg` | next to the image, same name plus `.cfg` |
-| Files from your UVMC2 SD card | `/media/fat/pitrex/uvmc2/card/`: PiTrex_Setup (or Scripts > PiTrex_Make_UVMC2_Card) builds the card image `sd.img` from them, see [ADDING_GAMES.md](ADDING_GAMES.md) |
-| Card images (`.img`) | next to the image, or in `/media/fat/pitrex/uvmc2/` (a file called `sd.img` there is the default card for every game without an `sd=` key). The OSD list shows only `.um2` and `.ptx`, so the images do not clutter it. PiTrex_Uninstall leaves your files in both places alone. |
+| Files from your UVMC2 SD card | `/media/fat/pitrex/uvmc2/card/` (copy the whole card): PiTrex_Setup (or Scripts > PiTrex_Make_UVMC2_Card) copies the `.um2` games from it to the UVMC2 folder and builds the card image `sd.img` from the rest, see [ADDING_GAMES.md](ADDING_GAMES.md) |
+| Card images (`.img`) | next to the image, or in `/media/fat/pitrex/uvmc2/` (a file called `sd.img` there is the default card for every game without an `sd=` key). The OSD list shows only `.um2` and `.ptx`, so the images do not clutter it. PiTrex_Uninstall leaves your files in both places alone, and anything of yours in `/media/fat/pitrex/um2run/` (the third place `sd=` names are looked up). |
 
 The core's file browser opens `games/<core name>`. The menu entry **UVMC2 Games** loads the core
 as "Vectrex-PiTrex", so it opens `games/Vectrex-PiTrex`. If you load the core by hand from
@@ -88,12 +88,14 @@ VECTREX (not loaded from the menu entry) the keys are skipped with a line in the
 ## Card images
 Some images read their ROM set from an SD card and keep scores and settings on it. The card
 is **emulated from an ordinary file**: a FAT32 image of the whole card without a partition
-table (a "superfloppy").
+table (a "superfloppy"). Card images of 2 GiB or more do not work yet, and a raw dump of a real
+card (with its partition table) is untested: copy the card's files instead.
 
-**The easy way is in [ADDING_GAMES.md](ADDING_GAMES.md):** copy the files from your UVMC2 SD card
+**The easy way is in [ADDING_GAMES.md](ADDING_GAMES.md):** copy everything on your UVMC2 SD card
 (or just your ROM zips) to `/media/fat/pitrex/uvmc2/card/` and run PiTrex_Setup or
-**Scripts > PiTrex_Make_UVMC2_Card**. That builds `/media/fat/pitrex/uvmc2/sd.img` on the MiSTer,
-keeps the saves of the old card, and makes BattleZone's own copy. ADDING_GAMES.md also lists which
+**Scripts > PiTrex_Make_UVMC2_Card**. That copies the `.um2` games to the UVMC2 folder, builds
+`/media/fat/pitrex/uvmc2/sd.img` on the MiSTer, keeps the saves of the old card, and makes
+BattleZone's own copy. ADDING_GAMES.md also lists which
 files each tested game needs.
 
 **Folders the images expect** (all lower or upper case, the card is case-insensitive):
@@ -191,11 +193,12 @@ on screen: OSD > Video Overlay & Geometry > Overlay = Off.
   deletes the backup.
 - **config/Vectrex-PiTrex_v1.CFG:** PiTrex Mode on (our core's own settings file; the official
   core's `VECTREX_v1.CFG` is not used).
-- **linux/user-startup.sh:** one line that starts `pitrexd` at boot.
+- **linux/user-startup.sh:** a comment and one line that start `pitrexd` at boot (after a blank line).
 - **Folders:** `games/Vectrex-PiTrex/UVMC2`, `pitrex/uvmc2`, the card folder `pitrex/uvmc2/card`
   (with a short README.txt), and the menu folder `_PiTrex & UVMC2`.
 - **Scripts:** the entry `PiTrex_Make_UVMC2_Card`.
-- **The card:** if `pitrex/uvmc2/card` has files and `pitrex/uvmc2/sd.img` is missing or out of date,
+- **The card:** it copies the `.um2` games in `pitrex/uvmc2/card` to `games/Vectrex-PiTrex/UVMC2`
+  (never overwriting a file there). If the folder has other files and `pitrex/uvmc2/sd.img` is missing or out of date,
   it builds `sd.img` (and BattleZone's `bz_sd.img`, plus its sidecar if it has none), see
   [ADDING_GAMES.md](ADDING_GAMES.md).
 
@@ -207,6 +210,7 @@ their `.bak` backups, sidecars, and anything of yours in `pitrex/um2run/`.
 | Symptom | What to do |
 |---|---|
 | Nothing happens after the pick | `cat /tmp/pitrexd.log` over SSH. `REFUSED ... CPUs` means a reboot is needed (BigMig). `ignored a stale file report` is normal after a restart of the MiSTer's menu program. Check OSD > System > PiTrex Mode = On. If `/tmp/pitrexd.log` shows nothing at all for the pick, load the core from **PiTrex & UVMC2 > UVMC2 Games** (a core loaded by hand does not report picks) and check that MiSTer.ini (or the alternative ini you use) has the `[Vectrex-PiTrex]` section. |
+| PiTrex_Setup says MiSTer.ini could not be changed | Picks in the OSD will not start games until it is fixed. Check that the SD card is not full or read-only and run PiTrex_Setup again, or add the two lines shown in [What PiTrex_Setup changes](#what-pitrex_setup-changes) to `MiSTer.ini` yourself. |
 | "Missing directory: Vectrex-PiTrex" in the OSD | Run PiTrex_Setup (it creates the folder) or create `games/Vectrex-PiTrex/UVMC2` yourself. |
 | The game says ROMS NOT FOUND or MISSING | See [ADDING_GAMES.md](ADDING_GAMES.md#which-games-need-a-card): which files, which folder, then build the card again. If the game's sidecar has an `sd=` line, it uses that card, not `sd.img`. |
 | Black screen for a long time | Wait for the LOADING screen to finish. If the screen stays black or the MiSTer's menu stops responding: Scripts > PiTrex_Stop, or SSH `killall um2run`. |
