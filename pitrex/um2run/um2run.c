@@ -1444,11 +1444,10 @@ static int cpu_trap(int sig, Cpu *c, uint32_t fault_addr, int svc_from_syscall, 
         if (sig == SIGILL && len == 4) {
             uint16_t n1, n2; int isnew;
             if (v8_rewrite(h1, h2, &n1, &n2) && g_wr16) {
-                static __thread unsigned tries; int st = v8_stub(c, pc, h1, n1, n2);
-                if (st == 2 && ++tries < 100) goto done;   /* the other core could not be parked just now: the site traps again at once */
+                Ev *e = ev_get(K_ILL, pc, 0, &isnew); int st = v8_stub(c, pc, h1, n1, n2);
+                if (st == 2 && (e ? ++e->z : 100u) < 100) goto done;   /* the other core could not be parked just now: the site traps again at once (100 tries per site) */
                 if (st != 1) { g_wr16(pc, n1); g_wr16(pc + 2, n2); }     /* no stub possible (IT block, no stub area): the plain instruction, without the barrier */
-                Ev *e = ev_get(K_ILL, pc, 0, &isnew);
-                if (e) { e->n++; if (isnew) { e->x = h1; e->y = h2; snprintf(e->note, sizeof e->note, st == 1 ? "LDA/STL -> %04x %04x + dmb [stub]" : "LDA/STL -> %04x %04x [rewritten]", n1, n2);
+                if (e) { int first = !e->n; e->n++; if (first) { e->x = h1; e->y = h2; snprintf(e->note, sizeof e->note, st == 1 ? "LDA/STL -> %04x %04x + dmb [stub]" : "LDA/STL -> %04x %04x [rewritten]", n1, n2);
                     logf_("[ILL] pc=%08x insn=%04x %04x ARMv8 acquire/release %s %04x %04x\n", pc, h1, h2, st == 1 ? "stub with dmb ish around" : "rewritten to", n1, n2); } }
                 if (e && e->n > 50 && st != 1) { printf("STOP: rewrite at %08x does not take effect\n", pc); return ACT_STOP; }
                 goto done;                                 /* re-execute the patched instruction */
