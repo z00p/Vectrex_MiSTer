@@ -82,6 +82,8 @@ need any of this.
 - **The UVMC2 team:** the UVMC2 SDK, runtime, beam model, libvpy and the starter kit games.
 - **Daniel Ferrer** (tullulah): UVMC2 and the UVMC2 starter kit; also PureDOOM-pitrex (see
   [games/doom/README.md](games/doom/README.md)).
+- **Ralf Kornmann:** the UVMC2 firmware. `um2run` runs cartridge images without it, and none of it is included here.
+- **Jason Kopp:** the UVMC2 hardware.
 - **Tac/Scan:** © Sega 1982. Its port is built on AAE sources included in the starter kit.
 - **Z80 core:** [Tim Cottrill's AAE](https://github.com/tcottrill/AAE) `cpu_z80`, used with his permission
   ([issue 13](https://github.com/tcottrill/AAE/issues/13)); a modified port of **Edward Massey's** 1997

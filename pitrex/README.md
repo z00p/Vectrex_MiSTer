@@ -176,6 +176,8 @@ seed 5 (set in `Vectrex.qsf`) meets timing at all four corners. After a change, 
 - **Roger Boesch:** Gong Rider ([source](https://rogerboesch.games/learn/gong-rider/), MIT licence).
 - **Tim Cottrill:** the AAE Z80 core that Tac/Scan runs on, used with his permission ([AAE issue 13](https://github.com/tcottrill/AAE/issues/13)). It is a modified port of **Edward Massey's** 1997 Z80 emulator (GNU LGPL v2, distributed here under the GPL as the LGPL allows); his readme and documentation are in `third_party/aae_z80/`. The earlier mz80 licensing issue no longer applies.
 - **The UVMC2 team** ([uvmc2-sdk](https://github.com/tullulah/uvmc2-sdk)): the UVMC2 runtime, beam model, libvpy and games, published here with their permission. See [UVMC2.md](UVMC2.md) for the full credits. `um2run` runs cartridge images built with their SDK; it contains no UVMC2 firmware and no images, and it is not an official UVMC2 tool.
+- **Ralf Kornmann:** the UVMC2 firmware. `um2run` runs cartridge images without it, and none of it is included here.
+- **Jason Kopp:** the UVMC2 hardware.
 - The analogue model in `ptxplay` follows vecx's.
 - The coding and testing were AI-assisted (Claude), with everything checked on real hardware.
 
