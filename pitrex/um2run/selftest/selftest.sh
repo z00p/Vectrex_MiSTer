@@ -13,13 +13,14 @@
 #            (ite cc; vmov; vmov; b.w); 17 sites x 40 iterations with ordered/equal/unordered compares, results and flags must be right
 #   8. alarm: TIMER0 alarm path: past targets stored from thread mode (inline fire + retry of the refused self-kick), future targets (irq thread), and the SDK-style repeating
 #            alarm re-armed from its own ISR (3000 ISRs); every ISR must come, none may be lost
-# Work files go to /tmp/um2self.  Expected: eight PASS lines.
+#   9. frame: a hot site reached from thread mode and from an ISR entered at its site+2: the patch must wait until no exception frame returns inside it (40 calls counted)
+# Work files go to /tmp/um2self.  Expected: nine PASS lines.
 H=$(cd "$(dirname "$0")" && pwd); T=$H/..; S=$T/../../src; [ -f $S/ptx_core.c ] || S=$T/../src; W=/tmp/um2self; mkdir -p $W; cd $W || exit 1
 BIN=${1:-$T/um2run}
 run() { PTX_STREAM=$W/s.ptxs timeout 60 qemu-arm -cpu cortex-a9 "$@"; }
 mark() { grep -E "^ +[0-9]+ +40001000" "$1" | head -1 | sed 's/.*last=//'; }
 (cd $T && arm-linux-gnueabihf-gcc -O2 -static -pthread -I$S -I$T -DUM2_VFPTEST -o $W/um2run_vt um2run.c um2bus.c um2sd.c um2aud.c $S/ptx_core.c $S/ptx_backend_file.c $S/ptx_backend_mister.c -lm) || { echo "build failed"; exit 1; }
-for g in gen_vfp gen_race gen_v8 gen_pre gen_prim gen_aud gen_vsel gen_alarm; do python3 $H/$g.py >/dev/null 2>&1 || { echo "$g failed"; exit 1; }; done
+for g in gen_vfp gen_race gen_v8 gen_pre gen_prim gen_aud gen_vsel gen_alarm gen_frame; do python3 $H/$g.py >/dev/null 2>&1 || { echo "$g failed"; exit 1; }; done
 run $W/um2run_vt --bus --bus-verbose --no-loading --secs 3 --log 100 $W/vfptest.um2 > vfp.out 2> vfp.err
 [ "$(mark vfp.out)" = c0de0000 ] && grep -q ", 0 of them on the guest stack" vfp.err && echo "vfp:  PASS" || echo "vfp:  FAIL ($(mark vfp.out))"
 ok=0; for i in $(seq 1 30); do
@@ -51,3 +52,6 @@ run "$BIN" --bus --bus-verbose --no-loading --secs 20 --log 100 $W/alarm.um2 > a
 am=$(mark alarm.out); ae=$(grep -E "^ +[0-9]+ +40001004" alarm.out | head -1 | sed 's/.*last=//'); ac=$(grep -E "^ +[0-9]+ +40001008" alarm.out | head -1 | sed 's/.*last=//')
 ams=$(( 0x${ae:-0} - 0xe1000000 )); acn=$(( 0x${ac:-0} - 0xc0000000 ))
 [ "$am" = c0de0000 ] && [ "$acn" -ge 3300 ] && [ "$ams" -ge 0 ] && [ "$ams" -le 15000 ] && echo "alarm: PASS ($acn ISRs, chain of 3000 in $ams ms)" || echo "alarm: FAIL (flags $am, $acn ISRs, $ams ms)"
+run "$BIN" --bus --bus-verbose --no-loading --secs 3 --log 100 $W/frame.um2 > frame.out 2> frame.err
+pp=$(grep -o "[0-9]* patch attempts postponed" frame.err | awk '{print $1}')
+[ "$(mark frame.out)" = c0de0028 ] && echo "frame: PASS (${pp:-0} attempts postponed)" || echo "frame: FAIL ($(mark frame.out), expect c0de0028)"

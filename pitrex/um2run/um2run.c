@@ -240,6 +240,7 @@ typedef struct {
     volatile uint32_t prim;                 /* soft PRIMASK */
     uint8_t pri[64];                        /* IPR bytes (top 4 bits kept) */
     int depth; uint8_t sprio[8]; int8_t sirq[8];   /* active exceptions: running priority and number (-1 = SVCall) */
+    uint32_t sret[8];                       /* ... and the return pc in each one's frame (a patch must not cover one: patch_begin) */
     int8_t last;                            /* the IRQ taken last (round-robin among equal priorities, see nvic_pick) */
     uint32_t since, hold;                   /* burst guard: micros() when interrupt context was entered from thread mode, no delivery before `hold` */
     int held;
@@ -808,7 +809,7 @@ static int exc_enter2(Cpu *c, uint32_t ret_pc, unsigned vec, int irq) {
 static int exc_enter(Cpu *c, uint32_t ret_pc, unsigned vec) {            /* SVCall: runs at priority 0, nothing preempts it */
     if (!exc_enter2(c, ret_pc, vec, 0)) return 0;
     Nvic *n = &g_nv[tl_core & 1];
-    if (n->depth < 7) { n->sprio[n->depth] = 0; n->sirq[n->depth] = -1; n->depth++; }
+    if (n->depth < 7) { n->sprio[n->depth] = 0; n->sirq[n->depth] = -1; n->sret[n->depth] = ret_pc; n->depth++; }
     return 1;
 }
 static __thread ucontext_t *tl_uc;                                       /* the signal context being handled (VFP state lives in it) */
@@ -847,7 +848,8 @@ static int irq_enter(Cpu *c, ucontext_t *uc) {        /* take the best pending I
     if (g_irq_thunk && (c->r[16] & ((0x3Fu << 10) | (3u << 25)))) { g_ie_why[1]++; irq_wake_retry(); return 0; }       /* inside an IT block: the native return cannot restore ITSTATE; the irq thread retries */
     int irq = nvic_pick(n); if (irq < 0) { g_ie_why[2]++; return 0; }
     if (irq_held(n)) { g_ie_why[3]++; return 0; }
-    if (!exc_enter2(c, c->r[15], 16 + (unsigned)irq, 1)) return 0;
+    uint32_t ret = c->r[15];
+    if (!exc_enter2(c, ret, 16 + (unsigned)irq, 1)) return 0;
     __atomic_fetch_and(&n->pend[irq >> 5], ~(1u << (irq & 31)), __ATOMIC_SEQ_CST);
     uint32_t *v = uc ? uc_vfp(uc) : NULL;
     if (v) memcpy(tl_fps[n->depth], v, sizeof tl_fps[0]);
@@ -856,6 +858,7 @@ static int irq_enter(Cpu *c, ucontext_t *uc) {        /* take the best pending I
     tl_fpv[n->depth] = 1;
     if (!n->depth && g_irq_burst) n->since = micros();
     if (!n->depth) isr_begin(irq);
+    n->sret[n->depth] = ret;
     n->sprio[n->depth] = n->pri[irq]; n->sirq[n->depth] = (int8_t)irq; n->depth++; n->last = (int8_t)irq;
     g_irq_cnt[irq]++; g_irq_pc[tl_core & 1]++;
     return 1;
@@ -976,6 +979,7 @@ static int quiesce_other(uint32_t lo, uint32_t hi) {
     if (pc > lo && pc < hi) { __atomic_store_n(&g_q_go, s, __ATOMIC_RELEASE); return 0; }
     g_q_cur = s; return 1;
 }
+static unsigned long g_patch_frame;          /* patch attempts postponed because an exception frame returns inside the span */
 /* 1 = go (lock held, other core parked, *base = stub address), -1 = site already patched, 0 = busy / could not park (retry on a later trap), -2 = refused for good */
 static int patch_begin(uint32_t site, uint32_t span, uint32_t bytes, uint32_t *base) {
     if (pthread_mutex_trylock(&g_patch_m)) return 0;
@@ -984,6 +988,10 @@ static int patch_begin(uint32_t site, uint32_t span, uint32_t bytes, uint32_t *b
     for (uint32_t a = site; a < site + span; a += 2) if (bm_get(g_pcover, a)) bad = 1;      /* would clobber another patch (a branch into the middle of one) */
     if (bad) { pthread_mutex_unlock(&g_patch_m); return -2; }
     if (!quiesce_other(site, site + span)) { pthread_mutex_unlock(&g_patch_m); return 0; }
+    for (int k = 0; k < 2; k++) for (int d = 0; d < g_nv[k].depth && d < 8; d++) {         /* review finding 1: an open exception (either core, the other one is parked) returns inside the span */
+        uint32_t r = g_nv[k].sret[d] & ~1u;
+        if (r > site && r < site + span) { g_patch_frame++; if (g_q_cur) { __atomic_store_n(&g_q_go, g_q_cur, __ATOMIC_RELEASE); g_q_cur = 0; } pthread_mutex_unlock(&g_patch_m); return 0; }
+    }
     *base = STUB_BASE + g_stub_off; g_stub_off += bytes; g_nstubs++;
     return 1;
 }
@@ -1947,7 +1955,7 @@ static void bus_finish(void) {
     rh_dump();
     if (!opt.bus) return;
     if (opt.bus_verbose) { print_summary(1); fflush(stdout); }
-    fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb)\n", (unsigned long long)g_events, g_nstubs, g_nv8);
+    fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb); %lu patch attempts postponed (an exception returns inside)\n", (unsigned long long)g_events, g_nstubs, g_nv8, g_patch_frame);
     lb_dump(stderr);
     um2bus_stats(stderr); um2sd_stats();
     if (getenv("UM2_HASHMEM") && !opt.no_psram) {      /* test hook: FNV-1a of the guest's PSRAM (where the images stage what they read from the SD card): what the guest really received */
