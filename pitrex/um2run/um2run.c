@@ -1114,7 +1114,42 @@ static void vt_probe(void) {
 #endif
 uint32_t um2_mload(uint32_t addr, uint32_t site) { VT_PROBE(); if (addr < 0x40000000u) return *(volatile uint32_t *)(uintptr_t)addr; return mmio_load(addr, 4, site); }
 static int is_safe_next16(uint16_t x) { return x <= 0x43FF || (x >= 0xB200 && x <= 0xB2FF); }
+/* Review finding 2: every direct branch target in the image (B/Bcc/CBZ/CBNZ, B.W/Bcc.W/BL), from one linear sweep at load.  The sweep follows instruction lengths and
+ * steps over the literal-pool words the PC-relative loads it has passed refer to (a pool word such as 0x2005E578 otherwise reads as `b.n` back into the code); other data
+ * can still put it out of step for a few halfwords, so target_hits() keeps the old local scan of every halfword as well.  TBB/TBH tables are not decoded. */
+static uint8_t g_btgt[(IMG_TOP - IMG_BASE) / 16 + 1]; static unsigned g_nbtgt;
+static uint8_t g_lpool[(IMG_TOP - IMG_BASE) / 32 + 1];             /* 1 bit per word: referenced by a literal load */
+static uint16_t rd16s(const uint8_t *p);
+static void lpool_mark(uint32_t a, int nw) { for (int i = 0; i < nw; i++, a += 4) if (a >= IMG_BASE && a < IMG_TOP) { uint32_t w = (a - IMG_BASE) >> 2; g_lpool[w >> 3] |= (uint8_t)(1u << (w & 7)); } }
+static void btgt_scan(const uint8_t *img, uint32_t words) {
+    uint32_t len = words * 4;
+    for (uint32_t o = 0; o + 2 <= len;) {
+        if (!(o & 3) && (g_lpool[o >> 5] >> ((o >> 2) & 7) & 1)) { o += 4; continue; }
+        uint16_t a = rd16s(img + o); uint32_t pc = IMG_BASE + o, t = 0; int br = 0, lb = (int)((pc + 4) & ~3u);
+        if ((a & 0xF800) == 0x4800) lpool_mark((uint32_t)lb + (a & 0xFFu) * 4, 1);                        /* ldr rt,[pc,#imm8] */
+        if (t32(a)) {
+            if (o + 4 > len) break;
+            uint16_t b = rd16s(img + o + 2);
+            if ((a & 0xFE1F) == 0xF81F) lpool_mark(((uint32_t)lb + ((a & 0x80) ? (uint32_t)(b & 0xFFF) : (uint32_t)-(int32_t)(b & 0xFFF))) & ~3u, 1);   /* ldr{,b,h,sb,sh}.w literal */
+            else if ((a & 0xFE7F) == 0xE85F) lpool_mark((uint32_t)lb + ((a & 0x80) ? (uint32_t)(b & 0xFF) * 4 : (uint32_t)-(int32_t)((b & 0xFF) * 4)), 2);   /* ldrd literal */
+            else if ((a & 0xFF3F) == 0xED1F && ((b >> 9) & 7) == 5) lpool_mark((uint32_t)lb + ((a & 0x80) ? (uint32_t)(b & 0xFF) * 4 : (uint32_t)-(int32_t)((b & 0xFF) * 4)), (b & 0x100) ? 2 : 1);   /* vldr literal */
+            if ((a & 0xF800) == 0xF000 && (b & 0x8000)) {
+                uint32_t S = (a >> 10) & 1, J1 = (b >> 13) & 1, J2 = (b >> 11) & 1;
+                if ((b & 0x5000) == 0x0000 && ((a >> 6) & 15) < 14) { int32_t off = (int32_t)((S << 20) | (J2 << 19) | (J1 << 18) | ((a & 0x3F) << 12) | ((b & 0x7FF) << 1)); if (S) off |= (int32_t)0xFFE00000; t = pc + 4 + (uint32_t)off; br = 1; }   /* Bcc.W (T3) */
+                else if (b & 0x1000) { uint32_t i1 = !(J1 ^ S), i2 = !(J2 ^ S); int32_t off = (int32_t)((S << 24) | (i1 << 23) | (i2 << 22) | ((a & 0x3FF) << 12) | ((b & 0x7FF) << 1)); if (S) off |= (int32_t)0xFE000000; t = pc + 4 + (uint32_t)off; br = 1; }   /* B.W (T4) / BL */
+            }
+            o += 4;
+        } else {
+            if ((a & 0xF000) == 0xD000 && (a & 0x0F00) < 0x0E00) { t = pc + 4 + (uint32_t)((int32_t)(int8_t)(a & 0xFF) * 2); br = 1; }
+            else if ((a & 0xF800) == 0xE000 && (a & 0x7FF)) { t = pc + 4 + (uint32_t)((int32_t)((a & 0x7FF) << 21) >> 20); br = 1; }
+            else if ((a & 0xF500) == 0xB100) { t = pc + 4 + (uint32_t)((((a >> 9) & 1) << 6) | (((a >> 3) & 31) << 1)); br = 1; }
+            o += 2;
+        }
+        if (br && t >= IMG_BASE && t < IMG_BASE + len && !(t & 1)) { if (!bm_get(g_btgt, t)) g_nbtgt++; bm_set(g_btgt, t); }
+    }
+}
 static int target_hits(uint32_t site, uint32_t want) {
+    if (bm_get(g_btgt, want)) return 1;
     for (uint32_t a = site - 64; a < site + 64; a += 2) {
         int hh = g_rd16(a); if (hh < 0) continue;
         uint16_t x = (uint16_t)hh; int32_t off = 0; int br = 0;
@@ -1955,7 +1990,7 @@ static void bus_finish(void) {
     rh_dump();
     if (!opt.bus) return;
     if (opt.bus_verbose) { print_summary(1); fflush(stdout); }
-    fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb); %lu patch attempts postponed (an exception returns inside)\n", (unsigned long long)g_events, g_nstubs, g_nv8, g_patch_frame);
+    fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb); %u branch targets known, %lu patch attempts postponed (an exception returns inside)\n", (unsigned long long)g_events, g_nstubs, g_nv8, g_nbtgt, g_patch_frame);
     lb_dump(stderr);
     um2bus_stats(stderr); um2sd_stats();
     if (getenv("UM2_HASHMEM") && !opt.no_psram) {      /* test hook: FNV-1a of the guest's PSRAM (where the images stage what they read from the SD card): what the guest really received */
@@ -2442,6 +2477,7 @@ int main(int argc, char **argv) {
     if (20 + (size_t)words * 4 > g_filesz || words * 4 > IMG_TOP - IMG_BASE) { fprintf(stderr, "bad length\n"); return 1; }
     g_entry = rd32(g_file + 20 + 4) & ~1u;
     if (!g_noprepatch) prepatch(g_file + 20, words);
+    if (!getenv("UM2_NOBTGT")) btgt_scan(g_file + 20, words);     /* UM2_NOBTGT=1 (test): only the local scan, as before */
     g_next_report = opt.every;
     setup_sched();
     printf("um2run: %s entry=%08x events<=%llu secs<=%.0f mode=%s\n", opt.file, g_entry, (unsigned long long)opt.max_events, opt.secs, opt.ptrace_mode ? "ptrace" : "inproc");
