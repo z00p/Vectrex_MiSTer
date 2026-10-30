@@ -35,7 +35,8 @@ cartridge images (`.um2` files) go, and how to give the games the files they rea
      `.uf2` firmware, `ASSETS` folders (menu pictures) and macOS files (`__MACOSX`, `._*`,
      `.DS_Store`) are left out.
 4. Main menu > **PiTrex & UVMC2** > **UVMC2 Games**, then OSD > **Load UVMC2 / PiTrex** and pick
-   the `.um2`.
+   the `.um2`. Always start from that menu entry: if you load the core any other way, Mine Storm
+   stays on screen and picking a game does nothing.
 
 **Or** put your `.um2` files straight in `/media/fat/games/Vectrex-PiTrex/UVMC2/` (subfolders are
 fine). A game that needs no card (Veccy Road, the demos) then plays at once. If you only have ROM
