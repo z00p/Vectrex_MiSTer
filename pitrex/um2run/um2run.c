@@ -2041,6 +2041,12 @@ static void k_launch_core1(uint32_t vtor, uint32_t sp, uint32_t entry) {
         if (!pthread_create(&mt, &ma, c1_mover, NULL)) pthread_detach(mt); }
 }
 static void k_irq_poke(void) { if (g_irq_on) irq_levels(); }
+/* Only once on_donate is installed: SIGUSR1's default action kills the process, silently (the launch deaths of 28 and 31 Oct 2026, whenever
+ * setup took longer than the 2 ms before the first tick). */
+static void fair_start(void) {
+    int pol = sched_getscheduler(0); if ((pol == SCHED_RR || pol == SCHED_FIFO) && !getenv("UM2_NOFAIR")) { pthread_t ft; pthread_attr_t fa; pthread_attr_init(&fa); pthread_attr_setstacksize(&fa, 1 << 16);
+        if (!pthread_create(&ft, &fa, fair_thread, NULL)) pthread_detach(ft); }
+}
 static void bus_setup(void) {
     /* qemu-user parks the process stack (argv/envp) in the 0x40000000 window that guest_jump unmaps; getenv() from the
      * signal handlers would fault.  Move the environment and argv string to the heap first (no-op cost on real Linux). */
@@ -2062,8 +2068,6 @@ static void bus_setup(void) {
         } else perror("um2run: memfd_create");
     }
     g_th_core0 = pthread_self(); pthread_setname_np(pthread_self(), "u2core0");
-    { int pol = sched_getscheduler(0); if ((pol == SCHED_RR || pol == SCHED_FIFO) && !getenv("UM2_NOFAIR")) { pthread_t ft; pthread_attr_t fa; pthread_attr_init(&fa); pthread_attr_setstacksize(&fa, 1 << 16);
-        if (!pthread_create(&ft, &fa, fair_thread, NULL)) pthread_detach(ft); } }
     um2bus_cfg_t c; memset(&c, 0, sizeof c);
     c.vwrite = k_write; c.vread = k_read; c.advance = k_advance; c.now = k_now; c.frame = k_frame;
     c.host_ptr = k_host_ptr; c.ext_load = k_ext_load; c.ext_store = k_ext_store; c.launch_core1 = k_launch_core1;
@@ -2093,6 +2097,7 @@ static int run_inproc(void) {
 #endif
     sa.sa_sigaction = on_alarm; sigaction(SIGALRM, &sa, NULL);
     sa.sa_sigaction = on_donate; sigaction(SIGUSR1, &sa, NULL);
+    if (opt.bus) fair_start();
     sa.sa_sigaction = on_quiesce; sigaction(SIGUSR2, &sa, NULL);
     sa.sa_sigaction = on_irq; sigaction(SIGURG, &sa, NULL);       /* asynchronous interrupt delivery (SIGUSR2 is the patch quiesce) */
     guest_load_and_map();
