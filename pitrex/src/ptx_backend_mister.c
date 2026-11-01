@@ -64,6 +64,7 @@ typedef struct {
 } core_status_t;
 
 volatile int ptx_boot_phase;   /* see ptx.h; defined for every platform */
+volatile int ptx_core_stalled;   /* ditto */
 
 static int memfd = -1;
 static volatile uint8_t *base;
@@ -397,9 +398,15 @@ static void m_frame(uint64_t stream_cycles)
 	int waited_ms = 0;
 	while (st->rd_idx < target) {
 		nap_us(200);
-		if (++waited_ms == 10000)                /* 2 s without progress */
+		if (++waited_ms == 10000) {              /* 2 s without progress */
 			fprintf(stderr, "ptx: core not fetching (rd_idx %llu < %llu) - PiTrex Mode on?\n",
 			        (unsigned long long)st->rd_idx, (unsigned long long)target);
+			ptx_core_stalled = 1;
+		}
+	}
+	if (ptx_core_stalled) {
+		fprintf(stderr, "ptx: core fetching again after %d s\n", waited_ms / 5000);
+		ptx_core_stalled = 0;
 	}
 }
 

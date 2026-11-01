@@ -53,6 +53,7 @@ The log is `/tmp/um2.log`. Useful `um2run` options:
 | `--frame-cycles N` | stream frame length in E cycles (default 30000 = 50 Hz; 25000 = 60 Hz) |
 | `--secs S` | stop after S seconds (`--bus` stops after 300 s by default) |
 | `--no-loading` | no LOADING screen while the image has not drawn its first frame |
+| `--message TEXT` | no image: show TEXT on the Vectrex for 20 s, `\|` for a new line (pitrexd and mister_run.sh use it for errors) |
 | `--no-hold` (mister_run.sh) | do not hand each frame to the ring at once (`--hold` is the default) |
 | `--bus-verbose`, `--ringmon` | model log and a once-a-second ring monitor, for diagnosis |
 

@@ -31,6 +31,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdarg.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -1783,6 +1784,7 @@ static void on_alarm(int sig, siginfo_t *si, void *vuc) {
     if (now() - g_t0 > opt.secs) { printf("-- time limit reached\n"); print_summary(1); fflush(stdout); bus_finish(); _exit(0); }
     if (opt.bus && g_bus_timeout > 0 && !g_guest_seen && now() - g_t0 > g_bus_timeout) {
         fprintf(stderr, "um2run: no bus event within %.0f s, exiting (--bus-timeout)\n", g_bus_timeout); fflush(stdout); _exit(4); }
+    if (ptx_core_stalled) g_last_frame_t = now();     /* the core is not fetching (paused?): nothing the image did, so wait for it, however long */
     if (opt.bus && g_frame_timeout > 0 && g_ptx_up && g_last_frame_t && now() - g_last_frame_t > g_frame_timeout) {
         fprintf(stderr, "um2run: no frame for %.0f s, exiting\n", g_frame_timeout); bus_finish(); _exit(5); }
 }
@@ -1946,6 +1948,71 @@ static void ld_glyph(const uint8_t *g, int ox, int oy) {
     }
 }
 /* outline box, then `fill` * 128 units of fill (0..96), or fill < 0: a 24-step block sweeping to and fro (by fno); five zig-zag rows are the fill */
+/* --message: an error the player can read on the Vectrex, for pitrexd and mister_run.sh (a pick that cannot start, a game that died).
+ * Capitals, digits, . - / on the same 2x4 grid as ld_font; '|' starts a new line. */
+static const struct { char c; uint8_t s[13]; } msg_font[] = {
+    { 'A', { 0x00, 0x03, 0x14, 0x23, 0x20, 0xFF, 0x02, 0x22, 0xFE } }, { 'B', { 0x00, 0x04, 0x14, 0x23, 0x12, 0x21, 0x10, 0x00, 0xFF, 0x02, 0x12, 0xFE } },
+    { 'C', { 0x23, 0x14, 0x03, 0x01, 0x10, 0x21, 0xFE } }, { 'D', { 0x00, 0x04, 0x14, 0x23, 0x21, 0x10, 0x00, 0xFE } },
+    { 'E', { 0x24, 0x04, 0x00, 0x20, 0xFF, 0x02, 0x12, 0xFE } }, { 'F', { 0x24, 0x04, 0x00, 0xFF, 0x02, 0x12, 0xFE } },
+    { 'G', { 0x23, 0x14, 0x03, 0x01, 0x10, 0x21, 0x22, 0x12, 0xFE } }, { 'H', { 0x00, 0x04, 0xFF, 0x02, 0x22, 0xFF, 0x20, 0x24, 0xFE } },
+    { 'I', { 0x04, 0x24, 0xFF, 0x14, 0x10, 0xFF, 0x00, 0x20, 0xFE } }, { 'J', { 0x24, 0x21, 0x10, 0x01, 0xFE } },
+    { 'K', { 0x00, 0x04, 0xFF, 0x24, 0x02, 0x20, 0xFE } }, { 'L', { 0x04, 0x00, 0x20, 0xFE } },
+    { 'M', { 0x00, 0x04, 0x12, 0x24, 0x20, 0xFE } }, { 'N', { 0x00, 0x04, 0x20, 0x24, 0xFE } },
+    { 'O', { 0x01, 0x03, 0x14, 0x23, 0x21, 0x10, 0x01, 0xFE } }, { 'P', { 0x00, 0x04, 0x14, 0x23, 0x12, 0x02, 0xFE } },
+    { 'Q', { 0x01, 0x03, 0x14, 0x23, 0x21, 0x10, 0x01, 0xFF, 0x11, 0x20, 0xFE } }, { 'R', { 0x00, 0x04, 0x14, 0x23, 0x12, 0x02, 0xFF, 0x12, 0x20, 0xFE } },
+    { 'S', { 0x23, 0x14, 0x03, 0x12, 0x21, 0x10, 0x01, 0xFE } }, { 'T', { 0x04, 0x24, 0xFF, 0x14, 0x10, 0xFE } },
+    { 'U', { 0x04, 0x01, 0x10, 0x21, 0x24, 0xFE } }, { 'V', { 0x04, 0x10, 0x24, 0xFE } },
+    { 'W', { 0x04, 0x00, 0x12, 0x20, 0x24, 0xFE } }, { 'X', { 0x00, 0x24, 0xFF, 0x04, 0x20, 0xFE } },
+    { 'Y', { 0x04, 0x12, 0x24, 0xFF, 0x12, 0x10, 0xFE } }, { 'Z', { 0x04, 0x24, 0x00, 0x20, 0xFE } },
+    { '0', { 0x01, 0x03, 0x14, 0x23, 0x21, 0x10, 0x01, 0xFF, 0x01, 0x23, 0xFE } }, { '1', { 0x03, 0x14, 0x10, 0xFF, 0x00, 0x20, 0xFE } },
+    { '2', { 0x03, 0x14, 0x23, 0x00, 0x20, 0xFE } }, { '3', { 0x03, 0x14, 0x23, 0x12, 0x21, 0x10, 0x01, 0xFE } },
+    { '4', { 0x04, 0x02, 0x22, 0xFF, 0x20, 0x24, 0xFE } }, { '5', { 0x24, 0x04, 0x02, 0x12, 0x21, 0x10, 0x00, 0xFE } },
+    { '6', { 0x23, 0x14, 0x03, 0x01, 0x10, 0x21, 0x12, 0x02, 0xFE } }, { '7', { 0x04, 0x24, 0x10, 0xFE } },
+    { '8', { 0x12, 0x03, 0x14, 0x23, 0x12, 0x01, 0x10, 0x21, 0x12, 0xFE } }, { '9', { 0x01, 0x10, 0x21, 0x23, 0x14, 0x03, 0x12, 0x22, 0xFE } },
+    { '.', { 0x10, 0x11, 0xFE } }, { '-', { 0x02, 0x22, 0xFE } }, { '/', { 0x00, 0x24, 0xFE } } };
+enum { MSG_STEP = 640, MSG_ADV = 1920, MSG_LINE = 3200, MSG_COLS = 20, MSG_LINES = 4, MSG_SECS = 20 };
+static const char *g_msg;
+static void msg_glyph(const uint8_t *g, int ox, int oy) {
+    ld_zero();
+    int px = 0, py = 0, mv = 1, st = 0;
+    for (; *g != 0xFE; g++) {
+        if (*g == 0xFF) { mv = 1; continue; }
+        int x = *g >> 4, y = *g & 15;
+        if (!st) { ld_ramp((ox + x * MSG_STEP) / 192, (oy + y * MSG_STEP) / 192, 191, 0); st = 1; }   /* zero -> first point: anywhere on the screen, so a slow ramp */
+        else ld_ramp(20 * (x - px), 20 * (y - py), 31, !mv);                                        /* 20 * 32 = one grid step */
+        mv = 0; px = x; py = y;
+    }
+}
+static void msg_frame(char lines[][MSG_COLS + 1], int n) {
+    uint64_t t0 = ptx_now_cycles(); unsigned fc = opt.frame_cycles ? opt.frame_cycles : 30000;
+    ptx_write(V_DDRA, 0xFF); ptx_write(V_DDRB, 0x9F); ptx_write(V_ORB, 1); ptx_write(V_ACR, 0x98); ptx_write(V_SR, 0);
+    ld_mux(2, LD_Z);
+    for (int l = 0; l < n; l++) {
+        int len = (int)strlen(lines[l]), ox = -len * MSG_ADV / 2, oy = (n - 1) * MSG_LINE / 2 - l * MSG_LINE - 2 * MSG_STEP;
+        for (int i = 0; i < len; i++)
+            for (unsigned k = 0; k < sizeof msg_font / sizeof *msg_font; k++)
+                if (msg_font[k].c == lines[l][i]) { msg_glyph(msg_font[k].s, ox + i * MSG_ADV, oy); break; }
+    }
+    uint64_t used = ptx_now_cycles() - t0;
+    if (used + 2 < fc) ptx_advance_cycles((uint32_t)(fc - used - 2));
+    ptx_write(V_T2L, 0x30); ptx_write(V_T2H, 0x75);
+    ptx_frame();
+}
+static void ld_pace(void);
+/* no image, no guest: draw the text for MSG_SECS, then hand the Vectrex back.  Paced like the loading indicator, so it sleeps almost all the time */
+static int msg_main(void) {
+    char lines[MSG_LINES][MSG_COLS + 1]; int n = 0, c = 0;
+    memset(lines, 0, sizeof lines);
+    for (const char *p = g_msg; *p && n < MSG_LINES; p++) {
+        if (*p == '|') { n++; c = 0; continue; }
+        if (c < MSG_COLS) lines[n][c++] = (char)toupper((unsigned char)*p);
+    }
+    if (n < MSG_LINES) n++;
+    g_ld_done = 0; ptx_up(); ptx_boot_phase = 1;
+    for (double t = now(); now() - t < MSG_SECS; ) { ld_pace(); msg_frame(lines, n); }
+    g_ptx_up = 0; ptx_shutdown();
+    return 0;
+}
 static void ld_bar(int fill, unsigned fno) {
     ld_zero();
     ld_ramp(-LD_BW / 2 / 64, LD_BY / 64, 63, 0);
@@ -2454,6 +2521,7 @@ static void usage(void) {
         "                     bus traffic -> ptx stream (PTX_BACKEND=file|mister, see src/ptx_*.c); implies inproc + svc patching\n"
         "  --bus-verbose      model log on stderr (twice: every DMA run); --capture FILE records the model inputs for replay\n"
         "  --no-loading       no LOADING screen + progress bar while the image has not drawn its first frame (<image>.load keeps the total)\n"
+        "  --message TEXT     no image: show TEXT on the Vectrex for 20 s ('|' = new line; 4 lines of 20 at most), then hand it back\n"
         "  --frame-cycles N   idle-pad each stream frame to N E cycles (default 30000, 0 = none)\n"
         "  --keys F:B,F:B     PC tests: from frame mark F on, controller reads (PSG reg 14) return byte B (0xFE = button 1, 0xFF = none)\n"
         "  --pot F:X1,Y1[,X2,Y2];F:..  PC tests: from frame mark F on, the stick pots read these signed values (through the sample/hold model)\n");
@@ -2487,6 +2555,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--ringmon")) g_ringmon = 1;
         else if (!strcmp(a, "--hold")) g_hold = 1;
         else if (!strcmp(a, "--no-loading")) g_noload = 1;
+        else if (!strcmp(a, "--message") && i + 1 < argc) g_msg = argv[++i];
         else if (!strcmp(a, "--pot") && i + 1 < argc) { char *q = argv[++i]; while (*q && g_npot < 16) { g_potf[g_npot] = (unsigned)strtoul(q, &q, 0); if (*q == ':') q++; for (int k = 0; k < 4; k++) { g_potv[g_npot][k] = 0; if (*q && *q != ';') { g_potv[g_npot][k] = (int8_t)strtol(q, &q, 0); if (*q == ',') q++; } } g_npot++; if (*q == ';') q++; } }
         else if (!strcmp(a, "--keys") && i + 1 < argc) { char *q = argv[++i]; while (*q && g_nkeys < 16) { g_keyf[g_nkeys] = (unsigned)strtoul(q, &q, 0); if (*q == ':') q++; g_keyv[g_nkeys++] = (unsigned)strtoul(q, &q, 0); if (*q == ',') q++; } }
         else if (!strcmp(a, "--sd") && i + 1 < argc) g_sd_path = argv[++i];
@@ -2499,6 +2568,7 @@ int main(int argc, char **argv) {
         else if (a[0] == '-') { usage(); return 2; }
         else opt.file = a;
     }
+    if (g_msg) return msg_main();
     if (!opt.file) { usage(); return 2; }
     if (g_settle > 0) { fprintf(stderr, "settle %.1f s\n", g_settle); struct timespec ts = { (time_t)g_settle, (long)((g_settle - (time_t)g_settle) * 1e9) }; nanosleep(&ts, NULL); }
     FILE *f = fopen(opt.file, "rb");
