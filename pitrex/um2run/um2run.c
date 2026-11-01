@@ -680,6 +680,7 @@ static void hs_note(uint32_t pc, uint32_t addr, int load, int size, int why, int
     __atomic_store_n(&g_hs_lk, 0, __ATOMIC_RELEASE);
 }
 static unsigned long g_excret;    /* EXC_RETURN fetch faults (the second signal of every non-native SVC), not in g_events */
+static unsigned long g_svc_nat[256];    /* SVCs entered natively (svc_patch stubs), by call number */
 static void hs_reset(void) { memset(g_hs, 0, sizeof g_hs); }
 
 static const char *regn(int r) { static const char *n[] = {"r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc"}; return n[r & 15]; }
@@ -955,6 +956,8 @@ uint32_t um2_irq_exit(uint32_t sp) {
     if (h < 0 || h2 < 0) return 0;
     __atomic_fetch_and(&n->pend[irq >> 5], ~(1u << (irq & 31)), __ATOMIC_SEQ_CST);
     if (!n->depth) isr_begin(irq);
+    if (!tl_fpv[n->depth & 7]) { uint32_t *dd = tl_fps[n->depth & 7]; uint32_t fp;      /* chained after a frame that carries no VFP state (a native SVC return): the ISR may clobber d0-d15, so keep what is in them now for the final return */
+        __asm__ volatile("vstmia %0, {d0-d15}" :: "r"(dd) : "memory"); __asm__ volatile("vmrs %0, fpscr" : "=r"(fp)); dd[64] = fp; tl_fpv[n->depth & 7] = 1; }
     n->sprio[n->depth] = n->pri[irq]; n->sirq[n->depth] = (int8_t)irq; n->depth++; n->last = (int8_t)irq;
     g_irq_cnt[irq]++; g_irq_pc[tl_core & 1]++; g_irq_chain++;
     return (uint32_t)h | ((uint32_t)h2 << 16) | 1u;
@@ -964,6 +967,7 @@ uint32_t *um2_irq_fp(void) { Nvic *n = &g_nv[tl_core & 1]; return tl_fpv[n->dept
 __asm__(".text\n.arm\n.type um2_irqret, %function\n.global um2_irqret\num2_irqret:\n"
         "  mov r0, sp\n  bl um2_irq_exit\n  cmp r0, #0\n  adrne lr, um2_irqret\n  bxne r0\n"
         "  bl um2_irq_fp\n  cmp r0, #0\n  vldmiane r0, {d0-d15}\n  ldrne r1, [r0, #256]\n  vmsrne fpscr, r1\n"
+        "  ldr r1, [sp, #24]\n  orr r1, r1, #1\n  str r1, [sp, #24]\n"        /* the return address gets its Thumb bit here: an SVC frame keeps the architectural bit 0 clear for the handler, which reads the call number at pc - 2 */
         "  ldr r0, [sp, #28]\n  tst r0, #0x200\n  bne 1f\n"
         "  msr APSR_nzcvq, r0\n  ldmia sp!, {r0-r3, r12, lr}\n  ldr pc, [sp], #8\n"
         "1:\n  msr APSR_nzcvq, r0\n  ldmia sp!, {r0-r3, r12, lr}\n  ldr pc, [sp], #12\n.thumb\n");
@@ -1480,6 +1484,75 @@ static int prim_patch(const Cpu *c, uint32_t site, int mrs, int reg, int span) {
     return 1;
 }
 
+/* Native SVC entry (1 Nov 2026).  The UVMC2 runtime's system calls are veneers `svc #n ; bx lr`.  On the A9 every one costs two signal round trips (about 50 us each): the udf that
+ * stands for the svc, and the fetch fault when the image's SVCall handler returns to EXC_RETURN.  Enduro makes 40 a frame, Defender 15.  After a few traps the veneer becomes
+ * `b.w stub`: the stub does the ARMv8-M exception entry in Thumb (the C helper um2_svc_enter writes the frame and the NVIC bookkeeping, exactly what exc_enter does), jumps to the
+ * image's own SVCall handler with lr = um2_irqret (the native ISR return thunk), and the exception returns to a copy of the veneer's second instruction inside the stub, so a
+ * handler that changes the stacked lr behaves as before.  Preceded in the stub by the udf halfword the handler reads at return pc - 2 (it takes the call number from there).
+ * Not patched: IT blocks, a second instruction that cannot be relocated (a pc-relative load), a branch target on it.  UM2_NOSVCPATCH=1 = every svc on the trap path. */
+uint32_t um2_svc_enter(uint32_t *blk, uint32_t ret_pc, uint32_t site) {
+    uint32_t flags = blk[0], r[6]; memcpy(r, blk + 1, sizeof r);                     /* r0 r1 r2 r3 r12 lr, as the stub pushed them; the frame about to be written overlaps this block */
+    uint32_t old_sp = (uint32_t)(uintptr_t)blk + 28, base = (old_sp - 32) & ~7u, pad = ((old_sp - 32) & 4) ? 1u : 0u;
+    uint32_t *f = (uint32_t *)(uintptr_t)base;
+    memcpy(f, r, sizeof r); f[6] = ret_pc; f[7] = (flags & 0xF8000000u) | (1u << 24) | (pad << 9);
+    Nvic *n = &g_nv[tl_core & 1]; int d = n->depth;
+    if (d < 7) { n->sprio[d] = 0; n->sirq[d] = -1; n->sret[d] = ret_pc; n->depth++; }
+    tl_fpv[d & 7] = 0;                                                                /* an SVC frame carries no VFP state (as on the trap path): the return thunk must not restore a stale one */
+    g_svc_nat[((site - IMG_BASE) >> 1) < sizeof g_patch_orig_n ? g_patch_orig_n[(site - IMG_BASE) >> 1] : 0]++;
+    uint32_t vt = vtor_now(); int h = g_rd16(vt + 44), h2 = g_rd16(vt + 46);
+    return (uint32_t)h | ((uint32_t)h2 << 16);
+}
+static uint32_t g_nsvcp;
+static int svc_patch(const Cpu *c, uint32_t site, unsigned num) {
+    static int off = -1; if (off < 0) off = getenv("UM2_NOSVCPATCH") != NULL; if (off) return 0;
+    if (!opt.bus || !g_stub_ready || !g_irq_thunk || (c->r[16] & ((0x3Fu << 10) | (3u << 25)))) return 0;
+    int nx = g_rd16(site + 2);
+    if (nx < 0 || !safe16((uint16_t)nx) || target_hits(site, site + 2)) return 0;
+    int xfer = (nx & 0xFF87) == 0x4700 || ((nx & 0xFE00) == 0xBC00 && (nx & 0x100));      /* bx rm / pop {.., pc}: the relocated instruction leaves the stub itself */
+    uint16_t k[48]; int n = 0;
+    struct { int at; uint32_t val; } lits[6]; int nl = 0;
+    int x_lit = -1;
+#define E(x) k[n++] = (uint16_t)(x)
+#define LIT(rt, v) do { E(0xF8DF); lits[nl].at = n; lits[nl].val = (v); nl++; E((rt) << 12); } while (0)
+    E(0xE92D); E(0x500F);                               /* push {r0-r3, r12, lr}     */
+    E(0xF3EF); E(0x8300);                               /* mrs r3, apsr              */
+    E(0xF84D); E(0x3D04);                               /* str r3, [sp, #-4]!        */
+    E(0x4668);                                          /* mov r0, sp   (the block)  */
+    E(0xF1AD); E(0x0104);                               /* sub.w r1, sp, #4          */
+    E(0xF021); E(0x0107);                               /* bic.w r1, r1, #7          */
+    E(0x468D);                                          /* mov sp, r1   (the frame base; from here an interrupt frame goes below it) */
+    x_lit = nl; LIT(1, 0);                              /* ldr r1, =return pc (the relocated instruction, below) */
+    LIT(2, site);                                       /* ldr r2, =site             */
+    LIT(12, (uint32_t)(uintptr_t)(g_novfp ? um2_hthunk_lean : um2_hthunk));
+    LIT(3, (uint32_t)(uintptr_t)um2_svc_enter);
+    E(0x47E0);                                          /* blx r12: thunk -> um2_svc_enter(r0, r1, r2) = the SVCall handler */
+    E(0x4684);                                          /* mov r12, r0               */
+    LIT(14, (uint32_t)(uintptr_t)um2_irqret);           /* ldr lr, =um2_irqret       */
+    E(0x4760);                                          /* bx r12                    */
+    E(0xDE00 | (num & 0xFF));                           /* the udf the handler reads at return pc - 2 */
+    int x_at = n; E((uint16_t)nx);                      /* the relocated second instruction: the exception returns here */
+    int b_at = -1; if (!xfer) { b_at = n; n += 2; }     /* b.w site + 4 */
+    if (n & 1) E(0xBF00);
+    int lit_base = n; n += 2 * nl;
+    uint32_t bytes = (uint32_t)n * 2, base;
+    { int pb = patch_begin(site, 4, bytes, &base); if (pb <= 0) return pb < 0 && pb != -2; }      /* -1: another core got there first (the site is a b.w now) */
+    lits[x_lit].val = base + (uint32_t)x_at * 2;
+    for (int i = 0; i < nl; i++) {
+        uint32_t laddr = base + (uint32_t)(lit_base + 2 * i) * 2;
+        uint32_t ipc = base + (uint32_t)(lits[i].at - 1) * 2 + 4;
+        k[lits[i].at] |= (uint16_t)(laddr - (ipc & ~3u));
+        memcpy(k + lit_base + 2 * i, &lits[i].val, 4);
+    }
+    if (b_at >= 0) { uint32_t bw = enc_bw(base + (uint32_t)b_at * 2, site + 4); k[b_at] = (uint16_t)(bw & 0xFFFF); k[b_at + 1] = (uint16_t)(bw >> 16); }
+    memcpy((void *)(uintptr_t)base, k, (size_t)bytes);
+#undef LIT
+#undef E
+    __builtin___clear_cache((char *)(uintptr_t)base, (char *)(uintptr_t)(base + bytes));
+    patch_end(site, 4, base);
+    g_nsvcp++;
+    if (opt.bus_verbose) fprintf(stderr, "svc_patch: %08x svc #%u + %04x -> stub %08x%c", site, num, nx, base, 10);
+    return 1;
+}
 /* qemu-user hands out its mmap area from 0x40000000 up, and guest_jump has just freed the stack that sat there: later mmaps (thread
  * stacks, ...) would land on top of the RP2350 peripheral addresses and make them plain memory.  Reserve that range before anything
  * else maps.  No-op on a real kernel (nothing is there). */
@@ -1530,7 +1603,9 @@ static int cpu_trap(int sig, Cpu *c, uint32_t fault_addr, int svc_from_syscall, 
             Ev *e = ev_get(K_SVCN, n, 0, NULL); if (e) e->n++;
             e = ev_get(K_SVC, pc, 0, &isnew);
             if (e) { e->n++; if (isnew) { e->x = n; e->y = c->r[0]; e->z = c->r[1]; logf_("[SVC] #%u at pc=%08x r0=%08x r1=%08x r2=%08x r3=%08x\n", n, pc, c->r[0], c->r[1], c->r[2], c->r[3]); } }
-            if (opt.bus) { if (!exc_enter(c, pc + 2, 11)) { printf("STOP: cannot enter SVCall (vector unreadable)\n"); return ACT_STOP; } goto done; }
+            if (opt.bus) {
+                if (e && (e->n == 6 || (e->n > 6 && e->n < 520 && ((e->n - 6) & 7) == 0)) && svc_patch(c, pc, n)) return ACT_CONT;     /* now `b.w stub`: run the site again (before any frame is built: no exception returns inside the span) */
+                if (!exc_enter(c, pc + 2, 11)) { printf("STOP: cannot enter SVCall (vector unreadable)\n"); return ACT_STOP; } goto done; }
             c->r[0] = 0; skip(c, 2); goto done;
         }
         if (sig == SIGILL && len == 4 && (((h1 & 0xFFF0) == 0xFB90) || ((h1 & 0xFFF0) == 0xFBB0)) && (h2 & 0xF0F0) == 0xF0F0) {
@@ -2217,6 +2292,7 @@ static void bus_finish(void) {
     if (!opt.bus) return;
     if (opt.bus_verbose) { print_summary(1); fflush(stdout); }
     fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb); %u branch targets known, %lu patch attempts postponed (an exception returns inside)\n", (unsigned long long)g_events, g_nstubs, g_nv8, g_nbtgt, g_patch_frame);
+    if (g_nsvcp) { fprintf(stderr, "um2run: %u SVC veneers became stubs; native SVC entries (call number:count):", g_nsvcp); for (int q = 0; q < 256; q++) if (g_svc_nat[q]) fprintf(stderr, " %d:%lu", q, g_svc_nat[q]); fputc(10, stderr); }
     lb_dump(stderr); um_dump(stderr);
     um2bus_stats(stderr); um2sd_stats();
     if (getenv("UM2_HASHMEM") && !opt.no_psram) {      /* test hook: FNV-1a of the guest's PSRAM (where the images stage what they read from the SD card): what the guest really received */
