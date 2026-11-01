@@ -2395,6 +2395,11 @@ static void bus_finish(void) {
         for (uint32_t i = 0; i < PSRAM_SIZE / 4; i++) h = (h ^ p[i]) * 0x100000001b3ull;
         fprintf(stderr, "um2run: PSRAM hash %016llx\n", (unsigned long long)h);
     }
+    if (getenv("UM2_PSRAMUSE") && !opt.no_psram) {     /* diagnostics: how much of the 8 MB PSRAM the guest wrote (highest and number of non-zero 4 KiB pages): an image that needs more than we model shows up here */
+        const uint32_t *p = (const uint32_t *)(uintptr_t)PSRAM_BASE; uint32_t hi = 0, used = 0;
+        for (uint32_t pg = 0; pg < PSRAM_SIZE / 4096; pg++) { int nz = 0; for (uint32_t i = 0; i < 1024 && !nz; i++) nz = p[pg * 1024 + i] != 0; if (nz) { used++; hi = pg + 1; } }
+        fprintf(stderr, "um2run: PSRAM use: %u of %u pages non-zero, highest page end %u KiB of %u KiB\n", used, (unsigned)(PSRAM_SIZE / 4096), hi * 4, (unsigned)(PSRAM_SIZE / 1024));
+    }
 #ifdef UM2_VFPTEST
     fprintf(stderr, "vfptest: %u helper calls from stubs, %u of them on the guest stack\n", g_vt_calls, g_vt_guest);
 #endif
