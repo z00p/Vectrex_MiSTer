@@ -29,8 +29,8 @@ case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3
 	PTX_BACKEND=mister PTX_WAIT_CORE=60 nohup chrt -r 50 ./um2run --bus $hold $args "$img" > /tmp/um2.log 2>&1
 	rc=$?
 	case $rc in 0|137|143) exit 0 ;; esac
-	echo "$(date +%T) um2run $(basename "$img") ended by itself, exit status $rc, see /tmp/um2.log" >> /tmp/pitrexd.log
 	[ "$(cat /tmp/CORENAME 2>/dev/null)" = "Vectrex-PiTrex" ] || exit 0
+	echo "$(date +%T) um2run $(basename "$img") ended by itself, exit status $rc, see /tmp/um2.log" >> /tmp/pitrexd.log
 	PTX_BACKEND=mister exec nohup chrt -r 49 "$PWD/um2run" --message "GAME STOPPED|EXIT STATUS $rc" > /tmp/um2msg.log 2>&1
 ) > /dev/null 2>&1 &
 echo "started um2run --bus $hold $args $img, log /tmp/um2.log"
