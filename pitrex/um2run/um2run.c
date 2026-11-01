@@ -494,6 +494,8 @@ static uint32_t dwt_now(void) {
     if (e != tl_dwt_e) tl_dwt += (uint32_t)((double)(e - tl_dwt_e) * (hz / 1.5e6) + 0.5);
     else tl_dwt += (uint32_t)((double)(uint32_t)(us - tl_dwt_us) * (hz / 1e6));
     tl_dwt_us = us; tl_dwt_e = e;
+    { static int lg = -1; static unsigned shown; if (lg < 0) { const char *q = getenv("UM2_DWTLOG"); lg = q ? atoi(q) : 0; }     /* diagnostics: the first N counter reads of core 0 with the step since the previous one */
+      if (lg && !tl_core && shown < (unsigned)lg) { static uint32_t last; fprintf(stderr, "dwt read %u: %u (+%u cycles = %.1f us at %.0f MHz)\n", shown++, tl_dwt, tl_dwt - last, (tl_dwt - last) / (hz / 1e6), hz / 1e6); last = tl_dwt; } }
     return tl_dwt;
 }
 
@@ -596,6 +598,7 @@ static void skip(Cpu *c, int len) { c->r[15] += len; it_advance(&c->r[16]); }
 static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int len, int is_load);
 static uint32_t g_nhot;
 static int g_nospi;      /* UM2_NOSPIPATCH=1: SPI0 stays on the trap path (A/B timing, regression) */
+static int g_noreach;    /* UM2_NOREACH=1: the hot-patch reach of 1 Nov 2026 off (IT-block sites, relocated branches, hoisted ALU halfword, 32-bit second op, widened next-instruction set): the 31 Oct behaviour, for A/B counts */
 typedef struct { int ok, load, size, sgn, rt, rt2, rmask, wbreg; uint32_t wbval; } Mi;
 
 static int popc(unsigned x) { return __builtin_popcount(x); }
@@ -648,6 +651,36 @@ static int decode_mem(uint16_t h1, uint16_t h2, int len, const Cpu *c, uint32_t 
     return 0;
 }
 
+/* UM2_SITES=1 (diagnostics, 1 Nov 2026): a census of every trapping memory-access site (pc) with the address range, the load/store size and the reason hot_patch gave up,
+ * printed at exit by hs_dump (traps per frame from the frame marks since the census window started: UM2_CENRESET=N).  Costs one spinlock round per trap, off by default. */
+/* Why hot_patch said no: tl_why is only read by the census; the codes are the HW_* names. */
+enum { HW_NONE = 0, HW_IT, HW_OFF, HW_ENC16, HW_NONEXT, HW_POOL, HW_NEXTBAD, HW_NOPRE, HW_ENC32, HW_REG, HW_BUSY, HW_REFUSED, HW_ADDR, HW_SIZE, HW_MULTI, HW_NKIND };
+static const char *const g_why_txt[HW_NKIND] = { "-", "in an IT block", "hot-patch off/no stub area", "16-bit form not ldr/str imm5", "next halfword unreadable", "pool word out of range",
+    "next insn cannot be relocated and no const-load before", "no const-load pair before the site", "32-bit form not ldr/str imm12 or reg", "sp/pc operand", "could not park the other core (retry)",
+    "stub area full / overlaps another patch", "address not in a patchable block", "not a 32-bit access", "multi-register or writeback form" };
+static __thread int tl_why;
+typedef struct { uint32_t pc, amin, amax; uint64_t n; uint8_t ld, size, why, tries; } Hs;
+#define HSCAP 2048
+static Hs g_hs[HSCAP]; static int g_hs_on = -1; static volatile int g_hs_lk;
+static void hs_note(uint32_t pc, uint32_t addr, int load, int size, int why, int tried) {
+    if (g_hs_on < 0) g_hs_on = getenv("UM2_SITES") != NULL;
+    if (!g_hs_on) return;
+    while (__atomic_exchange_n(&g_hs_lk, 1, __ATOMIC_ACQUIRE)) ;
+    uint32_t h = (pc >> 1) * 2654435761u >> 21;
+    for (int i = 0; i < HSCAP; i++) {
+        Hs *s = &g_hs[(h + (uint32_t)i) & (HSCAP - 1)];
+        if (!s->n) { s->pc = pc; s->amin = s->amax = addr; s->ld = (uint8_t)load; s->size = (uint8_t)size; }
+        if (s->pc != pc) continue;
+        s->n++; if (addr < s->amin) s->amin = addr; if (addr > s->amax) s->amax = addr;
+        if (why) s->why = (uint8_t)why;
+        s->tries += (uint8_t)(tried && s->tries < 255);
+        break;
+    }
+    __atomic_store_n(&g_hs_lk, 0, __ATOMIC_RELEASE);
+}
+static unsigned long g_excret;    /* EXC_RETURN fetch faults (the second signal of every non-native SVC), not in g_events */
+static void hs_reset(void) { memset(g_hs, 0, sizeof g_hs); }
+
 static const char *regn(int r) { static const char *n[] = {"r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc"}; return n[r & 15]; }
 
 static int cpu_fault_mem(int sig, Cpu *c, uint32_t addr, uint16_t h1, uint16_t h2, int len) {
@@ -665,11 +698,17 @@ static int cpu_fault_mem(int sig, Cpu *c, uint32_t addr, uint16_t h1, uint16_t h
     int isnew; Ev *e = ev_get(sig == SIGBUS ? K_BUS : K_SEGV, pc, 0, &isnew);
     if (e) {
         e->n++;
-        if (opt.bus && (e->n == 6 || (e->n > 6 && e->n < 520 && ((e->n - 6) & 7) == 0)) && m.size == 4 && nreg == 1 && m.wbreg < 0 && ((addr >= 0xD0000000u && addr < 0xD0000200u && !(addr >= 0xD0000100u)) || (addr >= 0x50000000u && addr < 0x50010000u) || ((addr & 0xFFFFC000u) == 0x40080000u && !g_nospi)
+        int why = 0, tried = 0;
+        int elig = (addr >= 0xD0000000u && addr < 0xD0000200u && !(addr >= 0xD0000100u)) || (addr >= 0x50000000u && addr < 0x50010000u) || ((addr & 0xFFFFC000u) == 0x40080000u && !g_nospi)
             || (addr >= 0x50200000u && addr < 0x50500000u)     /* PIO0..2: the UVM2 v2 bus engine polls FSTAT and pushes TXF0 word by word */
-            || (addr >= 0x400B0000u && addr < 0x400C0000u)))   /* TIMER0/1: alarm ISR, clock polls */
+            || (addr >= 0x400B0000u && addr < 0x400C0000u);    /* TIMER0/1: alarm ISR, clock polls */
                /* SIO, DMA, SPI0 (SD card: ~4 traps per byte otherwise; UM2_NOSPIPATCH=1 = old behaviour) */
-            { if (hot_patch(c, pc, h1, h2, len, m.load)) return ACT_CONT; }   /* patched: run the site again (resuming at pc+2 would land inside the b.w); the constant-load variant returns 0 and lets this access finish through the emulation below */
+        if (opt.bus && (e->n == 6 || (e->n > 6 && e->n < 520 && ((e->n - 6) & 7) == 0)) && m.size == 4 && nreg == 1 && m.wbreg < 0 && elig) {
+            tried = 1;
+            if (hot_patch(c, pc, h1, h2, len, m.load)) { hs_note(pc, addr, m.load, m.size, 0, 1); return ACT_CONT; }   /* patched: run the site again (resuming at pc+2 would land inside the b.w); the constant-load variant returns 0 and lets this access finish through the emulation below */
+            why = tl_why;
+        } else if (!elig) why = HW_ADDR; else if (m.size != 4) why = HW_SIZE; else if (nreg != 1 || m.wbreg >= 0) why = HW_MULTI;
+        hs_note(pc, addr, m.load, m.size, why, tried);
         if (isnew) { e->x = addr; e->z = (m.load ? 1 : 2) | (m.size << 4); snprintf(e->note, sizeof e->note, "%s", blockname(addr));
             logf_("[%s] pc=%08x insn=%04x %04x %s%d%s addr=%08x (%s) %s\n", sig == SIGBUS ? "BUS" : "SEGV", pc, h1, len == 4 ? h2 : 0,
                   m.load ? "load" : "store", m.size * 8, m.sgn ? "s" : "", addr, blockname(addr), m.load ? regn(regs[0]) : ""); }
@@ -955,6 +994,7 @@ static void stub_setup(void) {
     g_stub_ready = (m == (void *)STUB_BASE);
     g_novfp = getenv("UM2_NOVFP") != NULL;
     g_nospi = getenv("UM2_NOSPIPATCH") != NULL;
+    g_noreach = getenv("UM2_NOREACH") != NULL;
     if (!g_stub_ready) perror("um2run: stub area (division stays on the trap path)");
 }
 static uint32_t enc_bw(uint32_t from, uint32_t to) {      /* Thumb-2 B.W T4: returns h1 | h2 << 16 */
@@ -1135,7 +1175,6 @@ static void vt_probe(void) {
 #define VT_PROBE() ((void)0)
 #endif
 uint32_t um2_mload(uint32_t addr, uint32_t site) { VT_PROBE(); if (addr < 0x40000000u) return *(volatile uint32_t *)(uintptr_t)addr; return mmio_load(addr, 4, site); }
-static int is_safe_next16(uint16_t x) { return x <= 0x43FF || (x >= 0xB200 && x <= 0xB2FF); }
 /* Review finding 2: every direct branch target in the image (B/Bcc/CBZ/CBNZ, B.W/Bcc.W/BL), from one linear sweep at load.  The sweep follows instruction lengths and
  * steps over the literal-pool words the PC-relative loads it has passed refer to (a pool word such as 0x2005E578 otherwise reads as `b.n` back into the code); other data
  * can still put it out of step for a few halfwords, so target_hits() keeps the old local scan of every halfword as well.  TBB/TBH tables are not decoded. */
@@ -1173,7 +1212,7 @@ static void btgt_scan(const uint8_t *img, uint32_t words) {
 static int target_hits(uint32_t site, uint32_t want) {
     if (bm_get(g_btgt, want)) return 1;
     for (uint32_t a = site - 64; a < site + 64; a += 2) {
-        int hh = g_rd16(a); if (hh < 0) continue;
+        int hh = g_rd16(a); if (hh < 0 || (!g_noreach && bm_get(g_pcover, a))) continue;   /* our own b.w halves (a patch is never an original branch: g_btgt still holds the branches the patched code had) */
         uint16_t x = (uint16_t)hh; int32_t off = 0; int br = 0;
         if ((x & 0xF000) == 0xD000 && (x & 0x0F00) < 0x0E00) { off = (int32_t)(int8_t)(x & 0xFF) * 2; br = 1; }
         else if ((x & 0xF800) == 0xE000) { off = (int32_t)((x & 0x7FF) << 21) >> 20; br = (x & 0x7FF) != 0; }     /* 0xE000 = `b .+4` is nothing a compiler emits: it is the second half of `ldr.w lr,[ip]` (BattleZone's DMA ISR: a false "branch target" that kept its READ_ADDR store on the trap path, 1 per ms) */
@@ -1196,50 +1235,108 @@ void um2_mstore(uint32_t addr, uint32_t val, uint32_t site) { VT_PROBE(); if (ad
  * instruction, or emulated through the helper as well if it is another 16-bit imm5 ldr/str (the helpers pass non-MMIO addresses straight
  * through).  The stub returns to the instruction after the pair. */
 typedef struct { int load, rt, rn; uint32_t imm; int cst; uint32_t cval; } HOp;   /* cst: `ldr rt,[pc,#imm]` of a constant pool word */   /* cst: `ldr rt,[pc,#imm]` of a constant pool word */
+#define NOPE(w) (tl_why = (w), 0)
+/* Thumb-2 B<cond>.W (T3, +-1 MB: used inside one stub only) */
+static uint32_t enc_bcc(uint32_t from, uint32_t to, unsigned cond) {
+    int32_t off = (int32_t)(to - (from + 4));
+    uint32_t S = ((uint32_t)off >> 20) & 1, J2 = ((uint32_t)off >> 19) & 1, J1 = ((uint32_t)off >> 18) & 1;
+    uint32_t h1 = 0xF000u | (S << 10) | ((cond & 15) << 6) | (((uint32_t)off >> 12) & 0x3F);
+    uint32_t h2 = 0x8000u | (J1 << 13) | (J2 << 11) | (((uint32_t)off >> 1) & 0x7FF);
+    return h1 | (h2 << 16);
+}
+/* 16-bit instructions that may run from a stub, after the stub's epilogue has restored every register and the flags, instead of at their own address: no pc operand,
+ * no memory access that could hit MMIO (that would fault with pc in the stub), no branch except `bx rm` / `pop {.., pc}` (control leaves the stub for the same place). */
+
+static int safe16(uint16_t x) {
+    if (g_noreach) return x <= 0x43FF || (x >= 0xB200 && x <= 0xB2FF);
+    if (x <= 0x43FF || (x >= 0xB200 && x <= 0xB2FF)) return 1;                                    /* shifts, add/sub, mov/cmp/add/sub imm8, ALU, sxt/uxt */
+    if (x >= 0x4400 && x <= 0x46FF) { unsigned rm = (x >> 3) & 15, rd = (x & 7) | ((x >> 4) & 8); return rm != 15 && rd != 15; }   /* add/cmp/mov with high registers, not pc */
+    if ((x & 0xFF87) == 0x4700) return ((x >> 3) & 15) != 15;                                     /* bx rm */
+    if (x >= 0xB000 && x <= 0xB0FF) return 1;                                                     /* add/sub sp, #imm */
+    if (x >= 0xA800 && x <= 0xAFFF) return 1;                                                     /* add rd, sp, #imm */
+    if (x >= 0x9000 && x <= 0x9FFF) return 1;                                                     /* str/ldr rt, [sp, #imm]: the stack is plain RAM */
+    if ((x & 0xFE00) == 0xB400 || (x & 0xFE00) == 0xBC00) return 1;                          /* push {.., lr}, pop {.., pc} (stack only) */
+    return 0;
+}
+/* the same set without the control-transfer forms and without anything that moves sp: what may be hoisted in front of a site (executed before its stub body) */
+static int safe16_pre(uint16_t x) { return x <= 0x43FF || (x >= 0xB200 && x <= 0xB2FF); }
 static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int len, int is_load) {
-    { static int init; static const char *only; if (!init) { only = getenv("UM2_HOTONLY"); init = 1; } if (only && strtoul(only, 0, 16) != site) return 0; }
-    if (!opt.bus || !g_stub_ready || (c->r[16] & ((0x3Fu << 10) | (3u << 25)))) return 0;
+    tl_why = 0;
+    { static int init; static const char *only; if (!init) { only = getenv("UM2_HOTONLY"); init = 1; } if (only && strtoul(only, 0, 16) != site) return NOPE(HW_OFF); }
+    if (!opt.bus || !g_stub_ready) return NOPE(HW_OFF);
     HOp op[2]; int nop = 1; int nx = -1, nx2 = -1, span = 4;
     int rmp1 = 0, rmsh = 0;                               /* op[0] is `ldr/str.w rt,[rn,rm,lsl #rmsh]` (rm + 1, 0 = immediate form) */
-    int pre = 0;                                          /* 1: the pair is `ldr rt,[pc,#imm]` (constant) + the site instruction, patched from site - 2 */
+    int pre = 0;                                          /* patched from site - 2: 1 = the pair is `ldr rt,[pc,#imm]` (constant) + the site instruction, 2 = a plain ALU halfword before the site is hoisted
+                                                           * into the stub, 3 = the site is the only instruction of an IT block and the `it` goes with it (the stub starts with the inverse conditional branch) */
+    unsigned itcc = 0; uint16_t preh = 0;                 /* pre 3: the IT condition; pre 2: the hoisted halfword */
+    int nbr = -1; uint32_t nbr_t = 0; uint16_t nbr_cb = 0;      /* the next halfword is a B<cond>.n (0..13), B.n (14) or CBZ/CBNZ (15, nbr_cb = the stub's own CBZ/CBNZ): relocated as branches in the stub */
+    uint32_t itst = ((c->r[16] >> 8) & 0xFC) | ((c->r[16] >> 25) & 3);
     if (len == 2) {
-        if ((h1 & 0xF800) != (is_load ? 0x6800 : 0x6000)) return 0;
+        if ((h1 & 0xF800) != (is_load ? 0x6800 : 0x6000)) return NOPE(HW_ENC16);
         op[0] = (HOp){ is_load, h1 & 7, (h1 >> 3) & 7, ((h1 >> 6) & 31) * 4, 0, 0 };
-        nx = g_rd16(site + 2); if (nx < 0) return 0;
+    } else {
+        if ((h1 & 0xFFF0) == (is_load ? 0xF8D0 : 0xF8C0)) op[0] = (HOp){ is_load, (h2 >> 12) & 15, h1 & 15, h2 & 0xFFF, 0, 0 };
+        else if ((h1 & 0xFFF0) == (is_load ? 0xF850 : 0xF840) && (h2 & 0x0FC0) == 0)       /* ldr/str.w rt,[rn,rm,lsl #0..3] */
+            { op[0] = (HOp){ is_load, (h2 >> 12) & 15, h1 & 15, 0, 0, 0 }; rmp1 = (int)(h2 & 15) + 1; rmsh = (int)((h2 >> 4) & 3); }
+        else return NOPE(HW_ENC32);
+    }
+    if (itst && g_noreach) return NOPE(HW_IT);
+    if (itst) {                                           /* inside an IT block: only `it<cc>` + this one instruction (mask 1000b), patched from the `it` */
+        int ih = g_rd16(site - 2), iq = g_rd16(site - 4);
+        if (ih < 0 || iq < 0 || (ih & 0xFF08) != 0xBF08 || (ih & 7) != 0 || (uint32_t)(ih & 0xFF) != itst || iq >= 0xE800 || ((ih >> 4) & 15) >= 14 || target_hits(site, site) || bm_get(g_pcover, site - 2)) return NOPE(HW_IT);
+        itcc = (unsigned)(ih >> 4) & 15; pre = 3; span = len == 2 ? 4 : 6;
+    } else if (len == 2) {
+        nx = g_rd16(site + 2); if (nx < 0) return NOPE(HW_NONEXT);
         int ok = !target_hits(site, site + 2);
         if (ok) {
             if ((nx & 0xE000) == 0x6000 && (nx & 0x1000) == 0) {        /* 0x6000..0x6FFF: str/ldr rt,[rn,#imm5*4] */
                 op[1] = (HOp){ (nx & 0x0800) != 0, nx & 7, (nx >> 3) & 7, (uint32_t)((nx >> 6) & 31) * 4, 0, 0 }; nop = 2; nx = -1;
             } else if ((nx & 0xF800) == 0x4800) {                         /* ldr rt,[pc,#imm8*4]: the pool word is constant, materialise it */
                 uint32_t la = ((site + 2 + 4) & ~3u) + (uint32_t)(nx & 0xFF) * 4;
-                if (la < IMG_BASE || la + 4 > IMG_TOP) return 0;
+                if (la < IMG_BASE || la + 4 > IMG_TOP) return NOPE(HW_POOL);
                 op[1] = (HOp){ 1, (nx >> 8) & 7, 0, 0, 1, *(volatile uint32_t *)(uintptr_t)la }; nop = 2; nx = -1;
+            } else if (!g_noreach && ((nx & 0xFFF0) == 0xF8D0 || (nx & 0xFFF0) == 0xF8C0) && (nx2 = g_rd16(site + 4)) >= 0
+                       && (nx & 15) != 13 && (nx & 15) != 15 && (nx2 >> 12) != 13 && (nx2 >> 12) != 15 && !target_hits(site, site + 4)) {
+                /* ldr.w / str.w rt,[rn,#imm12] next (a bus word after a clock read, ...): a second helper call, no relocation */
+                op[1] = (HOp){ (nx & 0x10) != 0, (nx2 >> 12) & 15, nx & 15, (uint32_t)nx2 & 0xFFF, 0, 0 }; nop = 2; nx = -1; nx2 = -1; span = 6;
             } else if ((nx & 0xF800) >= 0xE800) {                         /* 32-bit next instruction: relocate it too when it is plain data processing */
                 nx2 = g_rd16(site + 4); if (nx2 < 0 || !safe32((uint16_t)nx, (uint16_t)nx2) || target_hits(site, site + 4)) ok = 0; else span = 6;
-            } else if (!is_safe_next16((uint16_t)nx)) ok = 0;
+            } else if (!g_noreach && (nx & 0xF500) == 0xB100) {                         /* CBZ / CBNZ rn: stub ends with CB(N)Z over a B.W to the next instruction, then B.W to the target (forward only) */
+                uint32_t t = site + 2 + 4 + (uint32_t)((((nx >> 9) & 1) << 6) | (((nx >> 3) & 31) << 1));
+                nbr = 15; nbr_t = t; nbr_cb = (uint16_t)(0xB108 | (nx & 0x0800) | (nx & 7)); nx = -1;
+            } else if (!g_noreach && (((nx & 0xF000) == 0xD000 && (nx & 0x0F00) < 0x0E00) || (nx & 0xF800) == 0xE000)) {      /* B<cond>.n / B.n: stub ends with B<!cond>.n over a B.W to the target, then B.W to the next instruction */
+                int cc = (nx & 0xF000) == 0xD000 ? (nx >> 8) & 15 : 14;
+                uint32_t t = site + 2 + 4 + (uint32_t)(cc == 14 ? ((int32_t)((nx & 0x7FF) << 21) >> 20) : (int32_t)(int8_t)(nx & 0xFF) * 2);
+                if (t > site && t < site + 4) ok = 0;                     /* a branch back into the patch (to the pair's second half) */
+                else { nbr = cc; nbr_t = t; nx = -1; }
+            } else if (!safe16((uint16_t)nx)) ok = 0;
         }
-        if (!ok) { static int np = -1; if (np < 0) np = getenv("UM2_NOPREPATCH") != NULL; if (np) return 0; }       /* A/B switch: the constant-load + site variant off */
-        if (!ok) {                                        /* the next halfword cannot go along (it is a loop head, a patched site, ...): take the constant load BEFORE the site instead.
+        if (!ok) { static int np = -1; if (np < 0) np = getenv("UM2_NOPREPATCH") != NULL; if (np) return NOPE(HW_NEXTBAD); }       /* A/B switch: the constant-load + site variant off */
+        if (!ok) {                                        /* the next halfword cannot go along (it is a loop head, a patched site, ...): take the instruction BEFORE the site instead:
+                                                           * a constant load, or a plain ALU halfword (hoisted ahead of the stub body).
                                                            * Only when the halfword before that cannot be the first half of a 32-bit instruction (so site - 2 is an instruction start). */
-            nop = 1; nx = -1; nx2 = -1; span = 4;
+            nop = 1; nx = -1; nx2 = -1; span = 4; nbr = -1;
             int pp = g_rd16(site - 2), pq = g_rd16(site - 4);
-            if (pp < 0 || pq < 0 || (pp & 0xF800) != 0x4800 || pq >= 0xE800 || target_hits(site, site) || bm_get(g_pcover, site - 2)) return 0;
-            uint32_t la = ((site - 2 + 4) & ~3u) + (uint32_t)(pp & 0xFF) * 4;
-            if (la < IMG_BASE || la + 4 > IMG_TOP) return 0;
-            op[1] = op[0]; op[0] = (HOp){ 1, (pp >> 8) & 7, 0, 0, 1, *(volatile uint32_t *)(uintptr_t)la }; nop = 2; pre = 1;
+            if (pp < 0 || pq < 0 || pq >= 0xE800 || target_hits(site, site) || bm_get(g_pcover, site - 2)) return NOPE(HW_NOPRE);
+            if ((pp & 0xF800) == 0x4800) {
+                uint32_t la = ((site - 2 + 4) & ~3u) + (uint32_t)(pp & 0xFF) * 4;
+                if (la < IMG_BASE || la + 4 > IMG_TOP) return NOPE(HW_POOL);
+                op[1] = op[0]; op[0] = (HOp){ 1, (pp >> 8) & 7, 0, 0, 1, *(volatile uint32_t *)(uintptr_t)la }; nop = 2; pre = 1;
+            } else if (!g_noreach && safe16_pre((uint16_t)pp)) {
+                for (int q = 4; q <= 8; q += 2) { int w = g_rd16(site - q); if (w < 0 || (!bm_get(g_pcover, site - q) && (w & 0xFF00) == 0xBF00)) return NOPE(HW_NOPRE); }   /* site - 2 might sit in an IT block (or a 32-bit instruction ends in what looks like one): leave it where it is */
+                preh = (uint16_t)pp; pre = 2;
+            } else return NOPE(HW_NOPRE);
         }
-    } else {
-        if ((h1 & 0xFFF0) == (is_load ? 0xF8D0 : 0xF8C0)) op[0] = (HOp){ is_load, (h2 >> 12) & 15, h1 & 15, h2 & 0xFFF, 0, 0 };
-        else if ((h1 & 0xFFF0) == (is_load ? 0xF850 : 0xF840) && (h2 & 0x0FC0) == 0)       /* ldr/str.w rt,[rn,rm,lsl #0..3] */
-            { op[0] = (HOp){ is_load, (h2 >> 12) & 15, h1 & 15, 0, 0, 0 }; rmp1 = (int)(h2 & 15) + 1; rmsh = (int)((h2 >> 4) & 3); }
-        else return 0;
     }
-    for (int i = 0; i < nop; i++) if (!op[i].cst && (op[i].rn == 13 || op[i].rn == 15 || op[i].rt == 13 || op[i].rt == 15)) return 0;
-    if (rmp1 == 14 || rmp1 == 16) return 0;                                      /* rm = sp / pc */
+    for (int i = 0; i < nop; i++) if (!op[i].cst && (op[i].rn == 13 || op[i].rn == 15 || op[i].rt == 13 || op[i].rt == 15)) return NOPE(HW_REG);
+    if (rmp1 == 14 || rmp1 == 16) return NOPE(HW_REG);                           /* rm = sp / pc */
     uint32_t psite = pre ? site - 2 : site;               /* first patched address */
-    uint16_t k[96]; int n = 0;
+    uint16_t k[104]; int n = 0;
     struct { int at; int which; uint32_t val; } lits[8]; int nl = 0;       /* ldr.w literal fixups: index of the offset halfword */
 #define E(x) k[n++] = (uint16_t)(x)
+    int skip_at = -1;
+    if (pre == 3) { skip_at = n; n += 2; }              /* b<!cc>.w end: the IT's condition is false, nothing happens (flags are still the caller's) */
+    if (pre == 2) E(preh);                              /* the hoisted ALU halfword, on the live registers and flags */
     E(0xE92D); E(0x500F);                               /* push {r0-r3, r12, lr}     */
     E(0xF3EF); E(0x8300);                               /* mrs r3, apsr              */
     E(0xF84D); E(0x3D04);                               /* str r3, [sp, #-4]!        */
@@ -1261,7 +1358,7 @@ static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int 
         if (!o->load) { if (slot_of(o->rt) >= 0) { E(0xF8DD); E(0x1000 | slot_of(o->rt)); } else E(0x4600 | (o->rt << 3) | 1); }   /* r1 = rt */
         E(0xF8DF); lits[nl].at = n; lits[nl].which = 0; lits[nl].val = (uint32_t)(uintptr_t)(g_novfp ? um2_hthunk_lean : um2_hthunk); nl++; E(0xC000);   /* ldr r12, =thunk */
         E(0xF8DF); lits[nl].at = n; lits[nl].which = 0; lits[nl].val = (uint32_t)(uintptr_t)(o->load ? (void *)um2_mload : (void *)um2_mstore); nl++; E(0x3000);   /* ldr r3, =fn */
-        E(0xF8DF); lits[nl].at = n; lits[nl].which = 0; lits[nl].val = psite + 2 * (uint32_t)i; nl++; E(o->load ? 0x1000 : 0x2000);          /* ldr r1|r2, =site */
+        E(0xF8DF); lits[nl].at = n; lits[nl].which = 0; lits[nl].val = site + (pre ? 0u : 2u * (uint32_t)i); nl++; E(o->load ? 0x1000 : 0x2000);          /* ldr r1|r2, =site */
         E(0x47E0);                                      /* blx r12: thunk = save d0-d7/FPSCR, host stack, call r3 */
         if (o->load) { if (slot_of(o->rt) >= 0) { E(0xF8CD); E(slot_of(o->rt)); } else E(0x4600 | (o->rt & 7) | ((o->rt & 8) << 4)); }   /* rt = r0 */
     }
@@ -1270,27 +1367,32 @@ static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int 
     E(0xE8BD); E(0x500F);                               /* pop {r0-r3, r12, lr}      */
     if (nx >= 0) E((uint16_t)nx);                       /* the relocated instruction */
     if (nx2 >= 0) E((uint16_t)nx2);                     /* ... its second halfword */
+    int nb_at = -1;
+    if (nbr >= 0 && nbr < 14) { E(0xD000 | ((unsigned)(nbr ^ 1) << 8) | 1); nb_at = n; n += 2; }   /* b<!cc>.n over the next B.W: falls through to the b.w to the next instruction */
+    else if (nbr == 15) { E(nbr_cb); nb_at = n; n += 2; }                               /* cb(n)z rn, .+6 (taken: over the next B.W) ; b.w fall-through ; b.w target */
     int b_at = n; n += 2;
     if (n & 1) E(0xBF00);
     int lit_base = n; n += 2 * nl;
     uint32_t bytes = (uint32_t)n * 2, base;
-    { int pb = patch_begin(psite, (uint32_t)span, bytes, &base); if (pb <= 0) return (pb < 0 && pb != -2 && !pre) ? 1 : 0; }      /* -1: another core got there first (run the site again); 0 / -2: not now / never */
+    { int pb = patch_begin(psite, (uint32_t)span, bytes, &base); if (pb <= 0) { tl_why = pb == 0 ? HW_BUSY : pb == -2 ? HW_REFUSED : HW_NONE; return (pb < 0 && pb != -2 && !pre) ? 1 : 0; } }      /* -1: another core got there first (run the site again); 0 / -2: not now / never */
     for (int i = 0; i < nl; i++) {
         uint32_t laddr = base + (uint32_t)(lit_base + 2 * i) * 2;
         uint32_t ipc = base + (uint32_t)(lits[i].at - 1) * 2 + 4;
         k[lits[i].at] |= (uint16_t)(laddr - (ipc & ~3u));
         memcpy(k + lit_base + 2 * i, &lits[i].val, 4);
     }
-    uint32_t bw = enc_bw(base + (uint32_t)b_at * 2, psite + (uint32_t)span);
+    uint32_t bw = enc_bw(base + (uint32_t)b_at * 2, (nbr == 14 || nbr == 15) ? nbr_t : psite + (uint32_t)span);
     k[b_at] = (uint16_t)(bw & 0xFFFF); k[b_at + 1] = (uint16_t)(bw >> 16);
+    if (nb_at >= 0) { bw = enc_bw(base + (uint32_t)nb_at * 2, nbr == 15 ? psite + (uint32_t)span : nbr_t); k[nb_at] = (uint16_t)(bw & 0xFFFF); k[nb_at + 1] = (uint16_t)(bw >> 16); }
+    if (skip_at >= 0) { bw = enc_bcc(base + (uint32_t)skip_at * 2, base + (uint32_t)b_at * 2, itcc ^ 1u); k[skip_at] = (uint16_t)(bw & 0xFFFF); k[skip_at + 1] = (uint16_t)(bw >> 16); }
     memcpy((void *)(uintptr_t)base, k, (size_t)bytes);
 #undef E
     __builtin___clear_cache((char *)(uintptr_t)base, (char *)(uintptr_t)(base + bytes));
     patch_end(psite, (uint32_t)span, base);
     g_nhot++;
     { static int dsd = -1; if (dsd < 0) dsd = getenv("UM2_DUMPSTUB") != NULL; if (dsd) { fprintf(stderr, "stubdump %08x:", base); for (int q = 0; q < n; q++) fprintf(stderr, " %04x", k[q]); fputc(10, stderr); } }
-    if (opt.bus_verbose) fprintf(stderr, "hot_patch: %08x %s r%d,[r%d,#%u]%s%s -> stub %08x%c", site, op[0].load ? "ldr" : "str", op[0].rt, op[0].rn, op[0].imm,
-        len == 2 ? "+next16" : ".w", pre ? "+PRE(site-2)" : nop == 2 ? "+op2" : "", base, 10);
+    if (opt.bus_verbose) fprintf(stderr, "hot_patch: %08x %s r%d,[r%d,#%u]%s%s%s -> stub %08x%c", site, op[0].load ? "ldr" : "str", op[0].rt, op[0].rn, op[0].imm,
+        len == 2 ? "+next16" : ".w", pre == 1 ? "+PRE(site-2)" : pre == 2 ? "+PRE(alu)" : pre == 3 ? "+IT" : nop == 2 ? "+op2" : "", nbr >= 0 ? "+branch" : "", base, 10);
     return pre ? 0 : 1;      /* pre: the site is the SECOND halfword of the new b.w, so it is not re-run: this access goes on through the normal emulation and resumes at site + 2 = the end of the patch */
 }
 
@@ -1392,7 +1494,7 @@ static int cpu_trap(int sig, Cpu *c, uint32_t fault_addr, int svc_from_syscall, 
     }
     int h = g_rd16(pc);
     uint16_t h1, h2 = 0; int len;
-    if (opt.bus && (pc & ~7u) == 0xFFFFFFF8u) { exc_return(c); if (g_irq_on) irq_levels(); irq_poll(c); return ACT_CONT; }    /* EXC_RETURN fetched */
+    if (opt.bus && (pc & ~7u) == 0xFFFFFFF8u) { g_excret++; exc_return(c); if (g_irq_on) irq_levels(); irq_poll(c); return ACT_CONT; }    /* EXC_RETURN fetched */
     g_events++; tl_n_trap++; g_lastpc = pc;
     g_ring[g_events & 31][0] = sig; g_ring[g_events & 31][1] = pc; g_ring[g_events & 31][2] = fault_addr;
     if (opt.trace) { printf("trap sig=%d pc=%08x addr=%08x cpsr=%08x r0=%08x r1=%08x\n", sig, pc, fault_addr, c->r[16], c->r[0], c->r[1]); }
@@ -2090,8 +2192,24 @@ static void ld_init(void) {
     pthread_t th; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setstack(&at, g_ld_stack, sizeof g_ld_stack);
     if (pthread_create(&th, &at, ld_thread, NULL)) { perror("loading indicator"); g_ld_done = 1; } else pthread_detach(th);
 }
+
+static int hs_cmp(const void *a, const void *b) { const Hs *x = a, *y = b; return x->n < y->n ? 1 : x->n > y->n ? -1 : 0; }
+static void hs_dump(void) {
+    if (g_hs_on <= 0) return;
+    static Hs l[HSCAP]; int n = 0; uint64_t tot = 0, tot_p = 0;
+    for (int i = 0; i < HSCAP; i++) if (g_hs[i].n) { l[n++] = g_hs[i]; tot += g_hs[i].n; }
+    qsort(l, (size_t)n, sizeof l[0], hs_cmp);
+    unsigned fr = g_marks - g_cen_m0; if (!fr) fr = 1;
+    fprintf(stderr, "SITES: %d sites, %llu memory traps over %u frames (%.1f per frame); exc-return faults %lu (%.1f per frame)\n", n, (unsigned long long)tot, fr, (double)tot / fr, g_excret, (double)g_excret / fr);
+    for (int i = 0; i < n && i < 40; i++) {
+        Hs *s = &l[i]; int pat = is_patched(s->pc) || bm_get(g_pcover, s->pc);
+        if (pat) tot_p += s->n;
+        fprintf(stderr, "SITE %08x %8llu %6.2f/f %s%d %08x..%08x %-14s %s tries %u: %s\n", s->pc, (unsigned long long)s->n, (double)s->n / fr, s->ld ? "ld" : "st", s->size * 8, s->amin, s->amax,
+                blockname(s->amin), pat ? "PATCHED" : "open   ", s->tries, pat ? "(traps before the patch)" : g_why_txt[s->why < HW_NKIND ? s->why : 0]);
+    }
+}
 static void bus_finish(void) {
-    rh_dump();
+    rh_dump(); hs_dump();
     if (!opt.bus) return;
     if (opt.bus_verbose) { print_summary(1); fflush(stdout); }
     fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb); %u branch targets known, %lu patch attempts postponed (an exception returns inside)\n", (unsigned long long)g_events, g_nstubs, g_nv8, g_nbtgt, g_patch_frame);
@@ -2165,7 +2283,8 @@ static uint64_t k_now(void) { gup(); if (g_hold) { if (!g_vnow) g_vnow = gnow();
 static void k_frame(void) {
     g_marks++;
     { static unsigned cr; static int cri = -1; if (cri < 0) { const char *e = getenv("UM2_CENRESET"); cr = e ? (unsigned)atoi(e) : 0; cri = 1; }   /* census window: forget everything before frame cr (diagnostics; patched sites stay patched) */
-      if (cr && g_marks == cr) { memset(g_ev, 0, sizeof g_ev); memset(g_kdistinct, 0, sizeof g_kdistinct); memset(g_irq_cnt, 0, sizeof g_irq_cnt); g_irq_kicks = 0; g_irq_pc[0] = g_irq_pc[1] = g_irq_async[0] = g_irq_async[1] = 0; g_irq_trap = g_irq_chain = 0; g_cen_m0 = g_marks; g_events = 0; fprintf(stderr, "um2run: census reset at frame %u\n", cr); } }
+      if (cr && g_marks == cr) { hs_reset(); g_excret = 0; memset(g_ev, 0, sizeof g_ev); memset(g_kdistinct, 0, sizeof g_kdistinct); memset(g_irq_cnt, 0, sizeof g_irq_cnt); g_irq_kicks = 0; g_irq_pc[0] = g_irq_pc[1] = g_irq_async[0] = g_irq_async[1] = 0; g_irq_trap = g_irq_chain = 0; g_cen_m0 = g_marks; g_events = 0; fprintf(stderr, "um2run: census reset at frame %u\n", cr); } }
+    if (g_hs_on > 0 && !(g_marks % 50)) { static uint64_t pe; static unsigned long px; if (g_events < pe) pe = 0; if (g_excret < px) px = 0; fprintf(stderr, "FRAMES %u: +%llu traps +%lu exc-returns since the last mark (%.1f round trips per frame)\n", g_marks, (unsigned long long)(g_events - pe), g_excret - px, (double)(g_events - pe + g_excret - px) / 50.0); pe = g_events; px = g_excret; }
     gup(); ld_take(); if (g_hold) { hq_flush(); g_vnow = gnow(); } ptx_frame(); g_last_frame_t = now();
     /* Once the game is producing lists, core 1 (the real-time consumer) runs one level above core 0: core 0's native spin-waits then only
      * use the CPU while core 1 sleeps (pacing naps, ring waits) instead of taking half of it.  Not from the start: during boot core 1's

@@ -15,13 +15,14 @@
 #            alarm re-armed from its own ISR (3000 ISRs); every ISR must come, none may be lost
 #   9. frame: a hot site reached from thread mode and from an ISR entered at its site+2: the patch must wait until no exception frame returns inside it (40 calls counted)
 #  10. far:  `b.w` / `beq.w` from 400 and 4000 bytes away into the halfword after a hot site: the site must not be patched over it
-# Work files go to /tmp/um2self.  Expected: ten PASS lines.
+#  11. reach: hot sites that are the only instruction of an IT block, or followed by B<cond>.n / B.n / CBZ / CBNZ / pop {pc} / bx lr / a stack access, or preceded by a hoistable ALU halfword, or paired with a 32-bit str.w; DWT delay loops; the IO_BANK0 pin loop (all results and flags must be right)
+# Work files go to /tmp/um2self.  Expected: eleven PASS lines.
 H=$(cd "$(dirname "$0")" && pwd); T=$H/..; S=$T/../../src; [ -f $S/ptx_core.c ] || S=$T/../src; W=/tmp/um2self; mkdir -p $W; cd $W || exit 1
 BIN=${1:-$T/um2run}
 run() { PTX_STREAM=$W/s.ptxs timeout 60 qemu-arm -cpu cortex-a9 "$@"; }
 mark() { grep -E "^ +[0-9]+ +40001000" "$1" | head -1 | sed 's/.*last=//'; }
 (cd $T && arm-linux-gnueabihf-gcc -O2 -static -pthread -I$S -I$T -DUM2_VFPTEST -o $W/um2run_vt um2run.c um2bus.c um2sd.c um2aud.c $S/ptx_core.c $S/ptx_backend_file.c $S/ptx_backend_mister.c -lm) || { echo "build failed"; exit 1; }
-for g in gen_vfp gen_race gen_v8 gen_pre gen_prim gen_aud gen_vsel gen_alarm gen_frame gen_far; do python3 $H/$g.py >/dev/null 2>&1 || { echo "$g failed"; exit 1; }; done
+for g in gen_vfp gen_race gen_v8 gen_pre gen_prim gen_aud gen_vsel gen_alarm gen_frame gen_far gen_reach; do python3 $H/$g.py >/dev/null 2>&1 || { echo "$g failed"; exit 1; }; done
 run $W/um2run_vt --bus --bus-verbose --no-loading --secs 3 --log 100 $W/vfptest.um2 > vfp.out 2> vfp.err
 [ "$(mark vfp.out)" = c0de0000 ] && grep -q ", 0 of them on the guest stack" vfp.err && echo "vfp:  PASS" || echo "vfp:  FAIL ($(mark vfp.out))"
 ok=0; for i in $(seq 1 30); do
@@ -58,3 +59,6 @@ pp=$(grep -o "[0-9]* patch attempts postponed" frame.err | awk '{print $1}')
 [ "$(mark frame.out)" = c0de0028 ] && echo "frame: PASS (${pp:-0} attempts postponed)" || echo "frame: FAIL ($(mark frame.out), expect c0de0028)"
 run "$BIN" --bus --bus-verbose --no-loading --secs 3 --log 100 $W/far.um2 > far.out 2> far.err
 [ "$(mark far.out)" = c0de0002 ] && echo "far:  PASS" || echo "far:  FAIL ($(mark far.out), expect c0de0002)"
+run "$BIN" --bus --bus-verbose --no-loading --secs 20 --log 100 $W/reach.um2 > reach.out 2> reach.err
+n=$(grep -c "^hot_patch.*\(+IT\|+branch\|PRE(alu)\|+op2\)" reach.err)
+[ "$(mark reach.out)" = c0de0000 ] && [ "$n" -ge 30 ] && echo "reach: PASS ($n IT / branch / hoisted / paired stubs)" || echo "reach: FAIL ($(mark reach.out), $n stubs)"
