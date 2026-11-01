@@ -682,7 +682,22 @@ static void hs_note(uint32_t pc, uint32_t addr, int load, int size, int why, int
 }
 static unsigned long g_excret;    /* EXC_RETURN fetch faults (the second signal of every non-native SVC), not in g_events */
 static unsigned long g_svc_nat[256];    /* SVCs entered natively (svc_patch stubs), by call number */
-static void hs_reset(void) { memset(g_hs, 0, sizeof g_hs); }
+/* UM2_SITES=1 also counts the calls of the hot-patch stubs (no signal, but each is a helper call through um2_hthunk with a VFP save: the cost of a stub site is not zero).
+ * Same table layout as the trap census, keyed by the site; printed as "STUBS" lines by hs_dump. */
+static Hs g_sc[512]; static volatile int g_sc_lk;
+static void sc_note(uint32_t pc, uint32_t addr, int load) {
+    while (__atomic_exchange_n(&g_sc_lk, 1, __ATOMIC_ACQUIRE)) ;
+    uint32_t h = (pc >> 1) * 2654435761u >> 23;
+    for (int i = 0; i < 512; i++) {
+        Hs *s = &g_sc[(h + (uint32_t)i) & 511];
+        if (!s->n) { s->pc = pc; s->amin = s->amax = addr; s->ld = (uint8_t)load; s->size = 4; }
+        if (s->pc != pc) continue;
+        s->n++; if (addr < s->amin) s->amin = addr; if (addr > s->amax) s->amax = addr;
+        break;
+    }
+    __atomic_store_n(&g_sc_lk, 0, __ATOMIC_RELEASE);
+}
+static void hs_reset(void) { memset(g_hs, 0, sizeof g_hs); memset(g_sc, 0, sizeof g_sc); }
 
 static const char *regn(int r) { static const char *n[] = {"r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc"}; return n[r & 15]; }
 
@@ -1184,7 +1199,7 @@ static void vt_probe(void) {
 #else
 #define VT_PROBE() ((void)0)
 #endif
-uint32_t um2_mload(uint32_t addr, uint32_t site) { VT_PROBE(); if (addr < 0x40000000u) return *(volatile uint32_t *)(uintptr_t)addr; return mmio_load(addr, 4, site); }
+uint32_t um2_mload(uint32_t addr, uint32_t site) { VT_PROBE(); if (__builtin_expect(g_hs_on > 0, 0)) sc_note(site, addr, 1); if (addr < 0x40000000u) return *(volatile uint32_t *)(uintptr_t)addr; return mmio_load(addr, 4, site); }
 /* Review finding 2: every direct branch target in the image (B/Bcc/CBZ/CBNZ, B.W/Bcc.W/BL), from one linear sweep at load.  The sweep follows instruction lengths and
  * steps over the literal-pool words the PC-relative loads it has passed refer to (a pool word such as 0x2005E578 otherwise reads as `b.n` back into the code); other data
  * can still put it out of step for a few halfwords, so target_hits() keeps the old local scan of every halfword as well.  TBB/TBH tables are not decoded. */
@@ -1239,7 +1254,7 @@ static int safe32(uint16_t a, uint16_t b) {
     return 0;
 }
 static int slot_of(int r) { return r <= 3 ? 4 + 4 * r : r == 12 ? 20 : r == 14 ? 24 : -1; }
-void um2_mstore(uint32_t addr, uint32_t val, uint32_t site) { VT_PROBE(); if (addr < 0x40000000u) *(volatile uint32_t *)(uintptr_t)addr = val; else mmio_store(addr, 4, val); (void)site; }
+void um2_mstore(uint32_t addr, uint32_t val, uint32_t site) { VT_PROBE(); if (__builtin_expect(g_hs_on > 0, 0)) sc_note(site, addr, 0); if (addr < 0x40000000u) *(volatile uint32_t *)(uintptr_t)addr = val; else mmio_store(addr, 4, val); (void)site; }
 /* Generalised: 32-bit loads/stores of SIO and DMA registers too.  A site is `ldr/str rt,[rn,#imm]` in the 16-bit imm5 form or the 32-bit
  * imm12 form; a 16-bit site takes the following halfword with it, which is relocated into the stub if it is a plain PC-independent ALU
  * instruction, or emulated through the helper as well if it is another 16-bit imm5 ldr/str (the helpers pass non-MMIO addresses straight
@@ -2347,6 +2362,10 @@ static void ld_init(void) {
 static int hs_cmp(const void *a, const void *b) { const Hs *x = a, *y = b; return x->n < y->n ? 1 : x->n > y->n ? -1 : 0; }
 static void hs_dump(void) {
     if (g_hs_on <= 0) return;
+    { static Hs q[512]; int m = 0; uint64_t tt = 0; for (int i = 0; i < 512; i++) if (g_sc[i].n) { q[m++] = g_sc[i]; tt += g_sc[i].n; }
+      qsort(q, (size_t)m, sizeof q[0], hs_cmp); unsigned f2 = g_marks - g_cen_m0; if (!f2) f2 = 1;
+      fprintf(stderr, "STUBS: %d sites, %llu stub calls over %u frames (%.1f per frame)\n", m, (unsigned long long)tt, f2, (double)tt / f2);
+      for (int i = 0; i < m && i < 24; i++) fprintf(stderr, "STUB %08x %8llu %7.2f/f %s %08x..%08x %s\n", q[i].pc, (unsigned long long)q[i].n, (double)q[i].n / f2, q[i].ld ? "ld" : "st", q[i].amin, q[i].amax, blockname(q[i].amin)); }
     static Hs l[HSCAP]; int n = 0; uint64_t tot = 0, tot_p = 0;
     for (int i = 0; i < HSCAP; i++) if (g_hs[i].n) { l[n++] = g_hs[i]; tot += g_hs[i].n; }
     qsort(l, (size_t)n, sizeof l[0], hs_cmp);
