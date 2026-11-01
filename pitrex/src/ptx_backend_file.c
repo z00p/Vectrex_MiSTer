@@ -12,6 +12,8 @@
  *   PTX_BUTTONS_FROM frame from which PTX_BUTTONS applies (default 0)
  *   PTX_PRESS        "frame:mask,frame:mask,..." (PSG port A byte, active low, e.g. "400:0xF7,410:0xFF" = hold button 4 for ten frames): from each frame on the byte is that mask; the
  *                    last pair whose frame has been reached wins, and before the first one PTX_BUTTONS applies (a press AND a release, which PTX_BUTTONS alone cannot do)
+ *   PTX_POTAT        "frame:x1/y1/x2/y2,..." signed pot values from each frame on (the last entry whose frame has been reached wins; before the first one PTX_POT applies), e.g.
+ *                    "1500:0/-100/0/0" = push stick 1 forward from frame 1500: games that want the stick centred at start-up (calibration) can be walked after the title
  */
 #include "ptx.h"
 
@@ -24,6 +26,7 @@ static ptx_input_t fake;
 static uint32_t buttons_from;
 static uint8_t buttons_down;
 static struct { uint32_t from; uint8_t mask; } press[64]; static int npress;     /* PTX_PRESS */
+static struct { uint32_t from; int8_t p[4]; } potat[64]; static int npotat;      /* PTX_POTAT */
 
 static int file_open(void)
 {
@@ -46,6 +49,12 @@ static int file_open(void)
 	while (pr && *pr && npress < 64) {
 		char *q; press[npress].from = (uint32_t)strtoul(pr, &q, 0); if (*q != ':') break;
 		press[npress++].mask = (uint8_t)strtoul(q + 1, &q, 0); pr = *q == ',' ? q + 1 : q;
+	}
+	const char *pa = getenv("PTX_POTAT");
+	while (pa && *pa && npotat < 64) {
+		char *q; potat[npotat].from = (uint32_t)strtoul(pa, &q, 0); if (*q != ':') break;
+		for (int i = 0; i < 4; i++) { potat[npotat].p[i] = (int8_t)strtol(q + 1, &q, 0); if (i < 3 && *q != '/') break; }
+		npotat++; pa = *q == ',' ? q + 1 : q;
 	}
 	return 0;
 }
@@ -74,6 +83,7 @@ static void file_input(ptx_input_t *o)
 	fake.seq = frames;
 	fake.psg_ioa = frames >= buttons_from ? buttons_down : 0xFF;
 	for (int i = 0; i < npress; i++) if (frames >= press[i].from) fake.psg_ioa = press[i].mask;
+	for (int i = 0; i < npotat; i++) if (frames >= potat[i].from) for (int k = 0; k < 4; k++) fake.pot[k] = potat[i].p[k];
 	*o = fake;
 }
 static void file_status(ptx_status_t *o) { o->valid = 0; }
