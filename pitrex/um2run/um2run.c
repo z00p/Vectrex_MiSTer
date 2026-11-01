@@ -598,6 +598,7 @@ static void skip(Cpu *c, int len) { c->r[15] += len; it_advance(&c->r[16]); }
 static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int len, int is_load);
 static uint32_t g_nhot;
 static int g_nospi;      /* UM2_NOSPIPATCH=1: SPI0 stays on the trap path (A/B timing, regression) */
+static int g_nonewblk;   /* UM2_NONEWBLK=1: IO_BANK0, PADS_BANK0 and DWT stay on the trap path (A/B timing, regression) */
 static int g_noreach;    /* UM2_NOREACH=1: the hot-patch reach of 1 Nov 2026 off (IT-block sites, relocated branches, hoisted ALU halfword, 32-bit second op, widened next-instruction set): the 31 Oct behaviour, for A/B counts */
 typedef struct { int ok, load, size, sgn, rt, rt2, rmask, wbreg; uint32_t wbval; } Mi;
 
@@ -701,7 +702,9 @@ static int cpu_fault_mem(int sig, Cpu *c, uint32_t addr, uint16_t h1, uint16_t h
         int why = 0, tried = 0;
         int elig = (addr >= 0xD0000000u && addr < 0xD0000200u && !(addr >= 0xD0000100u)) || (addr >= 0x50000000u && addr < 0x50010000u) || ((addr & 0xFFFFC000u) == 0x40080000u && !g_nospi)
             || (addr >= 0x50200000u && addr < 0x50500000u)     /* PIO0..2: the UVM2 v2 bus engine polls FSTAT and pushes TXF0 word by word */
-            || (addr >= 0x400B0000u && addr < 0x400C0000u);    /* TIMER0/1: alarm ISR, clock polls */
+            || (addr >= 0x400B0000u && addr < 0x400C0000u)     /* TIMER0/1: alarm ISR, clock polls */
+            || (!g_nonewblk && ((addr & 0xFFFF8000u) == 0x40028000u || (addr & 0xFFFF8000u) == 0x40038000u   /* IO_BANK0 / PADS_BANK0: the pad-function loops that switch the bus between PIO and SIO every frame */
+                                || (addr & 0xFFFFF000u) == 0xE0001000u));       /* DWT (CYCCNT): the cycle-count delay loops (audio pulse trains, bus timing) */
                /* SIO, DMA, SPI0 (SD card: ~4 traps per byte otherwise; UM2_NOSPIPATCH=1 = old behaviour) */
         if (opt.bus && (e->n == 6 || (e->n > 6 && e->n < 520 && ((e->n - 6) & 7) == 0)) && m.size == 4 && nreg == 1 && m.wbreg < 0 && elig) {
             tried = 1;
@@ -994,6 +997,7 @@ static void stub_setup(void) {
     g_stub_ready = (m == (void *)STUB_BASE);
     g_novfp = getenv("UM2_NOVFP") != NULL;
     g_nospi = getenv("UM2_NOSPIPATCH") != NULL;
+    g_nonewblk = getenv("UM2_NONEWBLK") != NULL;
     g_noreach = getenv("UM2_NOREACH") != NULL;
     if (!g_stub_ready) perror("um2run: stub area (division stays on the trap path)");
 }
