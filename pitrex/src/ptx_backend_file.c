@@ -10,6 +10,8 @@
  *   PTX_POT          "x1,y1,x2,y2" signed pot values (default 0,0,0,0)
  *   PTX_BUTTONS      PSG port A byte, active low (default 0xFF = nothing pressed)
  *   PTX_BUTTONS_FROM frame from which PTX_BUTTONS applies (default 0)
+ *   PTX_PRESS        "frame:mask,frame:mask,..." (PSG port A byte, active low, e.g. "400:0xF7,410:0xFF" = hold button 4 for ten frames): from each frame on the byte is that mask; the
+ *                    last pair whose frame has been reached wins, and before the first one PTX_BUTTONS applies (a press AND a release, which PTX_BUTTONS alone cannot do)
  */
 #include "ptx.h"
 
@@ -21,6 +23,7 @@ static uint32_t frames, max_frames;
 static ptx_input_t fake;
 static uint32_t buttons_from;
 static uint8_t buttons_down;
+static struct { uint32_t from; uint8_t mask; } press[64]; static int npress;     /* PTX_PRESS */
 
 static int file_open(void)
 {
@@ -39,6 +42,11 @@ static int file_open(void)
 	const char *bf = getenv("PTX_BUTTONS_FROM");   /* frame the buttons go down */
 	buttons_from = bf ? (uint32_t)strtoul(bf, NULL, 0) : 0;
 	buttons_down = fake.psg_ioa;
+	const char *pr = getenv("PTX_PRESS");
+	while (pr && *pr && npress < 64) {
+		char *q; press[npress].from = (uint32_t)strtoul(pr, &q, 0); if (*q != ':') break;
+		press[npress++].mask = (uint8_t)strtoul(q + 1, &q, 0); pr = *q == ',' ? q + 1 : q;
+	}
 	return 0;
 }
 
@@ -65,6 +73,7 @@ static void file_input(ptx_input_t *o)
 {
 	fake.seq = frames;
 	fake.psg_ioa = frames >= buttons_from ? buttons_down : 0xFF;
+	for (int i = 0; i < npress; i++) if (frames >= press[i].from) fake.psg_ioa = press[i].mask;
 	*o = fake;
 }
 static void file_status(ptx_status_t *o) { o->valid = 0; }
