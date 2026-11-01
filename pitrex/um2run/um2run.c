@@ -1524,8 +1524,14 @@ static int svc_patch(const Cpu *c, uint32_t site, unsigned num) {
     static int off = -1; if (off < 0) off = getenv("UM2_NOSVCPATCH") != NULL; if (off) return 0;
     if (!opt.bus || !g_stub_ready || !g_irq_thunk || (c->r[16] & ((0x3Fu << 10) | (3u << 25)))) return 0;
     int nx = g_rd16(site + 2);
-    if (nx < 0 || !safe16((uint16_t)nx) || target_hits(site, site + 2)) return 0;
-    int xfer = (nx & 0xFF87) == 0x4700 || ((nx & 0xFE00) == 0xBC00 && (nx & 0x100));      /* bx rm / pop {.., pc}: the relocated instruction leaves the stub itself */
+    static int nolit = -1; if (nolit < 0) nolit = getenv("UM2_NOSVCLIT") != NULL;       /* UM2_NOSVCLIT=1: a pc-relative second instruction keeps the veneer on the trap path (as before) */
+    int cst = 0; uint32_t cval = 0;                     /* the second instruction is `ldr rt,[pc,#imm]` with the pool word read now (image constants, as the hot-patch pairs do): the stub loads the constant */
+    if (nx >= 0 && !nolit && (nx & 0xF800) == 0x4800 && !target_hits(site, site + 2)) {
+        uint32_t la = ((site + 2 + 4) & ~3u) + (uint32_t)(nx & 0xFF) * 4;
+        if (la < IMG_BASE || la + 4 > IMG_TOP) return 0;
+        cst = 1; cval = *(volatile uint32_t *)(uintptr_t)la;
+    } else if (nx < 0 || !safe16((uint16_t)nx) || target_hits(site, site + 2)) return 0;
+    int xfer = !cst && ((nx & 0xFF87) == 0x4700 || ((nx & 0xFE00) == 0xBC00 && (nx & 0x100)));      /* bx rm / pop {.., pc}: the relocated instruction leaves the stub itself */
     uint16_t k[48]; int n = 0;
     struct { int at; uint32_t val; } lits[6]; int nl = 0;
     int x_lit = -1;
@@ -1547,7 +1553,8 @@ static int svc_patch(const Cpu *c, uint32_t site, unsigned num) {
     LIT(14, (uint32_t)(uintptr_t)um2_irqret);           /* ldr lr, =um2_irqret       */
     E(0x4760);                                          /* bx r12                    */
     E(0xDE00 | (num & 0xFF));                           /* the udf the handler reads at return pc - 2 */
-    int x_at = n; E((uint16_t)nx);                      /* the relocated second instruction: the exception returns here */
+    int x_at = n;                                       /* the relocated second instruction: the exception returns here */
+    if (cst) LIT((nx >> 8) & 7, cval); else E((uint16_t)nx);
     int b_at = -1; if (!xfer) { b_at = n; n += 2; }     /* b.w site + 4 */
     if (n & 1) E(0xBF00);
     int lit_base = n; n += 2 * nl;
