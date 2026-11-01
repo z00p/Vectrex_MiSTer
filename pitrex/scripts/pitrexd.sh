@@ -22,13 +22,30 @@ STALE=${PITREXD_STALE:-2}
 # ... and more than this many seconds older than the current core load (CORENAME)
 CORE_SLACK=${PITREXD_CORE_SLACK:-5}
 
-# Main runs at SCHED_FIFO 48 and keeps the CPU almost fully busy, so a normal-priority daemon
-# sees a file pick seconds late. Run above it, like the programs (the loop sleeps between polls).
-if [ -z "$PITREXD_RT" ]; then PITREXD_RT=1 exec chrt -r 49 "$0" "$@"; fi
+# This daemon runs from boot, in every core, so it has to be cheap when it is not needed (31 Oct: at realtime priority with about 12 forks a
+# second it cost a fork-heavy script about 10%). Waiting for our core it runs at normal priority and looks at CORENAME once a second. With our
+# core loaded it polls fast at realtime priority: Main runs at SCHED_FIFO 48 and the programs above that, and a pick or a core change must still get through.
+# The idle path uses shell builtins only: no fork from one poll to the next. PITREXD_RT set: leave the priority alone (the mock test).
+prio=""
+set_prio() {
+	[ "$prio" = "$1" ] && return 0
+	prio=$1
+	[ -z "$PITREXD_RT" ] || return 0
+	if [ "$1" = fast ]; then chrt -r -p 49 $$ > /dev/null 2>&1; else chrt -o -p 0 $$ > /dev/null 2>&1; fi
+}
+# nap <seconds>: read with a timeout on a pipe nobody writes to is a sleep without a fork
+if mkfifo "$T/pitrexd.pipe.$$" 2>/dev/null && exec 3<> "$T/pitrexd.pipe.$$"; then
+	rm -f "$T/pitrexd.pipe.$$"
+	nap() { read -r -t "$1" -u 3 _; }
+else
+	nap() { sleep "$1"; }
+fi
 
-# Full-resolution times: Main can write FILESELECT twice in one second (28 Oct: a pick was missed with %Y.%Z).
-stamp() { stat -c "%y %z" $T/FILESELECT 2>/dev/null; }
-last=$(stamp)
+# A change of FILESELECT = newer than our marker, which carries the time of the report last looked at (the test compares to the nanosecond:
+# Main can write FILESELECT twice in one second; 28 Oct, a pick was missed with %Y.%Z).
+SEEN=$T/pitrexd.seen
+seen_now() { rm -f "$SEEN"; touch -r "$T/FILESELECT" "$SEEN" 2>/dev/null; }
+seen_now
 last_f=""; last_t=0
 
 core_is_ours() { local c; read -r c 2>/dev/null < $T/CORENAME; case "$c" in Vectrex-PiTrex|VECTREX) return 0 ;; esac; return 1; }
@@ -57,6 +74,14 @@ stop_programs() {
 cfg_get() {
 	[ -f "$1" ] || return 0
 	tr -d '\r' < "$1" | sed -n "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*//p" | tail -1 | sed 's/[[:space:]]*$//'
+}
+
+# show <text>: a pick that cannot start says why on the Vectrex for 20 s ('|' = new line, 4 lines of 20 characters at most; see um2run --message),
+# as well as in the log. Never over a running program; the next pick or a core change stops it like any other program.
+show() {
+	[ -x "$UM2/um2run" ] || return 0
+	[ -z "$(ptx_pids)" ] || return 0
+	PTX_BACKEND=mister nohup chrt -r 49 "$UM2/um2run" --message "$1" > $T/um2msg.log 2>&1 &
 }
 
 # newest Vectrex-PiTrex core in _Unstable (standard MiSTer naming from B8: Vectrex-PiTrex_YYYYMMDD.rbf; older B<n> names as a fallback)
@@ -153,19 +178,23 @@ set_display() {
 #   view=standard|open      EXPERIMENTAL: the core's View Area (standard / open matte)
 # Returns 1 without touching a running program when it refuses (one core, missing files).
 start_um2() {
-	local img=$1 cfg=$1.cfg online fc sd args st c1 opt=""
+	local img=$1 cfg=$1.cfg online fc sd args st c1 n opt=""
 	read -r online < $CPUS
 	if [ "$online" != "0-1" ]; then
 		# BigMig leaves Linux on maxcpus=1 until a normal reboot: um2run would starve Main (OSD, controls)
 		echo "$(date +%T) REFUSED $(basename "$img"): Linux has CPUs '$online' online, um2run needs 0-1 (reboot out of BigMig)" >> $LOG
+		show "LINUX IS ON ONE CPU|REBOOT THE MISTER|THEN PICK AGAIN"
 		return 1
 	fi
 	if [ ! -f "$UM2/um2run" ] || [ ! -f "$UM2/mister_run.sh" ]; then
 		echo "$(date +%T) REFUSED $(basename "$img"): $UM2/um2run or mister_run.sh missing" >> $LOG
+		show "UM2RUN IS MISSING|RUN PITREX UPDATE"
 		return 1
 	fi
 	fc=$(cfg_get "$cfg" frame_cycles)
-	case "$fc" in ""|*[!0-9]*) [ -z "$fc" ] || echo "$(date +%T) $cfg: bad frame_cycles '$fc' ignored" >> $LOG; fc=30000 ;; esac
+	case "$fc" in ""|*[!0-9]*) [ -z "$fc" ] || echo "$(date +%T) $cfg: bad frame_cycles '$fc' ignored" >> $LOG; fc=30000
+		# games that only run right with their own frame length need no sidecar for it
+		n=${img##*/}; case "${n,,}" in *punch*) fc=25000 ;; esac ;; esac
 	sd=$(cfg_get "$cfg" sd)
 	if [ -n "$sd" ]; then
 		case "$sd" in /*) ;; *) if [ -f "${img%/*}/$sd" ]; then sd=${img%/*}/$sd; elif [ -f "$UM2SD_DIR/$sd" ] || [ ! -f "$UM2/$sd" ]; then sd=$UM2SD_DIR/$sd; else sd=$UM2/$sd; fi ;; esac
@@ -190,28 +219,53 @@ start_um2() {
 	echo "$(date +%T) started um2run $(basename "$img") frame_cycles=$fc card=${sd:-none}${args:+ args=$args}" >> $LOG
 }
 
+# Our core started from the cores list runs as VECTREX, not Vectrex-PiTrex: its OSD offers the games, but MiSTer.ini's log_file_entry=1 is only in our
+# section, so picks would do nothing and say nothing (30 Oct). The core name alone cannot tell it from the official core; Main's arguments can:
+# the rbf, and no MGL. Reload it through an MGL once, the way the menu entry starts it. PITREXD_MAINCMD: test hook, a file with Main's arguments.
+plain_ours() {
+	local a
+	if [ -n "$PITREXD_MAINCMD" ]; then a=$(tr '\0' ' ' < "$PITREXD_MAINCMD" 2>/dev/null)
+	else a=$(tr '\0' ' ' < /proc/$(pidof MiSTer)/cmdline 2>/dev/null); fi
+	case "$a" in *.mgl*|*.MGL*) return 1 ;; *Vectrex-PiTrex_*.rbf*|*Vectrex_PiTrex_*.rbf*) return 0 ;; esac
+	return 1
+}
+core_arrived() {
+	local c
+	read -r c 2>/dev/null < $T/CORENAME
+	[ "$c" = VECTREX ] && plain_ours || return 0
+	echo "$(date +%T) our core was started without the menu entry: loading it again as Vectrex-PiTrex" >> $LOG
+	reload_core || echo "$(date +%T) core reload: no Vectrex-PiTrex core in $FAT/_Unstable" >> $LOG
+}
+
 # Supervisor. A program may only write the shared DDR block while our core is the loaded core.
 # The program checks /tmp/CORENAME itself before every publish (src/ptx_backend_mister.c), but
 # a user-space process cannot be revoked instantly: after another core is loaded there is a
-# window (Main reconfigures the FPGA, then updates CORENAME, then we poll every 0.2 s, then
+# window (Main reconfigures the FPGA, then updates CORENAME, then we poll, every 0.2 s with our core loaded, then
 # SIGTERM is delivered) in which it could still write. This kill makes that window as short
 # as the daemon can; the program's own check usually wins. Only the ours -> other transition
 # triggers it, so a launcher that starts a program before it loads the core is left alone.
-was_ours=0; core_is_ours && was_ours=1
+was_ours=0; core_is_ours && { was_ours=1; set_prio fast; core_arrived; }
+core_is_ours || set_prio idle
 
-while sleep 0.2; do
-	if core_is_ours; then was_ours=1; else
+while :; do
+	if core_is_ours; then
+		nap 0.2
+		if [ "$was_ours" != 1 ]; then was_ours=1; set_prio fast; core_arrived; fi
+	else
 		if [ "$was_ours" = 1 ]; then
 			was_ours=0
 			if [ -n "$(ptx_pids)" ]; then
 				stop_programs
 				echo "$(date +%T) core changed away from Vectrex-PiTrex: stopped PiTrex program(s)" >> $LOG
 			fi
+			set_prio idle
 		fi
+		# Nothing to do here but wait. A report written meanwhile (a menu entry loads the core and its file together) is handled once the core is seen.
+		nap 1
+		continue
 	fi
-	now=$(stamp)
-	[ "$now" = "$last" ] && continue
-	last=$now
+	[ "$T/FILESELECT" -nt "$SEEN" ] || continue
+	seen_now
 	[ "$(cat $T/FILESELECT 2>/dev/null)" = "selected" ] || continue
 	core_is_ours || continue
 	# Stale reports. After Main restarts or loads a core it writes FILESELECT="selected" again with the OLD FULLPATH /
@@ -235,7 +289,11 @@ while sleep 0.2; do
 	case "$f" in /*) ;; *) f=$FAT/$f ;; esac
 	if [ -d "$f" ]; then f=$f/$(cat $T/CURRENTPATH 2>/dev/null); fi
 	case "${f,,}" in *.ptx) kind=ptx ;; *.um2) kind=um2 ;; *) continue ;; esac
-	[ -f "$f" ] || continue
+	if [ ! -f "$f" ]; then
+		echo "$(date +%T) REFUSED $f: no such file" >> $LOG
+		show "GAME FILE NOT FOUND"
+		continue
+	fi
 	# Main can report one MGL file load twice: leave a program just started from the same file alone
 	if [ "$f" = "$last_f" ] && [ $(( $(date +%s) - last_t )) -lt 10 ] && [ -n "$(ptx_pids)" ]; then continue; fi
 	last_f=$f; last_t=$(date +%s)
@@ -244,15 +302,20 @@ while sleep 0.2; do
 		start_um2 "$f"
 		# The core was reloaded for orient/view: let the supervisor see the new core as the first one (the game was started after
 		# the reload, so the "core changed" kill must not fire for it), and drop what Main wrote to FILESELECT meanwhile.
-		if [ "$reloaded" = 1 ]; then was_ours=0; last=$(stamp); last_f=$f; last_t=$(date +%s); fi
+		if [ "$reloaded" = 1 ]; then was_ours=0; seen_now; last_f=$f; last_t=$(date +%s); fi
 		continue
 	fi
 
 	# one program at a time: stop what is running (launcher or OSD started)
 	stop_programs
 	name=$(basename "$f"); name=${name%.*}; name=${name// /_}
-	mkdir -p "$RUN" && cp "$f" "$RUN/$name" && chmod +x "$RUN/$name" || continue
+	if ! { mkdir -p "$RUN" && cp "$f" "$RUN/$name" && chmod +x "$RUN/$name"; }; then
+		echo "$(date +%T) REFUSED $f: cannot copy it to $RUN" >> $LOG
+		show "CANNOT START PROGRAM"
+		continue
+	fi
 	cd "$PITREX" 2>/dev/null || cd $T
+	[ -f $T/pitrex.log ] && mv -f $T/pitrex.log $T/pitrex.prev.log
 	PTX_BACKEND=mister nohup chrt -r 49 "$RUN/$name" > $T/pitrex.log 2>&1 &
 	echo "$(date +%T) started $name from $f" >> $LOG
 done

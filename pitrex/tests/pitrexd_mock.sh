@@ -4,6 +4,8 @@
 # pitrexd runs against a scratch directory (the PITREXD_* test hooks), with a fake Main that writes /tmp/FILESELECT & co,
 # a fake core loader and a fake mister_run.sh that only records how it was called.
 #   tests/pitrexd_mock.sh        expected: every line PASS, exit status 0 (takes about 90 s)
+# Also: a pick that cannot start says so on the Vectrex; our core started without the menu entry is loaded again as Vectrex-PiTrex (the official core is not); Punch-Out needs no sidecar;
+# no forks from one poll to the next.
 # Covers: a fresh .um2 pick starts; a stale "selected" report (Main restart / core load) is ignored; orient= / view= in the
 # sidecar change only Vectrex-PiTrex_v1.CFG (right bits, other bytes kept) and reload the core before um2run starts; the same
 # setting twice reloads once; a core running as VECTREX is left alone; the game started after the reload is not killed by the
@@ -17,12 +19,12 @@ pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; fails=$((fails+1)); }
 check() { if eval "$2"; then pass "$1"; else fail "$1   [$2]"; fi; }
 
-export PITREXD_RT=1 PITREXD_FAT=$W/fat PITREXD_TMP=$W/tmp PITREXD_CMD=$W/cmd PITREXD_CPUS=$W/cpus
+export PITREXD_RT=1 PITREXD_FAT=$W/fat PITREXD_TMP=$W/tmp PITREXD_CMD=$W/cmd PITREXD_CPUS=$W/cpus PITREXD_MAINCMD=$W/maincmd
 FAT=$PITREXD_FAT; T=$PITREXD_TMP
 mkdir -p "$FAT/pitrex/um2run" "$FAT/pitrex/uvmc2" "$FAT/config" "$FAT/_Unstable" "$FAT/games/Vectrex-PiTrex/UVMC2" "$T" "$W/bin"
 echo 0-1 > "$W/cpus"; : > "$W/cmd"
 echo Vectrex-PiTrex > "$T/CORENAME"
-touch "$FAT/pitrex/um2run/um2run" "$FAT/_Unstable/Vectrex-PiTrex_20261027.rbf" "$FAT/_Unstable/Vectrex-PiTrex_20261029.rbf"
+touch "$FAT/_Unstable/Vectrex-PiTrex_20261027.rbf" "$FAT/_Unstable/Vectrex-PiTrex_20261029.rbf"
 UD=$FAT/games/Vectrex-PiTrex/UVMC2
 
 # fake mister_run.sh: record the call, start a "game" (a sleep) and remember its pid
@@ -32,6 +34,12 @@ echo "run \$* settle=\$SETTLE c1=\$CPU1_AFTER core=\$(cat $T/CORENAME)" >> $W/ru
 sleep 600 &
 echo \$! > $W/game.pid
 EOF
+# fake um2run: only --message gets here (pitrexd's on-screen errors); records the text
+cat > "$FAT/pitrex/um2run/um2run" <<EOF
+#!/bin/sh
+echo "\$2" >> $W/msgs.log
+EOF
+chmod +x "$FAT/pitrex/um2run/um2run"
 # fake ps: lists the game the way MiSTer's ps shows um2run
 cat > "$W/bin/ps" <<EOF
 #!/bin/sh
@@ -123,6 +131,56 @@ printf '\x11\x22\x23\xe5\x13\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' > "$FA
 sleep 11; n=$(runs); : > "$W/cmds.log"
 pick games/Vectrex-PiTrex/UVMC2 Port.um2
 check "orient=0 reloads and clears only bits 5:4 of byte 2 (0x23 -> 0x03; view untouched)" 'waitfor "[ \$(runs) -gt $n ]" 12 && [ "$(bytes)" = "112203e5130000000000000000000000" ] && grep -q load_core "$W/cmds.log"'
+
+echo "== 7b. Punch-Out without a sidecar, a sidecar that says otherwise"
+touch "$UD/Punchout.um2" "$UD/PUNCH2.um2"; echo "frame_cycles=30000" > "$UD/PUNCH2.um2.cfg"
+sleep 11; n=$(runs)
+pick games/Vectrex-PiTrex/UVMC2 Punchout.um2
+check "Punch-Out gets 25000 with no sidecar" 'waitfor "[ \$(runs) -gt $n ]" 6 && tail -1 "$W/runs.log" | grep -q -- "--frame-cycles 25000"'
+sleep 11; n=$(runs)
+pick games/Vectrex-PiTrex/UVMC2 PUNCH2.um2
+check "a sidecar wins" 'waitfor "[ \$(runs) -gt $n ]" 6 && tail -1 "$W/runs.log" | grep -q -- "--frame-cycles 30000"'
+
+echo "== 7c. picks that cannot start say why on screen"
+kill "$(cat "$W/game.pid")" 2>/dev/null; sleep 11; n=$(runs)
+echo 0 > "$W/cpus"
+pick games/Vectrex-PiTrex/UVMC2 Plain.um2
+check "one CPU: refused, logged, message" 'waitfor "grep -q \"ONE CPU\" $W/msgs.log" 6 && [ $(runs) -eq $n ] && grep -q REFUSED "$T/pitrexd.log"'
+echo 0-1 > "$W/cpus"
+sleep 11
+pick games/Vectrex-PiTrex/UVMC2 Missing.um2
+check "file gone: logged, message" 'waitfor "grep -q \"NOT FOUND\" $W/msgs.log" 6 && [ $(runs) -eq $n ]'
+sleep 1; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain.um2
+waitfor "[ \$(runs) -gt $n ]" 6
+sleep 11; m=$(wc -l < "$W/msgs.log"); echo 0 > "$W/cpus"
+pick games/Vectrex-PiTrex/UVMC2 Port.um2; sleep 2
+check "no message over a running game" '[ $(wc -l < "$W/msgs.log") -eq $m ] && gamealive'
+echo 0-1 > "$W/cpus"
+
+echo "== 7d. no forks between polls, with our core and with another"
+fork_rate() { local a b; a=$(awk '/^processes/ {print $2}' /proc/stat); sleep 3; b=$(awk '/^processes/ {print $2}' /proc/stat); echo $(( b - a )); }
+quiet_forks() { local before after; before=$(cat /proc/$DPID/stat | awk '{print $10, $12}'); sleep 3; after=$(cat /proc/$DPID/stat | awk '{print $10, $12}'); [ "$before" = "$after" ]; }
+check "our core: the daemon itself reaps no children in 3 s of polling" 'quiet_forks'
+echo -n MENU > "$T/CORENAME"; sleep 2
+check "another core: same" 'quiet_forks'
+echo -n Vectrex-PiTrex > "$T/CORENAME"; sleep 2
+
+echo "== 7e. our core started from the cores list runs as VECTREX: loaded again once, the official core is left alone"
+kill "$(cat "$W/game.pid")" 2>/dev/null; sleep 1
+: > "$W/cmds.log"
+echo -n MENU > "$T/CORENAME"; sleep 2
+printf '/media/fat/MiSTer\0/media/fat/_Console/Vectrex_20261018.rbf\0' > "$W/maincmd"
+echo -n VECTREX > "$T/CORENAME"; sleep 2
+check "official core: no reload" '[ ! -s "$W/cmds.log" ]'
+echo -n MENU > "$T/CORENAME"; sleep 2
+printf '/media/fat/MiSTer\0/media/fat/_Unstable/Vectrex-PiTrex_20261029.rbf\0/media/fat/_PiTrex/x.mgl\0' > "$W/maincmd"
+echo -n VECTREX > "$T/CORENAME"; sleep 2
+check "our rbf through an MGL: no reload" '[ ! -s "$W/cmds.log" ]'
+echo -n MENU > "$T/CORENAME"; sleep 2
+printf '/media/fat/MiSTer\0/media/fat/_Unstable/Vectrex-PiTrex_20261029.rbf\0' > "$W/maincmd"
+echo -n VECTREX > "$T/CORENAME"
+check "our rbf with no MGL: reloaded once and comes up as Vectrex-PiTrex" 'waitfor "grep -q load_core $W/cmds.log" 6 && waitfor "[ \"\$(cat $T/CORENAME)\" = Vectrex-PiTrex ]" 6 && sleep 2 && [ $(grep -c load_core "$W/cmds.log") -eq 1 ] && grep -q "without the menu entry" "$T/pitrexd.log"'
+rm -f "$W/maincmd"
 
 echo "== 8. core runs as VECTREX: skip, never touch VECTREX_v1.CFG"
 echo VECTREX > "$T/CORENAME"
