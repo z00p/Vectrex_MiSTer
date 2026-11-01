@@ -19,8 +19,8 @@ images are included**: bring your own (and your own MAME ROM sets for the games 
   run once.
 - **Both ARM CPUs online.** `cat /sys/devices/system/cpu/online` over SSH must say `0-1`. After
   using the BigMig core the MiSTer needs a normal reboot first; until then `pitrexd` refuses to
-  start a game (it writes `REFUSED ... CPUs` to `/tmp/pitrexd.log`), because the game would starve
-  the MiSTer's own program (menu, controllers).
+  start a game and says so on the Vectrex (and writes `REFUSED ... CPUs` to `/tmp/pitrexd.log`),
+  because the game would starve the MiSTer's own program (menu, controllers).
 - Your `.um2` images, and for some of them the files from your UVMC2 SD card. Start with
   [ADDING_GAMES.md](ADDING_GAMES.md): it has the steps and says which games need a card.
 
@@ -55,13 +55,13 @@ Nothing in it is ever executed. Unknown keys are ignored; bad values are ignored
 
 | Key | Meaning | Default |
 |---|---|---|
-| `frame_cycles=25000` | Length of one stream frame in Vectrex E cycles. 30000 is 50 Hz, 25000 is 60 Hz. Punch-Out wants 25000. | 30000 |
+| `frame_cycles=25000` | Length of one stream frame in Vectrex E cycles. 30000 is 50 Hz, 25000 is 60 Hz. Images with "punch" in the name get 25000 without a sidecar. | 30000 (Punch-Out 25000) |
 | `sd=name.img` | Card image the cartridge sees. A name without a folder is looked up next to the `.um2`, then in `/media/fat/pitrex/uvmc2/`, then in `/media/fat/pitrex/um2run/`. No spaces in the path. BattleZone **writes** to its card: give it its own copy. | `pitrex/uvmc2/sd.img` if it exists, else no card |
 | `args=--secs 600` | Extra `um2run` arguments, appended last (see um2run/README.md). | none |
 | `settle=8` | Seconds to wait before starting (lets the MiSTer finish setting the video mode). | 8 after a core load, 1 if the core has been up 15 s |
 | `cpu1_after=10` | Seconds the game's second core stays on CPU0 before moving to CPU1. | 10 after a core load, 2 if the core has been up 15 s |
 | `orient=0` / `ccw` / `cw` | **Experimental.** Set the core's Orientation (normal / rotated 90 degrees counter-clockwise / clockwise) for this game and reload the core if the saved setting differs. | leave as it is |
-| `view=standard` / `open` | **Experimental.** Set the core's View Area (standard / open matte). | leave as it is |
+| `view=standard` / `open` | **Experimental.** Set the core's View Area (standard / open matte). Open matte is the default for this core: PiTrex_Setup or PiTrex_Update sets it once, and your OSD choice stands after that. | leave as it is |
 
 Examples:
 ```
@@ -215,9 +215,11 @@ their `.bak` backups, sidecars, and anything of yours in `pitrex/um2run/`.
 | The game says ROMS NOT FOUND or MISSING | See [ADDING_GAMES.md](ADDING_GAMES.md#which-games-need-a-card): which files, which folder, then build the card again. If the game's sidecar has an `sd=` line, it uses that card, not `sd.img`. |
 | Black screen for a long time | Wait for the LOADING screen to finish. If the screen stays black or the MiSTer's menu stops responding: Scripts > PiTrex_Stop, or SSH `killall um2run`. |
 | Static at the start | Expected for the first second or two. Up to about 10 seconds when the pick had to switch View Area (the core reloads first, see `/tmp/pitrexd.log`); the next pick starts clean. |
-| The picture is cropped at the sides | Landscape game on a portrait screen. OSD > View Area = Open Matte shows it all, or put `view=open` in the sidecar. |
+| The picture is cropped at the sides | Landscape game on a portrait screen. OSD > View Area = Open Matte shows it all (the default, unless you changed it), or put `view=open` in the sidecar. |
+| A message on the Vectrex instead of the game | LINUX IS ON ONE CPU: reboot the MiSTer. UM2RUN IS MISSING: run Scripts > PiTrex_Update. GAME FILE NOT FOUND: the file went away between the pick and the start. GAME STOPPED: the game ended by itself; `/tmp/um2.log` has why and `/tmp/pitrexd.log` the exit status. |
+| The game froze | Check the core's Pause button first (a mapped controller button, or Pause when OSD open): a paused core stops taking the picture and the game waits for it. `/tmp/um2.log` then says `core not fetching`, and `core fetching again` when it carries on. |
 | An old overlay is on top of the game | OSD > Video Overlay & Geometry > Overlay = Off. |
-| The OSD browser opens `games/Vectrex` | The core was loaded by hand from `_Unstable`, so picks will not start. Load it from PiTrex & UVMC2 > UVMC2 Games. |
+| The OSD browser opens `games/Vectrex` | The core was loaded by hand from `_Unstable`. It reloads itself as Vectrex-PiTrex a moment later; if not, load it from PiTrex & UVMC2 > UVMC2 Games. |
 | A game started again by itself after a restart | Fixed in this release (stale file reports are ignored). |
 | A controller button does something different from the normal Vectrex core (e.g. View) | The menu entries load the core as "Vectrex-PiTrex", and the MiSTer keeps controller mappings per core name, so it has its own mapping, separate from VECTREX's. Set it up once in the OSD (Define joystick buttons) while the core runs from the PiTrex & UVMC2 menu. |
-| Log of the last game | `/tmp/um2.log` (the game), `/tmp/pitrexd.log` (picks and settings). |
+| Log of the last game | `/tmp/um2.log` (the game), `/tmp/um2.prev.log` (the game before it), `/tmp/pitrexd.log` (picks and settings). |

@@ -44,6 +44,19 @@ def setbit(path, on):
         open(path, "wb").write(b)
 setbit("/media/fat/config/Vectrex-PiTrex_v1.CFG", True)
 setbit("/media/fat/config/VECTREX_v1.CFG", False)
+# Open Matte is our core's default: View Area = status[31] = byte 3 bit 7, in our own settings file only. Once: a later choice in the OSD stands.
+import os
+MARK = "/media/fat/pitrex/.open_matte_default"
+if not os.path.exists(MARK):
+    path = "/media/fat/config/Vectrex-PiTrex_v1.CFG"
+    try:
+        b = bytearray(open(path, "rb").read())
+        b += bytes(max(0, 16 - len(b)))
+        b[3] |= 0x80
+        open(path, "wb").write(b)
+        open(MARK, "w").close()
+    except OSError as e:
+        print("Open Matte default not set:", e)
 PYEOF
 # games start from this folder now: remove the per-game Scripts entries B6 and older installed
 rm -f $FAT/Scripts/PiTrex_Cube_demo.sh $FAT/Scripts/PiTrex_Gyrocks.sh $FAT/Scripts/PiTrex_Selftest.sh \

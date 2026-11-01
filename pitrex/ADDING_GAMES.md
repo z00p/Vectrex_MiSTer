@@ -19,8 +19,8 @@ cartridge images (`.um2` files) go, and how to give the games the files they rea
   the card is untested, it has a partition table, and images of 2 GiB or more do not work yet.
 - **Why do some games need settings files?** A settings file, `Game.um2.cfg` next to `Game.um2`,
   changes how one game runs. BattleZone gets its own card, and its settings file is written for
-  you automatically. Punch-Out needs `frame_cycles=25000` for its speed. `view=open` shows all of
-  the picture in Star Wars and BattleZone. Most other games need none.
+  you automatically. Most other games need none: Punch-Out gets its speed by itself, and Open
+  Matte, which shows all of the picture in Star Wars and BattleZone, is on by default.
 
 ## Steps
 1. Install the release and run **Scripts > PiTrex_Setup** once (see [README.md](README.md#install)).
@@ -35,11 +35,12 @@ cartridge images (`.um2` files) go, and how to give the games the files they rea
      `.uf2` firmware, `ASSETS` folders (menu pictures) and macOS files (`__MACOSX`, `._*`,
      `.DS_Store`) are left out.
 4. Main menu > **PiTrex & UVMC2** > **UVMC2 Games**, then OSD > **Load UVMC2 / PiTrex** and pick
-   the `.um2`. Always start from that menu entry: if you load the core any other way, Mine Storm
-   stays on screen and picking a game does nothing.
+   the `.um2`. Start from that menu entry. If you load the core from the cores list instead, it
+   reloads itself as the menu entry would.
 
 **Or** put your `.um2` files straight in `/media/fat/games/Vectrex-PiTrex/UVMC2/` (subfolders are
-fine). A game that needs no card (Veccy Road, the demos) then plays at once. If you only have ROM
+fine). A game that needs no card (Veccy Road, the demos) then plays at once. With nothing to put
+on a card, PiTrex_Setup makes a blank `sd.img`, so games can still save. If you only have ROM
 zips, put them in `pitrex/uvmc2/card/roms/` and run PiTrex_Setup.
 
 You can copy the files with the MiSTer's SD card in your PC, or over the network. The games stay
@@ -82,8 +83,8 @@ These are the games tested on the MiSTer (see [UVMC2_GAMES.md](UVMC2_GAMES.md#te
 
 - **Star Wars** takes each ROM from whichever zip has it, so the names of the files inside do not
   matter. Without `starwar1.zip` it stops on its title screen with the words ROMS NO.
-- **Punch-Out** also wants a settings file next to its image, `Punchout.um2.cfg`, with the line
-  `frame_cycles=25000` (see [Sidecar settings](UVMC2_GAMES.md#sidecar-settings)).
+- **Punch-Out** runs at 60 Hz, `frame_cycles=25000`. Any image with "punch" in its name gets that
+  without a settings file (see [Sidecar settings](UVMC2_GAMES.md#sidecar-settings)).
 - **BattleZone** writes to its card, so it gets its own copy. When a BattleZone image (a name
   like `BattleZone_0_3a.um2`) is in the UVMC2 folder, the card builder also makes `bz_sd.img`,
   with the same files and BattleZone's own saves. If the image has no settings file yet, it
