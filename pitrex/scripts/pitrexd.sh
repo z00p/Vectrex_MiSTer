@@ -225,7 +225,7 @@ start_um2() {
 plain_ours() {
 	local a
 	if [ -n "$PITREXD_MAINCMD" ]; then a=$(tr '\0' ' ' < "$PITREXD_MAINCMD" 2>/dev/null)
-	else a=$(tr '\0' ' ' < /proc/$(pidof MiSTer)/cmdline 2>/dev/null); fi
+	else a=$(tr '\0' ' ' < /proc/$(pidof -s MiSTer)/cmdline 2>/dev/null); fi     # -s: there can be several just after a load
 	case "$a" in *.mgl*|*.MGL*) return 1 ;; *Vectrex-PiTrex_*.rbf*|*Vectrex_PiTrex_*.rbf*) return 0 ;; esac
 	return 1
 }
