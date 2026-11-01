@@ -28,6 +28,7 @@ GAMES=$FAT/games/Vectrex-PiTrex/UVMC2
 UM2=$FAT/pitrex/um2run
 # um2run opens the card with plain fopen (no large-file support yet), so it cannot use a card of 2 GiB or more.
 MAX_MIB=2000
+BLANK_MIB=64
 LABEL=UVM2SD
 
 say() { echo "make_card: $*"; }
@@ -373,9 +374,27 @@ resolve() {
 	else echo "$UM2/$1"; fi
 }
 
+# Nothing for a card and no card yet: a blank one, so that games can keep scores and settings. It takes no mounting. The empty .list makes
+# the next build with files in the card folder replace it, keeping what games saved on it.
+blank_card() {
+	local free
+	[ -f "$OUT" ] && return 0
+	command -v python3 > /dev/null && command -v mkfs.vfat > /dev/null || return 0
+	mkdir -p "$UV" 2>/dev/null
+	free=$(py free "$UV") || return 0
+	if [ "$free" -lt $(( BLANK_MIB + 4 )) ]; then say "no room for a blank card in $UV: games play, but cannot save."; return 0; fi
+	TMPFILES="$OUT.new"
+	py mkimg "$OUT.new" "$BLANK_MIB" && mkfs.vfat -F 32 -s 1 -n "$LABEL" "$OUT.new" > /dev/null 2>&1 || { say "could not make a blank card: games play, but cannot save."; return 0; }
+	mv "$OUT.new" "$OUT"
+	TMPFILES=""
+	: > "$OUT.list"
+	say "made a blank card, $OUT, so that games can save. Games that need ROMs want a real one: see ADDING_GAMES.md."
+}
+
 # ---------------------------------------------------------------------------------------------
 # 1. What is in the card folder
 if [ ! -d "$CARD" ] || [ -z "$(ls -A "$CARD" 2>/dev/null)" ]; then
+	blank_card
 	[ "$IF_NEEDED" = 1 ] && exit 0
 	say "the card folder $CARD is empty or missing, so there is nothing to put on a card."
 	say "Copy the files from your UVMC2 SD card (or just your ROM zips, in a roms folder) into it, then run this again."
@@ -410,11 +429,13 @@ NFILES=$1; DATA=$(echo "$2" | tr _ ' '); MIB=$3; shift 3; SKIPS="$*"
 if [ "$NFILES" = 0 ]; then
 	if [ "$NUM2" -gt 0 ]; then
 		# only games: they are in the games folder now, and there is nothing to make a card from
+		blank_card
 		[ "$IF_NEEDED" = 1 ] && [ "$NCOPIED" = 0 ] && exit 0
-		say "the card folder has only .um2 games, which go in the games folder, so no card was made."
+		say "the card folder has only .um2 games, which go in the games folder, so there was nothing to build a card from."
 		say "Games that need ROMs or other files from the card: copy the rest of your UVMC2 SD card into $CARD too, then run this again."
 		exit 0
 	fi
+	blank_card
 	[ "$IF_NEEDED" = 1 ] && exit 0
 	say "nothing to put on a card in $CARD (skipped: $SKIPS)."
 	say "Copy the files from your UVMC2 SD card (or just your ROM zips, in a roms folder) into it, then run this again."
