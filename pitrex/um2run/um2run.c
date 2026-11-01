@@ -600,6 +600,7 @@ static uint32_t g_nhot;
 static int g_nospi;      /* UM2_NOSPIPATCH=1: SPI0 stays on the trap path (A/B timing, regression) */
 static int g_nonewblk;   /* UM2_NONEWBLK=1: IO_BANK0, PADS_BANK0 and DWT stay on the trap path (A/B timing, regression) */
 static int g_noreach;    /* UM2_NOREACH=1: the hot-patch reach of 1 Nov 2026 off (IT-block sites, relocated branches, hoisted ALU halfword, 32-bit second op, widened next-instruction set): the 31 Oct behaviour, for A/B counts */
+static int g_novrint;    /* UM2_NOVRINT=1: VRINTA/N/P/M.F32 are skipped as before (A/B) */
 typedef struct { int ok, load, size, sgn, rt, rt2, rmask, wbreg; uint32_t wbval; } Mi;
 
 static int popc(unsigned x) { return __builtin_popcount(x); }
@@ -1003,6 +1004,7 @@ static void stub_setup(void) {
     g_nospi = getenv("UM2_NOSPIPATCH") != NULL;
     g_nonewblk = getenv("UM2_NONEWBLK") != NULL;
     g_noreach = getenv("UM2_NOREACH") != NULL;
+    g_novrint = getenv("UM2_NOVRINT") != NULL;
     if (!g_stub_ready) perror("um2run: stub area (division stays on the trap path)");
 }
 static uint32_t enc_bw(uint32_t from, uint32_t to) {      /* Thumb-2 B.W T4: returns h1 | h2 << 16 */
@@ -1553,6 +1555,66 @@ static int svc_patch(const Cpu *c, uint32_t site, unsigned num) {
     if (opt.bus_verbose) fprintf(stderr, "svc_patch: %08x svc #%u + %04x -> stub %08x%c", site, num, nx, base, 10);
     return 1;
 }
+/* VRINTA/VRINTN/VRINTP/VRINTM.F32 (ARMv8 FP: round to an integral value; UNDEFINED on the A9).  VecDoom's renderer executes ~270 of them a frame (floor / ceil of screen
+ * coordinates, 20 sites): each was a ~50 us trap AND was skipped, so the destination register kept its old value (wrong geometry, not only slow).  The first trap now
+ * emulates the instruction on the saved VFP state of the signal frame, and the site becomes `b.w stub`: vmov r0, sm ; um2_vrint(r0, mode) through the VFP-safe thunk ;
+ * vmov sd, r0.  rm: 0 = A (to nearest, ties away), 1 = N (ties to even), 2 = P (+inf, ceil), 3 = M (-inf, floor).  Exact in float arithmetic: |x| < 2^23 only has a
+ * fraction, anything larger (and inf / nan) is returned unchanged.  UM2_NOVRINT=1: the old skip (A/B). */
+uint32_t um2_vrint(uint32_t bits, uint32_t rm) {
+    float x, t, r; memcpy(&x, &bits, 4);
+    if (!(__builtin_fabsf(x) < 8388608.0f) || x == 0.0f) return bits;             /* big, inf, nan, +-0 */
+    t = (float)(int32_t)x;                                                         /* trunc */
+    switch (rm & 3) {
+    case 2: r = (t < x) ? t + 1.0f : t; break;                                     /* ceil */
+    case 3: r = (t > x) ? t - 1.0f : t; break;                                     /* floor */
+    default: {
+        float d = __builtin_fabsf(x - t), away = x < 0 ? -1.0f : 1.0f;              /* distance to the truncated value */
+        if (d > 0.5f) r = t + away; else if (d < 0.5f) r = t;
+        else r = (rm & 3) == 0 ? t + away : (((int32_t)t & 1) ? t + away : t);      /* tie: away from zero (A) / to even (N) */
+    } }
+    if (r == 0.0f) r = __builtin_copysignf(0.0f, x);                               /* -0.3 -> -0.0, as the instruction gives */
+    uint32_t o; memcpy(&o, &r, 4); return o;
+}
+static uint32_t g_nvrint;
+static int vrint_patch(const Cpu *c, uint32_t site, unsigned rm, unsigned sd, unsigned sm) {
+    static int off = -1; if (off < 0) off = getenv("UM2_NOVRINTPATCH") != NULL;
+    if (off || !opt.bus || !g_stub_ready || (c->r[16] & ((0x3Fu << 10) | (3u << 25)))) return 0;
+    uint16_t k[40]; int n = 0;
+    struct { int at; uint32_t val; } lits[2]; int nl = 0;
+#define E(x) k[n++] = (uint16_t)(x)
+    E(0xE92D); E(0x500F);                               /* push {r0-r3, r12, lr}     */
+    E(0xF3EF); E(0x8300);                               /* mrs r3, apsr              */
+    E(0xF84D); E(0x3D04);                               /* str r3, [sp, #-4]!        */
+    E(0xEE10 | (sm >> 1)); E(0x0A10 | ((sm & 1) << 7)); /* vmov r0, sm               */
+    E(0xF240); E(0x0100 | (rm & 3));                    /* movw r1, #rm              */
+    E(0xF8DF); lits[nl].at = n; lits[nl].val = (uint32_t)(uintptr_t)(g_novfp ? um2_hthunk_lean : um2_hthunk); nl++; E(0xC000);   /* ldr r12, =thunk */
+    E(0xF8DF); lits[nl].at = n; lits[nl].val = (uint32_t)(uintptr_t)um2_vrint; nl++; E(0x3000);                                   /* ldr r3, =um2_vrint */
+    E(0x47E0);                                          /* blx r12                   */
+    E(0xEE00 | (sd >> 1)); E(0x0A10 | ((sd & 1) << 7)); /* vmov sd, r0               */
+    E(0xF85D); E(0x3B04);                               /* ldr r3, [sp], #4          */
+    E(0xF383); E(0x8800);                               /* msr apsr_nzcvq, r3        */
+    E(0xE8BD); E(0x500F);                               /* pop {r0-r3, r12, lr}      */
+    int b_at = n; n += 2;
+    if (n & 1) E(0xBF00);
+    int lit_base = n; n += 2 * nl;
+    uint32_t bytes = (uint32_t)n * 2, base;
+    { int pb = patch_begin(site, 4, bytes, &base); if (pb <= 0) return pb < 0 && pb != -2; }
+    for (int i = 0; i < nl; i++) {
+        uint32_t laddr = base + (uint32_t)(lit_base + 2 * i) * 2;
+        uint32_t ipc = base + (uint32_t)(lits[i].at - 1) * 2 + 4;
+        k[lits[i].at] |= (uint16_t)(laddr - (ipc & ~3u));
+        memcpy(k + lit_base + 2 * i, &lits[i].val, 4);
+    }
+    uint32_t bw = enc_bw(base + (uint32_t)b_at * 2, site + 4);
+    k[b_at] = (uint16_t)(bw & 0xFFFF); k[b_at + 1] = (uint16_t)(bw >> 16);
+    memcpy((void *)(uintptr_t)base, k, (size_t)bytes);
+#undef E
+    __builtin___clear_cache((char *)(uintptr_t)base, (char *)(uintptr_t)(base + bytes));
+    patch_end(site, 4, base);
+    g_nvrint++;
+    if (opt.bus_verbose) fprintf(stderr, "vrint_patch: %08x vrint%c s%u, s%u -> stub %08x%c", site, "anpm"[rm & 3], sd, sm, base, 10);
+    return 1;
+}
 /* qemu-user hands out its mmap area from 0x40000000 up, and guest_jump has just freed the stack that sat there: later mmaps (thread
  * stacks, ...) would land on top of the RP2350 peripheral addresses and make them plain memory.  Reserve that range before anything
  * else maps.  No-op on a real kernel (nothing is there). */
@@ -1627,6 +1689,16 @@ static int cpu_trap(int sig, Cpu *c, uint32_t fault_addr, int svc_from_syscall, 
             Ev *e = ev_get(K_ILL, pc, 0, &isnew);
             if (e) { e->n++; if (isnew) { e->x = h1; e->y = h2; snprintf(e->note, sizeof e->note, "VSEL.F32 [%s%s]", vf ? "emulated" : "skipped, no VFP frame", st ? ", stub" : "");
                 logf_("[ILL] pc=%08x insn=%04x %04x VSEL.F32 %s%s\n", pc, h1, h2, vf ? "emulated" : "skipped (no VFP state in the signal frame)", st ? ", patched to a stub" : ""); } }
+            skip(c, 4); goto done;
+        }
+        if (sig == SIGILL && len == 4 && !g_novrint && (h1 & 0xFFBC) == 0xFEB8 && (h2 & 0x0F50) == 0x0A40) {     /* VRINTA/N/P/M.F32: emulate, then patch to a stub (see vrint_patch) */
+            unsigned rm = h1 & 3, sd = ((h2 >> 12) & 15) * 2 + ((h1 >> 6) & 1), sm = (h2 & 15) * 2 + ((h2 >> 5) & 1);
+            uint32_t *vf = tl_uc ? uc_vfp(tl_uc) : NULL; int isnew;
+            if (vf) vf[sd] = um2_vrint(vf[sm], rm);
+            int st = vf ? vrint_patch(c, pc, rm, sd, sm) : 0;
+            Ev *e = ev_get(K_ILL, pc, 0, &isnew);
+            if (e) { e->n++; if (isnew) { e->x = h1; e->y = h2; snprintf(e->note, sizeof e->note, "VRINT%c.F32 [%s%s]", "ANPM"[rm], vf ? "emulated" : "skipped, no VFP frame", st ? ", stub" : "");
+                logf_("[ILL] pc=%08x insn=%04x %04x VRINT%c.F32 %s%s\n", pc, h1, h2, "ANPM"[rm], vf ? "emulated" : "skipped (no VFP state in the signal frame)", st ? ", patched to a stub" : ""); } }
             skip(c, 4); goto done;
         }
         uint16_t fh;
@@ -2292,6 +2364,7 @@ static void bus_finish(void) {
     if (!opt.bus) return;
     if (opt.bus_verbose) { print_summary(1); fflush(stdout); }
     fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb); %u branch targets known, %lu patch attempts postponed (an exception returns inside)\n", (unsigned long long)g_events, g_nstubs, g_nv8, g_nbtgt, g_patch_frame);
+    if (g_nvrint) fprintf(stderr, "um2run: %u VRINT sites became stubs\n", g_nvrint);
     if (g_nsvcp) { fprintf(stderr, "um2run: %u SVC veneers became stubs; native SVC entries (call number:count):", g_nsvcp); for (int q = 0; q < 256; q++) if (g_svc_nat[q]) fprintf(stderr, " %d:%lu", q, g_svc_nat[q]); fputc(10, stderr); }
     lb_dump(stderr); um_dump(stderr);
     um2bus_stats(stderr); um2sd_stats();
