@@ -51,6 +51,7 @@
 #include "um2sd.h"
 #include "um2aud.h"
 #include "ptx.h"
+#include "ptx_font.h"
 #ifdef __arm__
 #include <sys/ptrace.h>
 #include <sys/user.h>
@@ -2235,10 +2236,12 @@ static void ptx_up(void) {
 static void gup(void) { if (!g_guest_seen) { g_guest_seen = 1; g_last_frame_t = now(); } ptx_up(); }
 static int g_hold; static void hq_flush(void);
 static volatile int g_ld_done = 1; static int g_noload; static uint64_t g_drop, g_ld_cyc;   /* loading indicator, see below; g_ld_done = 1: not running */
-/* ---- loading indicator (--bus, off with --no-loading).  Until the image first touches the ring (its first read, non-idle flush or frame mark) a helper
- * thread publishes frames of its own at ~50 Hz: LOADING plus a progress bar fed by um2sd's sector count (the total at the image's first ring access is kept in
- * <image>.load; without it a block sweeps to and fro).  It starts after a short grace (fast images never show it) and, since um2run sleeps --settle before
- * anything runs, never touches the ring during settle.
+/* ---- loading indicator (--bus, off with --no-loading).  Until the image has finished loading a helper thread publishes frames of its own at ~50 Hz: LOADING
+ * plus a progress bar fed by um2sd's sector count (the total at the hand-over is kept in <image>.load; without it a block sweeps to and fro).  It starts after a
+ * short grace (fast images never show it) and, since um2run sleeps --settle before anything runs, never touches the ring during settle.
+ * --hold: the image may draw while it loads (Out Run: small text of its own, 9 frames/s).  Those frames still go to the ring, so one-off VIA and PSG set-up
+ * survives, but dark and without frame marks; the hand-over waits for the card to calm down, see ld_ready.  An image without a card hands over at its first
+ * frame.  Without --hold the image's first ring access ends the indicator.
  * Sync: g_ld_m is held while the thread builds and publishes one frame; ld_stop() (guest side, before its first ring access) takes it once, so an in-flight
  * frame completes, and sets g_ld_done for good.  From then on the thread never takes the lock again and the guest needs none: ptx_* is only ever called by one
  * side at a time and the ring holds whole indicator frames, then guest frames.  A thread, not the trap path: ptx_frame() paces on the core (20 ms per frame),
@@ -2246,6 +2249,9 @@ static volatile int g_ld_done = 1; static int g_noload; static uint64_t g_drop, 
  * stream time the indicator used is g_ld_cyc; guest time = ptx_now - g_ld_cyc + g_drop (um2bus works on differences of it: a jump would force frame marks). */
 #define LD_GRACE 0.4          /* s before the first indicator frame */
 #define LD_MINSEC 32          /* loads below this many sectors are not worth a progress bar (nor a sidecar) */
+#define LD_WIN 0.5            /* s: a window of frame marks with fewer than LD_QRD sector reads ends the load; a game streaming music reads about 16 per window */
+#define LD_QRD 40
+#define LD_HOLDMAX 30.0       /* s from the first frame mark: give up waiting for the card */
 static pthread_mutex_t g_ld_m = PTHREAD_MUTEX_INITIALIZER;
 static volatile pthread_t g_ld_tid;
 static unsigned g_ld_total, g_ld_frames;
@@ -2281,27 +2287,7 @@ static void ld_glyph(const uint8_t *g, int ox, int oy) {
 }
 /* outline box, then `fill` * 128 units of fill (0..96), or fill < 0: a 24-step block sweeping to and fro (by fno); five zig-zag rows are the fill */
 /* --message: an error the player can read on the Vectrex, for pitrexd and mister_run.sh (a pick that cannot start, a game that died).
- * Capitals, digits, . - / on the same 2x4 grid as ld_font; '|' starts a new line. */
-static const struct { char c; uint8_t s[13]; } msg_font[] = {
-    { 'A', { 0x00, 0x03, 0x14, 0x23, 0x20, 0xFF, 0x02, 0x22, 0xFE } }, { 'B', { 0x00, 0x04, 0x14, 0x23, 0x12, 0x21, 0x10, 0x00, 0xFF, 0x02, 0x12, 0xFE } },
-    { 'C', { 0x23, 0x14, 0x03, 0x01, 0x10, 0x21, 0xFE } }, { 'D', { 0x00, 0x04, 0x14, 0x23, 0x21, 0x10, 0x00, 0xFE } },
-    { 'E', { 0x24, 0x04, 0x00, 0x20, 0xFF, 0x02, 0x12, 0xFE } }, { 'F', { 0x24, 0x04, 0x00, 0xFF, 0x02, 0x12, 0xFE } },
-    { 'G', { 0x23, 0x14, 0x03, 0x01, 0x10, 0x21, 0x22, 0x12, 0xFE } }, { 'H', { 0x00, 0x04, 0xFF, 0x02, 0x22, 0xFF, 0x20, 0x24, 0xFE } },
-    { 'I', { 0x04, 0x24, 0xFF, 0x14, 0x10, 0xFF, 0x00, 0x20, 0xFE } }, { 'J', { 0x24, 0x21, 0x10, 0x01, 0xFE } },
-    { 'K', { 0x00, 0x04, 0xFF, 0x24, 0x02, 0x20, 0xFE } }, { 'L', { 0x04, 0x00, 0x20, 0xFE } },
-    { 'M', { 0x00, 0x04, 0x12, 0x24, 0x20, 0xFE } }, { 'N', { 0x00, 0x04, 0x20, 0x24, 0xFE } },
-    { 'O', { 0x01, 0x03, 0x14, 0x23, 0x21, 0x10, 0x01, 0xFE } }, { 'P', { 0x00, 0x04, 0x14, 0x23, 0x12, 0x02, 0xFE } },
-    { 'Q', { 0x01, 0x03, 0x14, 0x23, 0x21, 0x10, 0x01, 0xFF, 0x11, 0x20, 0xFE } }, { 'R', { 0x00, 0x04, 0x14, 0x23, 0x12, 0x02, 0xFF, 0x12, 0x20, 0xFE } },
-    { 'S', { 0x23, 0x14, 0x03, 0x12, 0x21, 0x10, 0x01, 0xFE } }, { 'T', { 0x04, 0x24, 0xFF, 0x14, 0x10, 0xFE } },
-    { 'U', { 0x04, 0x01, 0x10, 0x21, 0x24, 0xFE } }, { 'V', { 0x04, 0x10, 0x24, 0xFE } },
-    { 'W', { 0x04, 0x00, 0x12, 0x20, 0x24, 0xFE } }, { 'X', { 0x00, 0x24, 0xFF, 0x04, 0x20, 0xFE } },
-    { 'Y', { 0x04, 0x12, 0x24, 0xFF, 0x12, 0x10, 0xFE } }, { 'Z', { 0x04, 0x24, 0x00, 0x20, 0xFE } },
-    { '0', { 0x01, 0x03, 0x14, 0x23, 0x21, 0x10, 0x01, 0xFF, 0x01, 0x23, 0xFE } }, { '1', { 0x03, 0x14, 0x10, 0xFF, 0x00, 0x20, 0xFE } },
-    { '2', { 0x03, 0x14, 0x23, 0x00, 0x20, 0xFE } }, { '3', { 0x03, 0x14, 0x23, 0x12, 0x21, 0x10, 0x01, 0xFE } },
-    { '4', { 0x04, 0x02, 0x22, 0xFF, 0x20, 0x24, 0xFE } }, { '5', { 0x24, 0x04, 0x02, 0x12, 0x21, 0x10, 0x00, 0xFE } },
-    { '6', { 0x23, 0x14, 0x03, 0x01, 0x10, 0x21, 0x12, 0x02, 0xFE } }, { '7', { 0x04, 0x24, 0x10, 0xFE } },
-    { '8', { 0x12, 0x03, 0x14, 0x23, 0x12, 0x01, 0x10, 0x21, 0x12, 0xFE } }, { '9', { 0x01, 0x10, 0x21, 0x23, 0x14, 0x03, 0x12, 0x22, 0xFE } },
-    { '.', { 0x10, 0x11, 0xFE } }, { '-', { 0x02, 0x22, 0xFE } }, { '/', { 0x00, 0x24, 0xFE } } };
+ * '|' starts a new line. */
 enum { MSG_STEP = 640, MSG_ADV = 1920, MSG_LINE = 3200, MSG_COLS = 20, MSG_LINES = 4, MSG_SECS = 20 };
 static const char *g_msg;
 static void msg_glyph(const uint8_t *g, int ox, int oy) {
@@ -2322,8 +2308,8 @@ static void msg_frame(char lines[][MSG_COLS + 1], int n) {
     for (int l = 0; l < n; l++) {
         int len = (int)strlen(lines[l]), ox = -len * MSG_ADV / 2, oy = (n - 1) * MSG_LINE / 2 - l * MSG_LINE - 2 * MSG_STEP;
         for (int i = 0; i < len; i++)
-            for (unsigned k = 0; k < sizeof msg_font / sizeof *msg_font; k++)
-                if (msg_font[k].c == lines[l][i]) { msg_glyph(msg_font[k].s, ox + i * MSG_ADV, oy); break; }
+            for (unsigned k = 0; k < sizeof ptx_font / sizeof *ptx_font; k++)
+                if (ptx_font[k].c == lines[l][i]) { msg_glyph(ptx_font[k].s, ox + i * MSG_ADV, oy); break; }
     }
     uint64_t used = ptx_now_cycles() - t0;
     if (used + 2 < fc) ptx_advance_cycles((uint32_t)(fc - used - 2));
@@ -2344,6 +2330,12 @@ static int msg_main(void) {
     for (double t = now(); now() - t < MSG_SECS; ) { ld_pace(); msg_frame(lines, n); }
     g_ptx_up = 0; ptx_shutdown();
     return 0;
+}
+/* the image's VIA registers the indicator overwrites, as it last wrote them (dark: PCR with CB2 low) */
+static uint8_t g_ld_via[16]; static unsigned g_ld_seen; static uint64_t g_ld_gw;   /* g_ld_gw: stream time of the image's own dark frames */
+static void ld_restore(int real) {
+    static const uint8_t r[] = { 0x3, 0x2, 0x0, 0xB, 0xC };
+    for (unsigned i = 0; i < sizeof r; i++) if (g_ld_seen >> r[i] & 1) ptx_write((uint16_t)(0xD000 | r[i]), r[i] == 0xC && !real ? (g_ld_via[0xC] & 0x1F) | 0xC0 : g_ld_via[r[i]]);
 }
 static void ld_bar(int fill, unsigned fno) {
     ld_zero();
@@ -2366,6 +2358,7 @@ static void ld_frame(unsigned fno) {
     uint64_t used = ptx_now_cycles() - t0;
     if (used + 2 < fc) ptx_advance_cycles((uint32_t)(fc - used - 2));
     ptx_write(V_T2L, 0x30); ptx_write(V_T2H, 0x75);                   /* T2 reload = frame boundary, as um2bus's frame mark */
+    ld_restore(0);
     ptx_frame();
     g_ld_cyc += ptx_now_cycles() - t0; g_ld_frames++;
 }
@@ -2406,6 +2399,7 @@ static void ld_stop(void) {
 static void ld_take(void) {
     if (g_ld_done) return;
     ld_stop();
+    ld_restore(1);
     unsigned long n = um2sd_present() ? um2sd_reads() : 0;
     if (g_ld_frames || opt.bus_verbose) fprintf(stderr, "loading: image took the ring at %.1f s after %u indicator frames, %lu sector reads (known total %u)\n", now() - g_t0, g_ld_frames, n, g_ld_total);
     if (n >= LD_MINSEC && n != g_ld_total && opt.file) {                                         /* remember the total; unwritable path: silently skipped */
@@ -2413,7 +2407,20 @@ static void ld_take(void) {
         if (f) { fprintf(f, "%lu\n", n); fclose(f); g_ld_total = (unsigned)n; }
     }
 }
-static uint64_t gnow(void) { return g_ld_done ? ptx_now_cycles() - g_ld_cyc + g_drop : g_drop; }   /* the image's own stream time */
+static uint64_t gnow(void) { return g_ld_done ? ptx_now_cycles() - g_ld_cyc + g_drop : g_drop + g_ld_gw; }   /* the image's own stream time */
+/* called at a frame mark while the indicator runs: has the image finished loading? */
+static int ld_ready(void) {
+    static double t0, tw; static unsigned long rw; static int off = -1;
+    if (off < 0) off = getenv("UM2_NOLDHOLD") != NULL;
+    if (off || !um2sd_present()) return 1;
+    double t = now(); unsigned long rd = um2sd_reads();
+    if (!t0) { t0 = tw = t; rw = rd; return 0; }
+    if (t - t0 > LD_HOLDMAX) return 1;
+    if (t - tw < LD_WIN) return 0;
+    if (opt.bus_verbose) fprintf(stderr, "loading: %.1f s, %lu sector reads in the last window\n", t - g_t0, rd - rw);
+    if (rd - rw < LD_QRD) return 1;
+    tw = t; rw = rd; return 0;
+}
 static void ld_init(void) {
     if (g_noload || !opt.file) return;
     char p[1100]; snprintf(p, sizeof p, "%s.load", opt.file); FILE *f = fopen(p, "r");
@@ -2507,10 +2514,25 @@ static inline void gap_note(void) { if (g_ringmon > 1) { double t = now(); if (g
 typedef struct { uint8_t kind, data; uint16_t addr; uint32_t n; } HQ;
 static HQ g_hq[1 << 16]; static uint32_t g_nhq; static uint64_t g_vnow; static double g_hq_t0;
 static void hq_flush(void) {
-    if (!g_ld_done) {       /* the indicator owns the ring: an idle-only queue (the boot's GPIO polling) is dropped and counted, anything else takes the ring first */
-        uint32_t i = 0; while (i < g_nhq && g_hq[i].kind) i++;
-        if (i == g_nhq) { for (i = 0; i < g_nhq; i++) g_drop += g_hq[i].n; g_nhq = 0; return; }
-        ld_take();
+    if (!g_ld_done) {       /* the indicator owns the ring: idle time is dropped and counted, the image's writes go in dark, whole queues between indicator frames */
+        pthread_mutex_lock(&g_ld_m);
+        if (!g_ld_done) {
+            uint64_t t0 = ptx_now_cycles();
+            for (uint32_t i = 0; i < g_nhq; i++) {
+                if (g_hq[i].kind) { g_drop += g_hq[i].n; continue; }
+                uint16_t a = g_hq[i].addr; uint8_t d = g_hq[i].data; unsigned r = a & 15;
+                if ((a & 0xF000) == 0xD000) {
+                    if (r == 8 || r == 9) { g_drop++; continue; }           /* no T2 reload: it would mark a frame */
+                    g_ld_via[r] = d; g_ld_seen |= 1u << r;
+                    if (r == 0xA) d = 0; else if (r == 0xC) d = (d & 0x1F) | 0xC0;   /* blanking: shift register empty, CB2 low */
+                }
+                ptx_write(a, d);
+            }
+            g_ld_gw += ptx_now_cycles() - t0; g_nhq = 0;
+            pthread_mutex_unlock(&g_ld_m);
+            return;
+        }
+        pthread_mutex_unlock(&g_ld_m);
     }
     for (uint32_t i = 0; i < g_nhq; i++) {
         if (g_hq[i].kind == 0) { gap_note(); ptx_write(g_hq[i].addr, g_hq[i].data); } else ptx_advance_cycles(g_hq[i].n);
@@ -2551,7 +2573,8 @@ static uint8_t key_now(void) { uint8_t v = 0xFF; for (int i = 0; i < g_nkeys; i+
 static struct { uint16_t a; uint8_t v, k; unsigned n; } g_rh[48]; static int g_nrh;
 static void rh_note(uint16_t a, uint8_t v, uint8_t k) { for (int i = 0; i < g_nrh; i++) if (g_rh[i].a == a && g_rh[i].v == v && g_rh[i].k == k) { g_rh[i].n++; return; } if (g_nrh < 48) { g_rh[g_nrh].a = a; g_rh[g_nrh].v = v; g_rh[g_nrh].k = k; g_rh[g_nrh++].n = 1; } }
 static void rh_dump(void) { if (opt.bus_verbose < 2) return; for (int i = 0; i < 32; i++) if (g_tm_reads[i]) fprintf(stderr, "timer reg %02x reads %u (loop-breaker overrode %u)\n", i * 4, g_tm_reads[i], g_tm_broken[i]); for (int i = 0; i < g_nrh; i++) fprintf(stderr, "read reg %x val %02x key %02x: %u\n", g_rh[i].a & 0xF, g_rh[i].v, g_rh[i].k, g_rh[i].n); }
-static uint8_t k_read(uint16_t a) { gup(); ld_take(); uint8_t v; if (g_hold) { hq_flush(); v = ptx_read(a); g_vnow = gnow(); } else v = ptx_read(a); v = sh_read(a, v); if (g_nkeys && (a & 0xF) == 1) { uint8_t k = key_now(); if (k != 0xFF) v = k; } if (opt.bus_verbose > 1) rh_note(a, v, g_nkeys ? key_now() : 0); return v; }
+static uint8_t ld_read(uint16_t a) { pthread_mutex_lock(&g_ld_m); uint64_t t0 = ptx_now_cycles(); uint8_t v = ptx_read(a); g_ld_gw += ptx_now_cycles() - t0; pthread_mutex_unlock(&g_ld_m); return v; }
+static uint8_t k_read(uint16_t a) { gup(); if (!g_hold) ld_take(); uint8_t v; if (g_hold) { hq_flush(); v = g_ld_done ? ptx_read(a) : ld_read(a); g_vnow = gnow(); } else v = ptx_read(a); v = sh_read(a, v); if (g_nkeys && (a & 0xF) == 1) { uint8_t k = key_now(); if (k != 0xFF) v = k; } if (opt.bus_verbose > 1) rh_note(a, v, g_nkeys ? key_now() : 0); return v; }
 static void k_advance(uint32_t c) { gup(); if (g_hold) { hq_add(1, 0, 0, c); g_vnow += c; } else if (g_ld_done) ptx_advance_cycles(c); else g_drop += c; }
 static uint64_t k_now(void) { gup(); if (g_hold) { if (!g_vnow) g_vnow = gnow(); return g_vnow; } return gnow(); }
 static void k_frame(void) {
@@ -2559,7 +2582,14 @@ static void k_frame(void) {
     { static unsigned cr; static int cri = -1; if (cri < 0) { const char *e = getenv("UM2_CENRESET"); cr = e ? (unsigned)atoi(e) : 0; cri = 1; }   /* census window: forget everything before frame cr (diagnostics; patched sites stay patched) */
       if (cr && g_marks == cr) { hs_reset(); g_excret = 0; memset(g_ev, 0, sizeof g_ev); memset(g_kdistinct, 0, sizeof g_kdistinct); memset(g_irq_cnt, 0, sizeof g_irq_cnt); g_irq_kicks = 0; g_irq_pc[0] = g_irq_pc[1] = g_irq_async[0] = g_irq_async[1] = 0; g_irq_trap = g_irq_chain = 0; g_cen_m0 = g_marks; g_events = 0; fprintf(stderr, "um2run: census reset at frame %u\n", cr); } }
     if (g_hs_on > 0 && !(g_marks % 50)) { static uint64_t pe; static unsigned long px; if (g_events < pe) pe = 0; if (g_excret < px) px = 0; fprintf(stderr, "FRAMES %u: +%llu traps +%lu exc-returns since the last mark (%.1f round trips per frame)\n", g_marks, (unsigned long long)(g_events - pe), g_excret - px, (double)(g_events - pe + g_excret - px) / 50.0); pe = g_events; px = g_excret; }
-    gup(); ld_take(); if (g_hold) { hq_flush(); g_vnow = gnow(); } ptx_frame(); g_last_frame_t = now();
+    gup();
+    if (g_hold && !g_ld_done && !ld_ready()) {                          /* still loading: no frame mark, and no faster than 50 Hz (a late frame has nothing to wait for, so the card load never stalls here) */
+        static double t; hq_flush(); g_vnow = gnow();
+        double d = 0.02 - (now() - t); if (d > 0) { struct timespec ts = { 0, (long)(d * 1e9) }; nanosleep(&ts, NULL); }
+        g_last_frame_t = t = now();
+        return;
+    }
+    ld_take(); if (g_hold) { hq_flush(); g_vnow = gnow(); } ptx_frame(); g_last_frame_t = now();
     /* Once the game is producing lists, core 1 (the real-time consumer) runs one level above core 0: core 0's native spin-waits then only
      * use the CPU while core 1 sleeps (pacing naps, ring waits) instead of taking half of it.  Not from the start: during boot core 1's
      * idle input reads would starve core 0 before it publishes the first list. */
