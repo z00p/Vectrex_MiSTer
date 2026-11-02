@@ -469,8 +469,13 @@ static uint32_t ipsr_now(void) { Nvic *n = &g_nv[tl_core & 1]; if (!n->depth) re
  * third of the tick period spent asleep in the interrupt path.  tl_act counts this thread's other MMIO accesses; a poll run that has any is not a wait.
  * UM2_NAPALL=1 = the old rule (every run of 24 reads at one pc). */
 static __thread uint32_t tl_tpc, tl_tn, tl_act, tl_tact; static unsigned long g_naps[2];
+static volatile int g_c1_own_cpu;   /* 1 once core 1 is on its own CPU (--cpu1): only then may core 0 skip the donate tick (and, with UM2_NONAP0, the timer-poll nap) */
+static int g_cpu1 = -1;             /* --cpu1 N: pin the core-1 guest thread to CPU N (core 0 stays where --cpu put the process) */
 static void timer_poll_nap(uint32_t pc) {
-    static int off = -1, all = 0; if (off < 0) { off = getenv("UM2_NONAP") != NULL; all = getenv("UM2_NAPALL") != NULL; } if (off) return;
+    static int off = -1, all = 0, free0 = 0; if (off < 0) { off = getenv("UM2_NONAP") != NULL; all = getenv("UM2_NAPALL") != NULL; free0 = getenv("UM2_NONAP0") != NULL; } if (off) return;
+    /* UM2_NONAP0=1 (opt-in, untested on the A9): core 0 has CPU 0 to itself once core 1 sits on its own CPU (the same condition on_donate uses), so its polls spin instead of
+     * sleeping; Main is on CPU 1.  A nap is >= 110 us whatever is asked, so every poll that ends a wait overshoots by up to that.  The helpers share CPU 0 but run above it. */
+    if (free0 && g_cpu1 >= 0 && g_c1_own_cpu && !tl_core) return;
     if (pc == tl_tpc && (all || tl_act == tl_tact)) { if (++tl_tn > 24) { struct timespec ts = { 0, 60000 }; g_naps[tl_core & 1]++; nanosleep(&ts, NULL); } }
     else { tl_tpc = pc; tl_tn = 0; }
     tl_tact = tl_act;
@@ -2126,8 +2131,6 @@ void um2_rt_boost(int delta) {
 }
 static double g_settle = 0, g_cpu1_after = 0;   /* --settle S: wait S s before touching the ring; --cpu1-after S: core 1 starts on the process CPU, moves to --cpu1 after S s */
 static volatile pid_t g_c1_tid;
-static volatile int g_c1_own_cpu;   /* 1 once core 1 is on its own CPU (--cpu1): only then may core 0 skip the donate tick */
-static int g_cpu1 = -1;     /* --cpu1 N: pin the core-1 guest thread to CPU N (core 0 stays where --cpu put the process) */
 static unsigned g_donate_us = 1000, g_donate_period_us = 2000;
 static volatile int g_boosted;
 /* SIGURG attempts that did not deliver: pc in helper/loader code, PRIMASK set, other (IT block, depth); deliveries inside a stub */
