@@ -6,8 +6,11 @@
  * Byte level: the PL022 model feeds it one MOSI byte at a time and takes one MISO byte back.
  * SDHC (block addressed), CMD0/8/9/10/12/13/16/17/18/24/25/55/58/59 and ACMD41/23, enough for FatFs (uvm2_sd.c).
  * The image is opened read/write if possible (writes go through), else read-only (writes accepted and dropped).
+ * Images of any size up to 2 TiB work (64-bit file offsets); the card builder still makes at most 2000 MiB.
  */
+#define _FILE_OFFSET_BITS 64            /* card images of 2 GiB and more: with a 32-bit long, fseek / ftell wrapped (or failed) at 2 GiB: reads above that came back as stale data */
 #include "um2sd.h"
+#include <sys/types.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -26,7 +29,7 @@ int um2sd_open(const char *path, int verbose) {
 	g_f = fopen(path, "r+b"); g_rw = g_f != NULL;
 	if (!g_f) g_f = fopen(path, "rb");
 	if (!g_f) { perror(path); return -1; }
-	fseek(g_f, 0, SEEK_END); long n = ftell(g_f); g_sectors = (uint32_t)(n / 512);
+	fseeko(g_f, 0, SEEK_END); off_t n = ftello(g_f); g_sectors = (uint32_t)(n / 512 > 0xFFFFFFFFll ? 0xFFFFFFFFu : (uint64_t)n / 512);
 	fprintf(stderr, "um2sd: %s, %u sectors (%s)\n", path, g_sectors, g_rw ? "read/write" : "read-only");
 	return 0;
 }
@@ -38,7 +41,7 @@ static uint16_t crc16_ccitt(const uint8_t *d, int n) { uint16_t c = 0; while (n-
 static uint8_t crc7(const uint8_t *d, int n) { uint8_t c = 0; while (n--) { uint8_t b = *d++; for (int i = 0; i < 8; i++) { c <<= 1; if ((b ^ c) & 0x80) c ^= 0x09; b <<= 1; } } return (uint8_t)(c & 0x7F); }
 static void queue_block(uint32_t blk) {
 	uint8_t d[512]; memset(d, 0xFF, sizeof d);
-	if (blk < g_sectors) { fseek(g_f, (long)blk * 512, SEEK_SET); if (fread(d, 1, 512, g_f) != 512) { /* short read: rest 0xFF */ } }
+	if (blk < g_sectors) { fseeko(g_f, (off_t)blk * 512, SEEK_SET); if (fread(d, 1, 512, g_f) != 512) { /* short read: rest 0xFF */ } }
 	qpush(0xFF); qpush(0xFE);
 	for (int i = 0; i < 512; i++) qpush(d[i]);
 	{ uint16_t c = crc16_ccitt(d, 512); qpush((uint8_t)(c >> 8)); qpush((uint8_t)c); }   /* CRC16: images that switch CRC on with CMD59 verify it */
@@ -95,7 +98,7 @@ uint8_t um2sd_xfer(uint8_t out) {
 	if (g_wstate == 2) { g_wbuf[g_wn++] = out; if (g_wn == 512) g_wstate = 3, g_wn = 0; return in; }
 	if (g_wstate == 3) {
 		if (++g_wn == 2) {
-			if (g_rw && g_wblk < g_sectors) { fseek(g_f, (long)g_wblk * 512, SEEK_SET); fwrite(g_wbuf, 1, 512, g_f); fflush(g_f); }
+			if (g_rw && g_wblk < g_sectors) { fseeko(g_f, (off_t)g_wblk * 512, SEEK_SET); fwrite(g_wbuf, 1, 512, g_f); fflush(g_f); }
 			g_writes++; g_wblk++;
 			qclear(); qpush(0x05); qpush(0x00); qpush(0xFF);   /* data accepted, one busy byte */
 			g_wstate = g_wmulti ? 1 : 0;
