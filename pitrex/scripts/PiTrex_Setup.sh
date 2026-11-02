@@ -42,15 +42,14 @@ if [ ! -f "$FAT/games/Vectrex-PiTrex/UVMC2/README.txt" ]; then
 	cat > "$FAT/games/Vectrex-PiTrex/UVMC2/README.txt" <<'EOF'
 Copy everything from your UVMC2 SD card here, with its folders (roms, PORTDATA, loose
 files such as QBERT2.VSM and the .um2 games), and add new .um2 games here too.
-The OSD and the Vectrex menu list the games. The other files go on the card image the
-games see: run REFRESH CARD in the menu, or Scripts > PiTrex_Make_UVMC2_Card, after
-adding them. Saves on the card are kept.
+The OSD lists the games. The other files go on the card image the games see: run
+Scripts > PiTrex_Make_UVMC2_Card after adding them. Saves on the card are kept.
 .um2 and .uf2 files, ASSETS folders and macOS files are not put on the card.
 See ADDING_GAMES.md in the PiTrex guide.
 (This file is not copied to the card.)
 EOF
 fi
-chmod +x "$PITREX"/*.sh "$PITREX/um2run/um2run" "$PITREX/um2run/mister_run.sh" "$PITREX/uvmc2_menu" "$PITREX/ptx_keywatch" 2>/dev/null
+chmod +x "$PITREX"/*.sh "$PITREX/um2run/um2run" "$PITREX/um2run/mister_run.sh" 2>/dev/null
 if [ ! -f "$PITREX/um2run/um2run" ]; then
 	echo "Note: $PITREX/um2run/um2run is missing, so .um2 games cannot start (unzip the release again)."
 fi

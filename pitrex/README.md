@@ -57,11 +57,11 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
   only holds Setup, Update, Stop, Uninstall and Make_UVMC2_Card (which builds the UVMC2 card image,
   see [ADDING_GAMES.md](ADDING_GAMES.md)).
 - **UVMC2 cartridge images (`.um2`, beta):** load the core from `_Unstable`, then OSD >
-  **Load UVMC2**, or start the Vectrex menu with main menu > **PiTrex & UVMC2** > **UVMC2 Menu**.
+  **Load UVMC2**, or main menu > **PiTrex & UVMC2** > **UVMC2 Games**, which loads the core.
   A standard MGL file can start one game directly. How to add your games and the files from your
   UVMC2 SD card: [ADDING_GAMES.md](ADDING_GAMES.md). Per-game settings and the tested games are in
   [UVMC2_GAMES.md](UVMC2_GAMES.md).
-- **PiTrex programs:** OSD > **Load PiTrex**, the Vectrex menu, or their entries in the main menu.
+- **PiTrex programs:** OSD > **Load PiTrex**, or their entries in the main menu.
 - **From a shell (SSH):** `/media/fat/pitrex/pitrex_launch.sh vecdrive` loads the PiTrex core
   if needed, switches PiTrex Mode on and starts the program.
 - **Overlays:** OSD > **Load Overlay**, then pick `VecDrive.art` or `VecBreak.art`.

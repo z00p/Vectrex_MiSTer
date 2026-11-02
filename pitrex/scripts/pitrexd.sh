@@ -17,10 +17,6 @@ CPUS=${PITREXD_CPUS:-/sys/devices/system/cpu/online}
 UM2=$PITREX/um2run
 UM2SD_DIR=$PITREX/uvmc2
 LOG=$T/pitrexd.log
-# The Vectrex menu (.mnu pick, program uvmc2_menu) reports its choices like Main but with an absolute FULLPATH. This flag says a game came from it, so
-# the menu returns when the game ends. PiTrex_Stop removes the flag: a stop then stays a stop.
-MENUFLAG=$T/pitrex_from_menu
-MENUKEY=$T/pitrex_menu_key
 # A "selected" report whose FULLPATH / CURRENTPATH are more than this many seconds older than FILESELECT is not a pick (see the main loop)
 STALE=${PITREXD_STALE:-2}
 # ... and more than this many seconds older than the current core load (CORENAME)
@@ -56,7 +52,7 @@ core_is_ours() { local c; read -r c 2>/dev/null < $T/CORENAME; case "$c" in Vect
 
 # PiTrex programs: the generic match used for switching and for the supervisor below.
 # um2run is started by mister_run.sh as "./um2run --bus ...", which the path patterns miss.
-ptx_pids() { ps | grep -v grep | grep -E "$PITREX/[^ ]+( |$)|$RUN/|um2run --bus" | grep -v -E "pitrex_launch|pitrexd|ptx_keywatch" | awk '{print $1}'; }
+ptx_pids() { ps | grep -v grep | grep -E "$PITREX/[^ ]+( |$)|$RUN/|um2run --bus" | grep -v -E "pitrex_launch|pitrexd" | awk '{print $1}'; }
 
 # SIGTERM every PiTrex program and wait for it to exit (SIGKILL after ~2 s).
 stop_programs() {
@@ -214,12 +210,12 @@ start_um2() {
 	[ -n "$sd" ] && opt="--sd $sd"
 
 	stop_programs
-	# a direct pick runs on the card as it is; say so for a moment if the folder has moved on (the menu says it in its list)
-	if [ "$sd" = "$UM2SD_DIR/sd.img" ] && [ ! -f "$MENUFLAG" ]; then
+	# a game runs on the card as it is; say so for a moment if the folder has moved on
+	if [ "$sd" = "$UM2SD_DIR/sd.img" ]; then
 		bash "$PITREX/make_card.sh" --check > /dev/null 2>&1
 		if [ $? = 1 ]; then
 			echo "$(date +%T) card out of date: starting on the current card" >> $LOG
-			show "CARD OUT OF DATE|USE REFRESH CARD|IN THE VECTREX MENU"
+			show "CARD OUT OF DATE|RUN MAKE UVMC2 CARD|IN THE SCRIPTS MENU"
 			sleep 3
 			stop_programs
 		fi
@@ -230,7 +226,6 @@ start_um2() {
 	# mister_run.sh: cd to its own directory, nohup chrt -r 50 ./um2run --bus --hold ... > /tmp/um2.log &
 	# --secs: um2run --bus stops after 300 s by default (a test bound); a game picked from the OSD runs until stopped.
 	SETTLE=$st CPU1_AFTER=$c1 sh ./mister_run.sh "$img" --frame-cycles "$fc" $opt --secs 1000000000 $args >> $LOG 2>&1
-	running=um2run
 	echo "$(date +%T) started um2run $(basename "$img") frame_cycles=$fc card=${sd:-none}${args:+ args=$args}" >> $LOG
 }
 
@@ -247,42 +242,7 @@ start_ptx() {
 	cd "$PITREX" 2>/dev/null || cd $T
 	[ -f $T/pitrex.log ] && mv -f $T/pitrex.log $T/pitrex.prev.log
 	PTX_BACKEND=mister nohup chrt -r 49 "$RUN/$name" > $T/pitrex.log 2>&1 &
-	running=$name
 	echo "$(date +%T) started $name from $f" >> $LOG
-}
-
-# Esc on the keyboard (ptx_keywatch): back to the Vectrex menu, from a game or from nothing; already there, nothing happens
-menu_key() {
-	rm -f "$MENUKEY"
-	[ -f "$PITREX/uvmc2_menu" ] || return 0
-	[ "$running" = uvmc2_menu ] && [ -n "$(ptx_pids)" ] && return 0
-	rm -f "$MENUFLAG"
-	echo "$(date +%T) Esc: back to the Vectrex menu" >> $LOG
-	start_ptx "$PITREX/uvmc2_menu"
-}
-
-# ptx_keywatch runs as long as we do: the one from an earlier pitrexd goes first
-start_keywatch() {
-	local p
-	[ -f "$PITREX/ptx_keywatch" ] || return 0
-	[ -f $T/ptx_keywatch.pid ] && read -r p < $T/ptx_keywatch.pid && kill "$p" 2>/dev/null
-	rm -f "$MENUKEY"
-	PITREXD_TMP=$T nohup "$PITREX/ptx_keywatch" > /dev/null 2>&1 &
-	echo $! > $T/ptx_keywatch.pid
-}
-
-# A game chosen in the Vectrex menu has ended (looked at once a second, two looks in a row): back to the menu
-menu_gone=0; menu_tick=0
-menu_return() {
-	menu_tick=$(( menu_tick + 1 ))
-	[ $(( menu_tick % 5 )) = 0 ] || return 0
-	if [ -n "$(ptx_pids)" ]; then menu_gone=0; return 0; fi
-	menu_gone=$(( menu_gone + 1 ))
-	[ "$menu_gone" -ge 2 ] || return 0
-	menu_gone=0
-	rm -f "$MENUFLAG"
-	echo "$(date +%T) game ended: back to the Vectrex menu" >> $LOG
-	start_ptx "$PITREX/uvmc2_menu"
 }
 
 # Our core started from the cores list runs as VECTREX, not Vectrex-PiTrex: its OSD offers the games, but MiSTer.ini's log_file_entry=1 is only in our
@@ -310,7 +270,6 @@ core_arrived() {
 # SIGTERM is delivered) in which it could still write. This kill makes that window as short
 # as the daemon can; the program's own check usually wins. Only the ours -> other transition
 # triggers it, so a launcher that starts a program before it loads the core is left alone.
-start_keywatch
 was_ours=0; core_is_ours && { was_ours=1; set_prio fast; core_arrived; }
 core_is_ours || set_prio idle
 
@@ -321,7 +280,6 @@ while :; do
 	else
 		if [ "$was_ours" = 1 ]; then
 			was_ours=0
-			rm -f "$MENUFLAG"
 			if [ -n "$(ptx_pids)" ]; then
 				stop_programs
 				echo "$(date +%T) core changed away from Vectrex-PiTrex: stopped PiTrex program(s)" >> $LOG
@@ -332,8 +290,6 @@ while :; do
 		nap 1
 		continue
 	fi
-	[ -f "$MENUFLAG" ] && menu_return
-	[ -f "$MENUKEY" ] && core_is_ours && menu_key
 	[ "$T/FILESELECT" -nt "$SEEN" ] || continue
 	seen_now
 	[ "$(cat $T/FILESELECT 2>/dev/null)" = "selected" ] || continue
@@ -354,12 +310,11 @@ while :; do
 		continue
 	fi
 	f=$(cat $T/FULLPATH 2>/dev/null)
-	case "$f" in /*) : > "$MENUFLAG" ;; *) rm -f "$MENUFLAG" ;; esac
 	# An OSD pick (B9 hardware, 28 Oct) reports FULLPATH as the folder relative to /media/fat
 	# ("games/Vectrex-PiTrex/UVMC2") and the file name in /tmp/CURRENTPATH.
 	case "$f" in /*) ;; *) f=$FAT/$f ;; esac
 	if [ -d "$f" ]; then f=$f/$(cat $T/CURRENTPATH 2>/dev/null); fi
-	case "${f,,}" in *.ptx) kind=ptx ;; *.um2) kind=um2 ;; *.mnu) kind=ptx; f=$PITREX/uvmc2_menu ;; *) continue ;; esac
+	case "${f,,}" in *.ptx) kind=ptx ;; *.um2) kind=um2 ;; *) continue ;; esac
 	if [ ! -f "$f" ]; then
 		echo "$(date +%T) REFUSED $f: no such file" >> $LOG
 		show "GAME FILE NOT FOUND"

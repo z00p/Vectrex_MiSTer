@@ -64,7 +64,7 @@ def why_skip(path, name, isdir, top):
         return "macOS/Windows files"
     if isdir:
         return "ASSETS folders" if n == "assets" else None
-    if n.endswith((".um2", ".uf2", ".mnu")):
+    if n.endswith((".um2", ".uf2")):
         return ".um2/.uf2 files"
     if n.endswith((".um2.cfg", ".um2.load", ".img", ".img.list", ".img.bak")):
         return "game settings and card images"

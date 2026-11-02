@@ -36,13 +36,10 @@ The core is called "Vectrex-PiTrex", however you load it: its file browser opens
 `games/Vectrex-PiTrex` and its settings are in `config/Vectrex-PiTrex_v1.CFG`.
 
 ## Playing
-There are three ways to start a game:
+There are two ways to start a game:
 - **The OSD:** load the core, then **Load UVMC2** > pick the `.um2`. (This core switches PiTrex Mode
   on by itself when you pick a file; if nothing happens, check OSD > System > PiTrex Mode.)
-- **The Vectrex menu:** pick **UVMC2 Menu** in **Load UVMC2**, or use **UVMC2 Menu** in the main
-  menu's **PiTrex & UVMC2** folder. When a game ends you are back in the menu, and **Esc** on a
-  keyboard goes back to it at any time.
-- **An MGL file:** a standard MiSTer shortcut, see [ADDING_GAMES.md](ADDING_GAMES.md#three-ways-to-start-a-game).
+- **An MGL file:** a standard MiSTer shortcut, see [ADDING_GAMES.md](ADDING_GAMES.md#two-ways-to-start-a-game).
 
 Then:
 1. A LOADING screen with a progress bar shows while the cartridge boots from its card; the big images take 10 to 20 seconds. The first second or two of sound can be static.
@@ -90,8 +87,8 @@ Star Wars. A raw dump of a real card (with its partition table) is untested: cop
 files instead.
 
 **The easy way is in [ADDING_GAMES.md](ADDING_GAMES.md):** copy everything on your UVMC2 SD card
-(or just your ROM zips) to `/media/fat/games/Vectrex-PiTrex/UVMC2/` and pick **REFRESH CARD** in
-the Vectrex menu, or run **Scripts > PiTrex_Make_UVMC2_Card**. That builds
+(or just your ROM zips) to `/media/fat/games/Vectrex-PiTrex/UVMC2/` and run
+**Scripts > PiTrex_Make_UVMC2_Card**. That builds
 `/media/fat/pitrex/uvmc2/sd.img` on the MiSTer and keeps the saves of the old card.
 ADDING_GAMES.md also lists which files each tested game needs.
 
@@ -214,7 +211,7 @@ their `.bak` backups, sidecars, and anything of yours in `pitrex/um2run/`.
 | Black screen for a long time | Wait for the LOADING screen to finish. If the screen stays black or the MiSTer's menu stops responding: Scripts > PiTrex_Stop, or SSH `killall um2run`. |
 | Static at the start | Expected for the first second or two. Up to about 10 seconds when the pick had to switch View Area (the core reloads first, see `/tmp/pitrexd.log`); the next pick starts clean. |
 | The picture is cropped at the sides | Landscape game on a portrait screen. OSD > View Area = Open Matte shows it all (the default, unless you changed it), or put `view=open` in the sidecar. |
-| A message on the Vectrex instead of the game | CARD OUT OF DATE: the game still starts, on the current card; pick REFRESH CARD in the Vectrex menu when you have time. LINUX IS ON ONE CPU: reboot the MiSTer. UM2RUN IS MISSING: run Scripts > PiTrex_Update. GAME FILE NOT FOUND: the file went away between the pick and the start. GAME STOPPED: the game ended by itself; `/tmp/um2.log` has why and `/tmp/pitrexd.log` the exit status. |
+| A message on the Vectrex instead of the game | CARD OUT OF DATE: the game still starts, on the current card; run Scripts > PiTrex_Make_UVMC2_Card when you have time. LINUX IS ON ONE CPU: reboot the MiSTer. UM2RUN IS MISSING: run Scripts > PiTrex_Update. GAME FILE NOT FOUND: the file went away between the pick and the start. GAME STOPPED: the game ended by itself; `/tmp/um2.log` has why and `/tmp/pitrexd.log` the exit status. |
 | The game froze | Check the core's Pause button first (a mapped controller button, or Pause when OSD open): a paused core stops taking the picture and the game waits for it. `/tmp/um2.log` then says `core not fetching`, and `core fetching again` when it carries on. |
 | An old overlay is on top of the game | OSD > Video Overlay & Geometry > Overlay = Off. |
 | A controller button does something different from the normal Vectrex core (e.g. View) | The MiSTer keeps controller mappings per core name, so "Vectrex-PiTrex" has its own mapping, separate from VECTREX's. Set it up once in the OSD (Define joystick buttons). |

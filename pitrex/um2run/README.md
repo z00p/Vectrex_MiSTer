@@ -37,7 +37,7 @@ Self test (needs `qemu-user`, `apt install qemu-user`): `./selftest/selftest.sh`
 `PASS` lines.
 
 ## Run by hand (SSH on the MiSTer)
-The Vectrex-PiTrex core must be loaded with PiTrex Mode on (the **UVMC2 Menu** entry in the
+The Vectrex-PiTrex core must be loaded with PiTrex Mode on (the **UVMC2 Games** entry in the
 PiTrex & UVMC2 menu does that), and both CPUs must be online (`cat /sys/devices/system/cpu/online`
 says `0-1`; after BigMig a normal reboot is needed).
 ```

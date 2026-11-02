@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* Vector font for um2run's messages and the Vectrex menu: capitals, digits, . - / > on a 2x4 grid.
+/* Vector font for um2run's messages: capitals, digits, . - / > on a 2x4 grid.
  * Each glyph is a list of points, nibbles x<<4|y; 0xFF = pen up (next point is a move), 0xFE = end. */
 #ifndef PTX_FONT_H
 #define PTX_FONT_H

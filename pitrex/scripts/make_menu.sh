@@ -8,7 +8,7 @@
 # The entries are plain MGLs (undated core name, paths relative to games/Vectrex-PiTrex, like any MiSTer game MGL): they keep
 # working after a core update, and anyone can write one for a game. Copy one and change the path, for example
 #   <file delay="2" type="f" index="3" path="UVMC2/Punchout.um2"/>
-# "UVMC2 Games" loads the core alone: pick a game in its OSD. "UVMC2 Menu" loads it and starts the menu on the Vectrex.
+# "UVMC2 Games" loads the core alone: pick a game in its OSD.
 FAT=/media/fat
 PITREX=$FAT/pitrex
 MENU="$FAT/_PiTrex & UVMC2"
@@ -87,16 +87,6 @@ fi
 	echo "</mistergamedescription>"
 } > "$MENU/UVMC2 Games.mgl"
 echo "UVMC2 Games (core only; pick in the OSD)"
-
-# the menu on the Vectrex: an empty file that pitrexd knows by its extension, offered in the OSD and started by this entry
-: > "$FAT/games/Vectrex-PiTrex/UVMC2/UVMC2 Menu.mnu"
-{
-	echo "<mistergamedescription>"
-	echo "  <rbf>$RBF</rbf>"
-	echo "  <file delay=\"2\" type=\"f\" index=\"3\" path=\"UVMC2/UVMC2 Menu.mnu\"/>"
-	echo "</mistergamedescription>"
-} > "$MENU/UVMC2 Menu.mgl"
-echo "UVMC2 Menu"
 
 # Tac/Scan sound: convert MAME's tacscan samples zip (games/mame/samples) once
 TS_ZIP=$FAT/games/mame/samples/tacscan.zip

@@ -1,7 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Stop the running PiTrex program; the Vectrex core hands back to the 6809.
-rm -f /tmp/pitrex_from_menu     # a game from the Vectrex menu: stay stopped, no return to the menu
 n=0
 for p in $(ps | grep -v grep | grep -v pitrex_launch | grep -E "/media/fat/pitrex/[^ ]+( |$)|/tmp/ptx/|um2run --bus" | grep -v -E "pitrex_launch|pitrexd" | awk '{print $1}'); do
 	kill "$p" 2>/dev/null && n=$((n+1))

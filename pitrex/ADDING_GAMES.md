@@ -24,12 +24,11 @@ cartridge images (`.um2` files) go, and how to give the games the files they rea
    It creates the folder.
 2. Copy everything on your UVMC2 SD card to `/media/fat/games/Vectrex-PiTrex/UVMC2/`, with its
    folders: `roms`, `PORTDATA`, loose files such as `QBERT2.VSM`, and the `.um2` games.
-3. Build the card: run **Scripts > PiTrex_Setup** again, or pick **REFRESH CARD** in the Vectrex
-   menu. The menu shows how far it has got. The time depends on the card size: about 25 minutes
-   for 3 GiB of files on a DE10-Nano, far less for a card with a few ROM zips. `.uf2` firmware, `ASSETS` folders (menu
-   pictures) and macOS files (`__MACOSX`, `._*`, `.DS_Store`) are left out.
-4. Load the Vectrex-PiTrex core from `_Unstable`, then use the OSD: **Load UVMC2** lists your games
-   and **UVMC2 Menu**.
+3. Build the card: run **Scripts > PiTrex_Setup** again, or **Scripts > PiTrex_Make_UVMC2_Card**.
+   It shows how far it has got. The time depends on the card size: about 25 minutes for 3 GiB of
+   files on a DE10-Nano, far less for a card with a few ROM zips. `.uf2` firmware, `ASSETS` folders
+   (menu pictures) and macOS files (`__MACOSX`, `._*`, `.DS_Store`) are left out.
+4. Load the Vectrex-PiTrex core from `_Unstable`, then use the OSD: **Load UVMC2** lists your games.
 
 **Or** just put `.um2` files in that folder (subfolders are fine). A game that needs no card
 (Veccy Road, the demos) then plays at once. With nothing to put on a card, PiTrex_Setup makes a
@@ -37,12 +36,8 @@ blank `sd.img`, so games can still save.
 
 You can copy the files with the MiSTer's SD card in your PC, or over the network.
 
-### Three ways to start a game
+### Two ways to start a game
 - **The OSD:** load the core, then **Load UVMC2** (or **Load PiTrex** for PiTrex programs).
-- **The Vectrex menu:** pick **UVMC2 Menu** in **Load UVMC2**, or use **UVMC2 Menu** in the main
-  menu's **PiTrex & UVMC2** folder. Stick up and down moves, stick left goes back, any button
-  chooses. When a game ends you are back in the menu. **Esc** on a keyboard goes back to the menu
-  at any time, from any game.
 - **An MGL file:** a standard MiSTer shortcut straight to one game. Put it anywhere in the main
   menu:
   ```xml
@@ -56,8 +51,8 @@ You can copy the files with the MiSTer's SD card in your PC, or over the network
 
 ### Changing the card later
 A new `.um2` shows up straight away and needs no card update. After adding or removing other files,
-the Vectrex menu says CARD OUT OF DATE: pick **REFRESH CARD**, or run
-**Scripts > PiTrex_Make_UVMC2_Card**. A game started from the OSD keeps using the current card.
+a game shows CARD OUT OF DATE for a moment and starts on the current card: run
+**Scripts > PiTrex_Make_UVMC2_Card** when you have time.
 - Your saves are kept: everything the games wrote to the old card (settings, high scores) is
   copied to the new one. The old card stays as `sd.img.bak` until the next rebuild.
 - A file you remove from the folder is left off the new card. The first time the builder
