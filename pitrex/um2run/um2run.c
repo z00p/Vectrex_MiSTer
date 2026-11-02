@@ -1848,9 +1848,11 @@ static int cmp_n(const void *a, const void *b) { const Ev *x = *(Ev *const *)a, 
 /* UM2_PROF=<hz>: CPU-time sampler (ITIMER_PROF -> SIGPROF), pc histogram per guest core (0, 1) and for helper threads (2).  PC diagnostics only
  * (qemu: share of guest instructions per place; the A9 cost per instruction is not the PC's). */
 static __thread int tl_guest; static int g_prof_hz;
-static struct { uint32_t pc, n; } g_prof[3][4096];
+static struct { uint32_t pc, n; } g_prof[3][4096]; static uint32_t g_prof_sys[3][512];   /* samples just after a host svc, per syscall number */
 static void on_prof(int sig, siginfo_t *si, void *vuc) {
     (void)sig; (void)si; uint32_t pc = ((ucontext_t *)vuc)->uc_mcontext.arm_pc & ~1u; int c = tl_guest ? (tl_core & 1) : 2;
+    if ((pc < IMG_BASE || pc >= IMG_TOP) && (pc & 0xFFF) >= 4 && ((((ucontext_t *)vuc)->uc_mcontext.arm_cpsr & 0x20) ? *(const uint16_t *)(uintptr_t)(pc - 2) == 0xDF00 : *(const uint32_t *)(uintptr_t)(pc - 4) == 0xEF000000)) {
+        uint32_t nr = ((ucontext_t *)vuc)->uc_mcontext.arm_r7; if (nr < 512) g_prof_sys[c][nr]++; }
     uint32_t k = (pc >> 1) * 2654435761u >> 20;
     for (int i = 0; i < 64; i++) { uint32_t j = (k + (uint32_t)i) & 4095; if (!g_prof[c][j].n) g_prof[c][j].pc = pc; if (g_prof[c][j].pc == pc) { g_prof[c][j].n++; return; } }
 }
@@ -1870,6 +1872,7 @@ static void prof_dump(void) {
         static uint32_t l[4096][2]; int n = 0; for (int i = 0; i < 4096; i++) if (g_prof[c][i].n) { l[n][0] = g_prof[c][i].pc; l[n][1] = g_prof[c][i].n; n++; }
         qsort(l, (size_t)n, sizeof l[0], cmp_prof);
         for (int i = 0; i < n && i < 28; i++) printf("   %6u  %08x\n", l[i][1], l[i][0]);
+        printf("-- syscalls %s (number:samples):", nm[c]); for (int i = 0; i < 512; i++) if (g_prof_sys[c][i]) printf(" %d:%u", i, g_prof_sys[c][i]); putchar('\n');
     }
 }
 static void print_summary(int final) {
