@@ -2064,19 +2064,25 @@ static void install_seccomp(void) {
 static volatile int g_ptx_up, g_guest_seen;   /* g_guest_seen: the image itself has produced a bus event (ptx may be up earlier: loading indicator) */
 static const char *g_sd_path;
 static double g_last_frame_t, g_bus_timeout = 60, g_frame_timeout = 30;    /* --bus: exit if the bus stays unused / no frame for this long */
+/* The timer goes to whichever thread is running: an exit from it is claimed once, or every thread that takes a tick while it runs starts its own bus_finish
+ * (VecOS, 1 Nov 2026: six at once, two producers on the ring, the process alive 2 h after its limit).  The ticks that follow are the deadline. */
+static volatile int g_exit_claimed, g_exit_rc; static volatile double g_exit_t;
+static int exit_claim(int rc) { if (__sync_lock_test_and_set(&g_exit_claimed, 1)) return 0; g_exit_rc = rc; g_exit_t = now(); return 1; }
 static void on_alarm(int sig, siginfo_t *si, void *vuc) {
     ucontext_t *uc = vuc; (void)sig; (void)si;
+    if (g_exit_claimed) { if (g_exit_t > 0 && now() - g_exit_t > 3) _exit(g_exit_rc); return; }
     memcpy(g_lastregs, &uc->uc_mcontext.arm_r0, sizeof g_lastregs); g_haveregs = 1;
     sample_pc(uc->uc_mcontext.arm_pc);
     if (++g_ticks % 20 == 0) { heartbeat(0); fflush(stdout); }
     { static int np = -1, done[8]; static uint32_t pa[8], pv[8]; static double pt[8];          /* UM2_POKE=addr:value:seconds[,..] (hex addr/value): PC test hook, stores a guest word once that many seconds after the start (e.g. a setting the menu would change) */
       if (np < 0) { np = 0; const char *e = getenv("UM2_POKE"); while (e && *e && np < 8) { char *q; pa[np] = (uint32_t)strtoul(e, &q, 16); if (*q == ':') q++; pv[np] = (uint32_t)strtoul(q, &q, 16); if (*q == ':') q++; pt[np] = strtod(q, &q); np++; if (*q == ',') q++; e = q; } }
       for (int i = 0; i < np; i++) if (!done[i] && now() - g_t0 >= pt[i] && pa[i] >= IMG_BASE && pa[i] < IMG_TOP - 4) { done[i] = 1; *(volatile uint32_t *)(uintptr_t)pa[i] = pv[i]; fprintf(stderr, "um2run: poked %08x = %08x\n", pa[i], pv[i]); } }
-    if (now() - g_t0 > opt.secs) { printf("-- time limit reached\n"); print_summary(1); fflush(stdout); bus_finish(); _exit(0); }
+    if (now() - g_t0 > opt.secs) { if (!exit_claim(0)) return; printf("-- time limit reached\n"); print_summary(1); fflush(stdout); bus_finish(); _exit(0); }
     if (opt.bus && g_bus_timeout > 0 && !g_guest_seen && now() - g_t0 > g_bus_timeout) {
         fprintf(stderr, "um2run: no bus event within %.0f s, exiting (--bus-timeout)\n", g_bus_timeout); fflush(stdout); _exit(4); }
     if (ptx_core_stalled) g_last_frame_t = now();     /* the core is not fetching (paused?): nothing the image did, so wait for it, however long */
     if (opt.bus && g_frame_timeout > 0 && g_ptx_up && g_last_frame_t && now() - g_last_frame_t > g_frame_timeout) {
+        if (!exit_claim(5)) return;
         fprintf(stderr, "um2run: no frame for %.0f s, exiting\n", g_frame_timeout); bus_finish(); _exit(5); }
 }
 
