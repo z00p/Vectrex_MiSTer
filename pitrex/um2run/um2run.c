@@ -611,6 +611,7 @@ static int g_nospi;      /* UM2_NOSPIPATCH=1: SPI0 stays on the trap path (A/B t
 static int g_nonewblk;   /* UM2_NONEWBLK=1: IO_BANK0, PADS_BANK0 and DWT stay on the trap path (A/B timing, regression) */
 static int g_noreach;    /* UM2_NOREACH=1: the hot-patch reach of 1 Nov 2026 off (IT-block sites, relocated branches, hoisted ALU halfword, 32-bit second op, widened next-instruction set): the 31 Oct behaviour, for A/B counts */
 static int g_novrint;    /* UM2_NOVRINT=1: VRINTA/N/P/M.F32 are skipped as before (A/B) */
+static int g_noite;      /* UM2_NOITE=1: two-instruction IT blocks (ITT / ITE of two 16-bit ldr/str) stay on the trap path, as before 2 Nov 2026 (A/B) */
 typedef struct { int ok, load, size, sgn, rt, rt2, rmask, wbreg; uint32_t wbval; } Mi;
 
 static int popc(unsigned x) { return __builtin_popcount(x); }
@@ -1031,6 +1032,7 @@ static void stub_setup(void) {
     g_dwtfast = getenv("UM2_NODWTFAST") == NULL;
     g_noreach = getenv("UM2_NOREACH") != NULL;
     g_novrint = getenv("UM2_NOVRINT") != NULL;
+    g_noite = getenv("UM2_NOITE") != NULL;
     if (!g_stub_ready) perror("um2run: stub area (division stays on the trap path)");
 }
 static uint32_t enc_bw(uint32_t from, uint32_t to) {      /* Thumb-2 B.W T4: returns h1 | h2 << 16 */
@@ -1310,6 +1312,7 @@ static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int 
     int pre = 0;                                          /* patched from site - 2: 1 = the pair is `ldr rt,[pc,#imm]` (constant) + the site instruction, 2 = a plain ALU halfword before the site is hoisted
                                                            * into the stub, 3 = the site is the only instruction of an IT block and the `it` goes with it (the stub starts with the inverse conditional branch) */
     unsigned itcc = 0; uint16_t preh = 0;                 /* pre 3: the IT condition; pre 2: the hoisted halfword */
+    int itp = 0, itb = 0;                                 /* pre 3 with two instructions: itp 1 = ITT (both on the condition), 2 = ITE (one or the other); itb: the site is the second instruction (the IT is at site - 4) */
     int nbr = -1; uint32_t nbr_t = 0; uint16_t nbr_cb = 0;      /* the next halfword is a B<cond>.n (0..13), B.n (14) or CBZ/CBNZ (15, nbr_cb = the stub's own CBZ/CBNZ): relocated as branches in the stub */
     uint32_t itst = ((c->r[16] >> 8) & 0xFC) | ((c->r[16] >> 25) & 3);
     if (len == 2) {
@@ -1322,10 +1325,24 @@ static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int 
         else return NOPE(HW_ENC32);
     }
     if (itst && g_noreach) return NOPE(HW_IT);
-    if (itst) {                                           /* inside an IT block: only `it<cc>` + this one instruction (mask 1000b), patched from the `it` */
+    if (itst) {                                           /* inside an IT block: `it<cc>` + this one instruction (mask 1000b), or a two-instruction ITT / ITE block of two 16-bit word ldr/str, patched from the `it` */
         int ih = g_rd16(site - 2), iq = g_rd16(site - 4);
-        if (ih < 0 || iq < 0 || (ih & 0xFF08) != 0xBF08 || (ih & 7) != 0 || (uint32_t)(ih & 0xFF) != itst || iq >= 0xE800 || ((ih >> 4) & 15) >= 14 || target_hits(site, site) || bm_get(g_pcover, site - 2)) return NOPE(HW_IT);
-        itcc = (unsigned)(ih >> 4) & 15; pre = 3; span = len == 2 ? 4 : 6;
+        if (!g_noite && len == 2 && ih >= 0) {            /* UM2_NOITE=1: the 1 Nov behaviour (two-instruction blocks stay on the trap path) */
+            int pa = g_rd16(site + 2);                    /* site is the first instruction of the block: the IT is at site - 2, the second instruction follows */
+            if ((ih & 0xFF00) == 0xBF00 && (ih & 7) == 4 && (uint32_t)(ih & 0xFF) == itst && pa >= 0 && (pa & 0xF000) == 0x6000 && iq >= 0 && iq < 0xE800 && ((ih >> 4) & 15) < 14
+                && !target_hits(site, site) && !target_hits(site, site + 2) && !bm_get(g_pcover, site - 2)) {
+                op[1] = (HOp){ (pa & 0x0800) != 0, pa & 7, (pa >> 3) & 7, (uint32_t)((pa >> 6) & 31) * 4, 0, 0 };
+                itp = ((ih >> 3) & 1) == ((ih >> 4) & 1) ? 1 : 2; itcc = (unsigned)(ih >> 4) & 15; pre = 3; span = 6; nop = 2;
+            } else if (iq >= 0 && (iq & 0xFF00) == 0xBF00 && (iq & 7) == 4 && itst == (((uint32_t)iq & 0xE0) | (((uint32_t)iq << 1) & 0x1F)) && (ih & 0xF000) == 0x6000 && ((iq >> 4) & 15) < 14
+                       && g_rd16(site - 6) >= 0 && g_rd16(site - 6) < 0xE800 && !target_hits(site, site) && !target_hits(site, site - 2) && !bm_get(g_pcover, site - 4)) {
+                op[1] = op[0]; op[0] = (HOp){ (ih & 0x0800) != 0, ih & 7, (ih >> 3) & 7, (uint32_t)((ih >> 6) & 31) * 4, 0, 0 };   /* site is the second instruction: the IT is at site - 4 */
+                itp = ((iq >> 3) & 1) == ((iq >> 4) & 1) ? 1 : 2; itcc = (unsigned)(iq >> 4) & 15; pre = 3; span = 6; nop = 2; itb = 1;
+            }
+        }
+        if (!itp) {
+            if (ih < 0 || iq < 0 || (ih & 0xFF08) != 0xBF08 || (ih & 7) != 0 || (uint32_t)(ih & 0xFF) != itst || iq >= 0xE800 || ((ih >> 4) & 15) >= 14 || target_hits(site, site) || bm_get(g_pcover, site - 2)) return NOPE(HW_IT);
+            itcc = (unsigned)(ih >> 4) & 15; pre = 3; span = len == 2 ? 4 : 6;
+        }
     } else if (len == 2) {
         nx = g_rd16(site + 2); if (nx < 0) return NOPE(HW_NONEXT);
         int ok = !target_hits(site, site + 2);
@@ -1371,17 +1388,20 @@ static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int 
     }
     for (int i = 0; i < nop; i++) if (!op[i].cst && (op[i].rn == 13 || op[i].rn == 15 || op[i].rt == 13 || op[i].rt == 15)) return NOPE(HW_REG);
     if (rmp1 == 14 || rmp1 == 16) return NOPE(HW_REG);                           /* rm = sp / pc */
-    uint32_t psite = pre ? site - 2 : site;               /* first patched address */
+    uint32_t psite = pre ? site - (itb ? 4u : 2u) : site;               /* first patched address */
     uint16_t k[104]; int n = 0;
     struct { int at; int which; uint32_t val; } lits[8]; int nl = 0;       /* ldr.w literal fixups: index of the offset halfword */
 #define E(x) k[n++] = (uint16_t)(x)
-    int skip_at = -1;
-    if (pre == 3) { skip_at = n; n += 2; }              /* b<!cc>.w end: the IT's condition is false, nothing happens (flags are still the caller's) */
+    int skip_at = -1, mid_at = -1, else_n = -1;
+    if (pre == 3) { skip_at = n; n += 2; }              /* b<!cc>.w end: the IT's condition is false, nothing happens (flags are still the caller's); ITE: b<!cc>.w to the second part */
+    int nparts = itp == 2 ? 2 : 1;                      /* ITE: two complete sequences, one instruction each, the first ends with a b.w to the common end */
+    for (int part = 0; part < nparts; part++) {
+    if (part == 1) { mid_at = n; n += 2; else_n = n; }
     if (pre == 2) E(preh);                              /* the hoisted ALU halfword, on the live registers and flags */
     E(0xE92D); E(0x500F);                               /* push {r0-r3, r12, lr}     */
     E(0xF3EF); E(0x8300);                               /* mrs r3, apsr              */
     E(0xF84D); E(0x3D04);                               /* str r3, [sp, #-4]!        */
-    for (int i = 0; i < nop; i++) {
+    for (int i = nparts == 2 ? part : 0; i < (nparts == 2 ? part + 1 : nop); i++) {
         HOp *o = &op[i];
         if (o->cst) {                                   /* rt = constant */
             int dst = slot_of(o->rt) >= 0 ? 0 : o->rt;
@@ -1406,6 +1426,7 @@ static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int 
     E(0xF85D); E(0x3B04);                               /* ldr r3, [sp], #4          */
     E(0xF383); E(0x8800);                               /* msr apsr_nzcvq, r3        */
     E(0xE8BD); E(0x500F);                               /* pop {r0-r3, r12, lr}      */
+    }
     if (nx >= 0) E((uint16_t)nx);                       /* the relocated instruction */
     if (nx2 >= 0) E((uint16_t)nx2);                     /* ... its second halfword */
     int nb_at = -1;
@@ -1425,7 +1446,8 @@ static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int 
     uint32_t bw = enc_bw(base + (uint32_t)b_at * 2, (nbr == 14 || nbr == 15) ? nbr_t : psite + (uint32_t)span);
     k[b_at] = (uint16_t)(bw & 0xFFFF); k[b_at + 1] = (uint16_t)(bw >> 16);
     if (nb_at >= 0) { bw = enc_bw(base + (uint32_t)nb_at * 2, nbr == 15 ? psite + (uint32_t)span : nbr_t); k[nb_at] = (uint16_t)(bw & 0xFFFF); k[nb_at + 1] = (uint16_t)(bw >> 16); }
-    if (skip_at >= 0) { bw = enc_bcc(base + (uint32_t)skip_at * 2, base + (uint32_t)b_at * 2, itcc ^ 1u); k[skip_at] = (uint16_t)(bw & 0xFFFF); k[skip_at + 1] = (uint16_t)(bw >> 16); }
+    if (skip_at >= 0) { bw = enc_bcc(base + (uint32_t)skip_at * 2, base + (uint32_t)(else_n >= 0 ? else_n : b_at) * 2, itcc ^ 1u); k[skip_at] = (uint16_t)(bw & 0xFFFF); k[skip_at + 1] = (uint16_t)(bw >> 16); }
+    if (mid_at >= 0) { bw = enc_bw(base + (uint32_t)mid_at * 2, base + (uint32_t)b_at * 2); k[mid_at] = (uint16_t)(bw & 0xFFFF); k[mid_at + 1] = (uint16_t)(bw >> 16); }
     memcpy((void *)(uintptr_t)base, k, (size_t)bytes);
 #undef E
     __builtin___clear_cache((char *)(uintptr_t)base, (char *)(uintptr_t)(base + bytes));
@@ -1433,7 +1455,7 @@ static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int 
     g_nhot++;
     { static int dsd = -1; if (dsd < 0) dsd = getenv("UM2_DUMPSTUB") != NULL; if (dsd) { fprintf(stderr, "stubdump %08x:", base); for (int q = 0; q < n; q++) fprintf(stderr, " %04x", k[q]); fputc(10, stderr); } }
     if (opt.bus_verbose) fprintf(stderr, "hot_patch: %08x %s r%d,[r%d,#%u]%s%s%s -> stub %08x%c", site, op[0].load ? "ldr" : "str", op[0].rt, op[0].rn, op[0].imm,
-        len == 2 ? "+next16" : ".w", pre == 1 ? "+PRE(site-2)" : pre == 2 ? "+PRE(alu)" : pre == 3 ? "+IT" : nop == 2 ? "+op2" : "", nbr >= 0 ? "+branch" : "", base, 10);
+        len == 2 ? "+next16" : ".w", pre == 1 ? "+PRE(site-2)" : pre == 2 ? "+PRE(alu)" : pre == 3 ? (itp == 1 ? "+ITT" : itp == 2 ? "+ITE" : "+IT") : nop == 2 ? "+op2" : "", nbr >= 0 ? "+branch" : "", base, 10);
     return pre ? 0 : 1;      /* pre: the site is the SECOND halfword of the new b.w, so it is not re-run: this access goes on through the normal emulation and resumes at site + 2 = the end of the patch */
 }
 
@@ -2420,6 +2442,11 @@ static void bus_finish(void) {
         uint64_t h = 0xcbf29ce484222325ull; const uint32_t *p = (const uint32_t *)(uintptr_t)PSRAM_BASE;
         for (uint32_t i = 0; i < PSRAM_SIZE / 4; i++) h = (h ^ p[i]) * 0x100000001b3ull;
         fprintf(stderr, "um2run: PSRAM hash %016llx\n", (unsigned long long)h);
+    }
+    if (getenv("UM2_PSRAMUSE") && !opt.no_psram) {     /* diagnostics: how much of the 8 MB PSRAM the guest wrote (highest and number of non-zero 4 KiB pages): an image that needs more than we model shows up here */
+        const uint32_t *p = (const uint32_t *)(uintptr_t)PSRAM_BASE; uint32_t hi = 0, used = 0;
+        for (uint32_t pg = 0; pg < PSRAM_SIZE / 4096; pg++) { int nz = 0; for (uint32_t i = 0; i < 1024 && !nz; i++) nz = p[pg * 1024 + i] != 0; if (nz) { used++; hi = pg + 1; } }
+        fprintf(stderr, "um2run: PSRAM use: %u of %u pages non-zero, highest page end %u KiB of %u KiB\n", used, (unsigned)(PSRAM_SIZE / 4096), hi * 4, (unsigned)(PSRAM_SIZE / 1024));
     }
 #ifdef UM2_VFPTEST
     fprintf(stderr, "vfptest: %u helper calls from stubs, %u of them on the guest stack\n", g_vt_calls, g_vt_guest);
