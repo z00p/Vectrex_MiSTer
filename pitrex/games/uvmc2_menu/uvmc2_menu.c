@@ -33,9 +33,9 @@ enum { ORB = 0xD000, ORA = 0xD001, DDRB = 0xD002, DDRA = 0xD003,
        SR = 0xD00A, ACR = 0xD00B, PCR = 0xD00C };
 
 enum { FRAME_CYCLES = 30000, MAX_ITEMS = 1024, ROWS = 7, COLS = 16,
-       STEP = 20, STEP_N = 31,            /* one font grid step: 20 * 32 = 640 beam units */
-       ADV = 3, ROW_Y = 3000, TOP_Y = 10500, LEFT_X = -15000,
-       Z_TEXT = 0x48, Z_HOT = 0x7F, Z_TITLE = 0x60,
+       STEP = 16, STEP_N = 39, TAIL = 5,  /* one font grid step: 16 * 40 = 640 beam units, not too fast, see ramp() */
+       ADV = 3, ROW_Y = 3300, TOP_Y = 12000, LEFT_X = -15000,
+       Z_TEXT = 0x40, Z_HOT = 0x68, Z_TITLE = 0x58,
        STICK = 50, REPEAT_FIRST = 20, REPEAT_NEXT = 6 };
 
 typedef struct { char title[COLS + 1]; char path[768]; } item_t;
@@ -68,7 +68,8 @@ static void beam_zero(void)
 	mux(1, 0);
 }
 
-/* the beam moves (dx, dy) * (n + 1) units in n + 2 cycles, lit or not */
+/* the beam moves (dx, dy) * (n + 1) units in n + 2 cycles, lit or not. A lit stroke stays lit for TAIL cycles more:
+ * the ramp runs on a little after the write that should end it, and a fast stroke then stops well short of its corner */
 static void ramp(int dx, int dy, int n, int lit)
 {
 	mux(0, dy);
@@ -76,7 +77,7 @@ static void ramp(int dx, int dy, int n, int lit)
 	ptx_write(SR, lit ? 0xFF : 0);
 	ptx_write(T1L, (uint8_t)n);
 	ptx_write(T1H, 0);
-	ptx_advance_cycles((uint32_t)n + 2);
+	ptx_advance_cycles((uint32_t)n + 2 + (lit ? TAIL : 0));
 	ptx_write(SR, 0);
 }
 
