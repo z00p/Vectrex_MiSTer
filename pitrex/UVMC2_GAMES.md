@@ -1,11 +1,11 @@
-# UVMC2 cartridge images on the MiSTer (alpha)
+# UVMC2 cartridge images on the MiSTer (beta)
 
 The Vectrex-PiTrex core can run **UVMC2 cartridge images** (`.um2` files, the firmware images of
 the [UVMC2](https://github.com/tullulah/uvmc2-sdk) multicart) unmodified. The MiSTer's ARM processor
 plays the part of the cartridge's RP2350 (the program is called `um2run`, see
 [um2run/README.md](um2run/README.md)) and the core is the console.
 
-This is an **unofficial alpha**. It is not made by, or supported by, the UVMC2 team: please do not
+This is an **unofficial beta**. It is not made by, or supported by, the UVMC2 team: please do not
 report MiSTer problems to them, use this fork's
 [Issues](https://github.com/z00p/Vectrex_MiSTer/issues). **No cartridge images, ROM sets or card
 images are included**: bring your own (and your own MAME ROM sets for the games that need them).
@@ -88,8 +88,9 @@ VECTREX (not loaded from the menu entry) the keys are skipped with a line in the
 ## Card images
 Some images read their ROM set from an SD card and keep scores and settings on it. The card
 is **emulated from an ordinary file**: a FAT32 image of the whole card without a partition
-table (a "superfloppy"). Card images of 2 GiB or more do not work yet, and a raw dump of a real
-card (with its partition table) is untested: copy the card's files instead.
+table (a "superfloppy"). Card images of 2 GiB or more work in PC tests but have not been tried on a
+real MiSTer, and a raw dump of a real card (with its partition table) is untested: copy the card's
+files instead.
 
 **The easy way is in [ADDING_GAMES.md](ADDING_GAMES.md):** copy everything on your UVMC2 SD card
 (or just your ROM zips) to `/media/fat/pitrex/uvmc2/card/` and run PiTrex_Setup or
@@ -137,16 +138,16 @@ If a game says it cannot find its ROMs, the usual causes are a wrong folder, a m
 different MAME version (the games check the files' checksums).
 
 ## Tested games
-On a DE10-Nano, 26 to 29 October 2026 (the B10 core on 29 October), with the images named below.
+On a DE10-Nano, 26 October to 2 November 2026 (the B10 core from 29 October), with the images named below. Frame rates are from the attract modes and vary with the scene.
 Other builds of the same games may behave differently. These are the images used for testing. They were shared in UVMC2 community groups; download links will be added once their authors are happy for us to link them.
 
 | Game (image tested) | Card | How it ran |
 |---|---|---|
-| Star Wars (`Star_Wars.um2`) | your MAME `starwars` + `starwar1` zips in `roms/` | music and speech good; about 40 frames/s; whole picture with Open Matte |
-| BattleZone 0.3a (`BattleZone_0_3a.um2`) | its **own** copy, no ROMs (it writes to the card) | plays well, cart audio good; about 23 frames/s; whole picture with Open Matte. Button 1 starts, button 4 fires |
-| Pac-Man (`pacman-uvmc2-SD-card.um2`) | a card image with the folders, no ROMs | cart audio good; about 26 frames/s, game speed right |
-| Punch-Out (`Punchout.um2`) | your MAME `punchout.zip` | plays but about two thirds speed (the MiSTer manages ~38 of its 60 frames/s), so sound and speech are a bit off; sound comes through the Vectrex PSG; its JACK audio route is untested |
-| Veccy Road 0.10 (`veccy_road_v010.um2`) | none | plays well, with sound, about 39 frames/s |
+| Star Wars (`Star_Wars.um2`) | your MAME `starwars` + `starwar1` zips in `roms/` | music and speech good; about 45 frames/s; whole picture with Open Matte |
+| BattleZone 0.3a (`BattleZone_0_3a.um2`) | its **own** copy, no ROMs (it writes to the card) | plays well, cart audio good; about 40 frames/s; whole picture with Open Matte. Button 1 starts, button 4 fires |
+| Pac-Man (`pacman-uvmc2-SD-card.um2`) | a card image with the folders, no ROMs | cart audio good; about 32 frames/s, game speed right |
+| Punch-Out (`Punchout.um2`) | your MAME `punchout.zip` | plays well, close to full speed (about 55 of its 60 frames/s); sound comes through the Vectrex PSG; its JACK audio route is untested |
+| Veccy Road 0.10 (`veccy_road_v010.um2`) | none | plays well, with sound, about 50 frames/s |
 
 The sidecar files used for these runs (the card names are up to you):
 ```

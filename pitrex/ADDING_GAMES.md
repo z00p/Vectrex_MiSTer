@@ -16,7 +16,8 @@ cartridge images (`.um2` files) go, and how to give the games the files they rea
   `/media/fat/pitrex/uvmc2/`. You don't make it: PiTrex_Setup builds it for you. Every game uses
   it unless its settings file names another card.
 - **Can I use an image of my real SD card?** Copy its files instead (see the steps). A raw dump of
-  the card is untested, it has a partition table, and images of 2 GiB or more do not work yet.
+  the card is untested, it has a partition table, and images of 2 GiB or more have not been tried
+  on a real MiSTer.
 - **Why do some games need settings files?** A settings file, `Game.um2.cfg` next to `Game.um2`,
   changes how one game runs. BattleZone gets its own card, and its settings file is written for
   you automatically. Most other games need none: Punch-Out gets its speed by itself, and Open
@@ -59,7 +60,7 @@ does. New `.um2` games in the folder are copied either way.
   is running.
 - If something goes wrong (not enough free space, for example), the old card is left as it was.
 - The card is at least 64 MiB, and bigger if your files need it. A card over 2000 MiB is not
-  made (the games cannot read card images of 2 GiB or more yet): remove files the games don't
+  made: remove files the games don't
   need, such as ROM sets for games you don't have.
 
 ## Updating from the first alpha

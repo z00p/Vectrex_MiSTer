@@ -74,7 +74,7 @@ experimental `orient` and `view`. They are described in [../UVMC2_GAMES.md](../U
 The other `UM2_*` variables are developer diagnostics and A/B switches; `grep getenv um2run.c um2bus.c um2aud.c`.
 
 ## Limits (alpha)
-- Speed: the A9 is much slower than the cartridge's RP2350, so the picture is drawn at a lower frame rate than on a real cartridge. Measured on a DE10-Nano (28 Oct 2026): Pac-Man about 26 frames/s (game speed right), BattleZone about 23, Star Wars about 40, Veccy Road about 39; Punch-Out manages only about 38 of the 60 frames/s it wants, so it plays at about two thirds speed and its speech sounds slow. The OSD is laggy while a game runs.
+- Speed: the A9 is much slower than the cartridge's RP2350, so the picture is drawn at a lower frame rate than on a real cartridge. Measured in attract modes on a DE10-Nano (2 Nov 2026): Pac-Man about 32 frames/s (game speed right), BattleZone about 40, Star Wars about 45, Veccy Road about 50, Punch-Out about 55 of the 60 frames/s it wants. VecDoom and Out Run still slow down in heavy scenes.
 - Start-up: about 1 to 2 seconds of static at the start (cart audio while both guest cores still
   share one CPU), and a LOADING screen for 10 to 20 seconds on the big images.
 - Picture: slanted text and occasional jitter; the left edge is clipped in the cartridge menus; landscape games are cropped on the portrait screen.
