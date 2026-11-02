@@ -530,6 +530,7 @@ static pthread_mutex_t g_busy_m = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_busy_c = PTHREAD_COND_INITIALIZER;
 static int g_busy_req;
 static volatile uint32_t g_busy_mask;
+static long g_busy_ns = 25000;             /* how long BUSY stays set after a PIO-TX trigger (UM2_BUSYUS=<us>; 0: clear at once when the helper wakes).  A nanosleep takes at least ~110 us on the A9 kernel, so the real period is longer */
 static volatile uint32_t g_aud_busy;     /* channels with a paced cart-audio transfer running */
 static void dma_sync(int ch) {
 	if (!g_mir) return;
@@ -551,7 +552,7 @@ static void *busy_thread(void *arg) {
 		while (!g_busy_req) pthread_cond_wait(&g_busy_c, &g_busy_m);
 		g_busy_req = 0;
 		pthread_mutex_unlock(&g_busy_m);
-		struct timespec ts = { 0, 25000 }; nanosleep(&ts, NULL);
+		if (g_busy_ns) { struct timespec ts = { 0, g_busy_ns }; nanosleep(&ts, NULL); }
 		uint32_t m = __sync_fetch_and_and(&g_busy_mask, 0);
 		for (int ch = 0; ch < 16; ch++) if (m >> ch & 1) {
 			volatile uint32_t *w = g_mir + ch * 16;
@@ -1169,6 +1170,7 @@ void um2bus_init(const um2bus_cfg_t *cfg) {
 	SIMPIO->fifo = fifo0;
 	for (int j = 0; j < 4; j++) for (int i = 0; i < NPIO; i++) g_pio[i].sm[j].osr_cnt = 32;
 	if (C.capture_path) g_cap = fopen(C.capture_path, "wb");
+	{ const char *e = getenv("UM2_BUSYUS"); if (e) { long u = atol(e); g_busy_ns = u <= 0 ? 0 : u > 5000 ? 5000000 : u * 1000; } }
 	g_nofast = getenv("UM2BUS_NOFAST") != NULL; g_aud_pred = getenv("UM2_NOAUDPRED") == NULL; g_busstat = getenv("UM2_BUSSTAT") != NULL;
 	if (C.dma_mirror) { g_mir = C.dma_mirror; pthread_t th; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setstacksize(&at, 1 << 16); if (!pthread_create(&th, &at, busy_thread, NULL)) pthread_detach(th); else g_mir = NULL; }
 	if (getenv("UM2BUS_NOEDGE")) g_edge_time = 0;
