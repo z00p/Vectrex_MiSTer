@@ -2269,10 +2269,11 @@ static const uint8_t ld_font[7][10] = {
 enum { LD_STEP = 640, LD_TY = -320, LD_BY = -2240, LD_BH = 1280, LD_BW = 12800, LD_Z = 0x50 };   /* beam units (as ptx_selftest): text 12800 x 2560, bar below, block centred */
 static void ld_mux(int sel, int v) { ptx_write(V_ORA, (uint8_t)v); ptx_write(V_ORB, (uint8_t)(sel << 1)); ptx_advance_cycles(2); ptx_write(V_ORB, 1); }
 static void ld_zero(void) { ptx_advance_cycles(20); ptx_write(V_PCR, 0xCC); ptx_advance_cycles(40); ptx_write(V_PCR, 0xCE); ld_mux(1, 0); }
-/* one ramp (as ptx_selftest): the beam moves (dx, dy) * (n + 1) units in n + 2 cycles, lit or not */
+/* one ramp (as ptx_selftest): the beam moves (dx, dy) * (n + 1) units in n + 2 cycles, lit or not. A lit stroke stays lit 5 cycles
+ * more: the ramp runs on a little after the write that should end it, and the stroke would stop short of its corner */
 static void ld_ramp(int dx, int dy, int n, int lit) {
     ld_mux(0, dy); ptx_write(V_ORA, (uint8_t)dx); ptx_write(V_SR, lit ? 0xFF : 0); ptx_write(V_T1L, (uint8_t)n); ptx_write(V_T1H, 0);
-    ptx_advance_cycles(n + 2); ptx_write(V_SR, 0);
+    ptx_advance_cycles(n + 2 + (lit ? 5 : 0)); ptx_write(V_SR, 0);
 }
 static void ld_glyph(const uint8_t *g, int ox, int oy) {
     ld_zero();
@@ -2281,7 +2282,7 @@ static void ld_glyph(const uint8_t *g, int ox, int oy) {
         if (*g == 0xFF) { mv = 1; continue; }
         int x = *g >> 4, y = *g & 15;
         if (!st) { ld_ramp((ox + x * LD_STEP) / 64, (oy + y * LD_STEP) / 64, 63, 0); st = 1; }   /* zero -> first point in one move */
-        else ld_ramp(20 * (x - px), 20 * (y - py), 31, !mv);                                      /* 20 * 32 = one grid step */
+        else ld_ramp(16 * (x - px), 16 * (y - py), 39, !mv);   /* 16 * 40 = one grid step */
         mv = 0; px = x; py = y;
     }
 }
@@ -2297,7 +2298,7 @@ static void msg_glyph(const uint8_t *g, int ox, int oy) {
         if (*g == 0xFF) { mv = 1; continue; }
         int x = *g >> 4, y = *g & 15;
         if (!st) { ld_ramp((ox + x * MSG_STEP) / 192, (oy + y * MSG_STEP) / 192, 191, 0); st = 1; }   /* zero -> first point: anywhere on the screen, so a slow ramp */
-        else ld_ramp(20 * (x - px), 20 * (y - py), 31, !mv);                                        /* 20 * 32 = one grid step */
+        else ld_ramp(16 * (x - px), 16 * (y - py), 39, !mv);   /* 16 * 40 = one grid step */
         mv = 0; px = x; py = y;
     }
 }

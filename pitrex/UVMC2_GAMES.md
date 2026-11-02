@@ -40,7 +40,8 @@ There are three ways to start a game:
 - **The OSD:** load the core, then **Load UVMC2** > pick the `.um2`. (This core switches PiTrex Mode
   on by itself when you pick a file; if nothing happens, check OSD > System > PiTrex Mode.)
 - **The Vectrex menu:** pick **UVMC2 Menu** in **Load UVMC2**, or use **UVMC2 Menu** in the main
-  menu's **PiTrex & UVMC2** folder. When a game ends you are back in the menu.
+  menu's **PiTrex & UVMC2** folder. When a game ends you are back in the menu, and **Esc** on a
+  keyboard goes back to it at any time.
 - **An MGL file:** a standard MiSTer shortcut, see [ADDING_GAMES.md](ADDING_GAMES.md#three-ways-to-start-a-game).
 
 Then:

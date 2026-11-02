@@ -245,6 +245,12 @@ check "no notice when the card is current" 'waitfor "[ \$(runs) -gt $n ]" 6 && [
 rm -f "$FAT/pitrex/make_card.sh"; sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain.um2
 check "no notice without the builder" 'waitfor "[ \$(runs) -gt $n ]" 6 && [ ! -s "$W/msgs.log" ]'
 
+echo "== 14. Esc: back to the menu"
+m=$(mens); touch "$T/pitrex_menu_key"
+check "from a game: menu, game stopped" 'waitfor "[ \$(mens) -gt $m ]" 6 && [ ! -e "$T/pitrex_menu_key" ] && grep -q "Esc: back to the Vectrex menu" "$T/pitrexd.log"'
+sleep 1; m=$(mens); touch "$T/pitrex_menu_key"; sleep 2
+check "already in the menu: nothing happens" '[ $(mens) -eq $m ] && [ ! -e "$T/pitrex_menu_key" ]'
+
 echo
 if [ $fails -eq 0 ]; then echo "all passed"; else echo "$fails FAILED"; echo "--- pitrexd.log"; cat "$T/pitrexd.log"; echo "--- pitrexd.out"; cat "$W/pitrexd.out"; fi
 exit $(( fails > 0 ))

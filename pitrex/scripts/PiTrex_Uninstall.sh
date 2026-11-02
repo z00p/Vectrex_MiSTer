@@ -10,6 +10,7 @@
 # folders are only removed when nothing of yours is left in them.
 [ -x /media/fat/Scripts/PiTrex_Stop.sh ] && /media/fat/Scripts/PiTrex_Stop.sh > /dev/null
 for p in $(ps | grep -v grep | grep pitrexd.sh | awk '{print $1}'); do kill "$p"; done
+[ -f /tmp/ptx_keywatch.pid ] && kill "$(cat /tmp/ptx_keywatch.pid)" 2>/dev/null
 
 # MiSTer.ini first, while the helper is still there (it also undoes the [MiSTer] change of older releases)
 INI=/media/fat/MiSTer.ini

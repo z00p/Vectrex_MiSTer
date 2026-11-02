@@ -41,7 +41,8 @@ You can copy the files with the MiSTer's SD card in your PC, or over the network
 - **The OSD:** load the core, then **Load UVMC2** (or **Load PiTrex** for PiTrex programs).
 - **The Vectrex menu:** pick **UVMC2 Menu** in **Load UVMC2**, or use **UVMC2 Menu** in the main
   menu's **PiTrex & UVMC2** folder. Stick up and down moves, stick left goes back, any button
-  chooses. When a game ends you are back in the menu.
+  chooses. When a game ends you are back in the menu. **Esc** on a keyboard goes back to the menu
+  at any time, from any game.
 - **An MGL file:** a standard MiSTer shortcut straight to one game. Put it anywhere in the main
   menu:
   ```xml

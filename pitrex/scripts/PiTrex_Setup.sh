@@ -50,7 +50,7 @@ See ADDING_GAMES.md in the PiTrex guide.
 (This file is not copied to the card.)
 EOF
 fi
-chmod +x "$PITREX"/*.sh "$PITREX/um2run/um2run" "$PITREX/um2run/mister_run.sh" "$PITREX/uvmc2_menu" 2>/dev/null
+chmod +x "$PITREX"/*.sh "$PITREX/um2run/um2run" "$PITREX/um2run/mister_run.sh" "$PITREX/uvmc2_menu" "$PITREX/ptx_keywatch" 2>/dev/null
 if [ ! -f "$PITREX/um2run/um2run" ]; then
 	echo "Note: $PITREX/um2run/um2run is missing, so .um2 games cannot start (unzip the release again)."
 fi
