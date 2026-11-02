@@ -16,9 +16,10 @@ hold=--hold; args=""
 for a in "$@"; do if [ "$a" = "--no-hold" ]; then hold=""; else args="$args $a"; fi; done
 # Black-screen guard (26 Oct 2026): unless the caller picks its own placement (--cpu/--rt), use the proven 2-CPU layout but SETTLE
 # first and keep core 1 on CPU0 for the first seconds, so Main (pinned to CPU1) is never starved while it sets the video mode.
-# The guard is only needed right after a core load: with the core up for 15 s or more (age of /tmp/CORENAME) it shrinks to 1 / 2 s.  The long
-# guard costs cart audio (BattleZone: static for the first 10 s and then a 20 s fast catch-up, seen on hardware 28 Oct; with 1 / 2 s it was clean).
-st=8; c1=10; ca=$(( $(date +%s) - $(stat -c %Y /tmp/CORENAME 2>/dev/null || date +%s) )); [ "$ca" -ge 15 ] && { st=1; c1=2; }
+# The guard is only needed right after a core load: with the core up for 15 s or more (age of /tmp/CORENAME) it shrinks to 1 s of settle, and core 1 has its own
+# CPU from the start.  The long guard costs cart audio (BattleZone: static for the first 10 s and then a 20 s fast catch-up, seen on hardware 28 Oct), and even 2 s
+# showed as a slow, rough start (2 Nov 2026, 80 starts at 2 / 1 / 0.5 / 0 s: Punch-Out's second second played 40% of real time at 2 s, 100% at 0, none stopped).
+st=8; c1=10; ca=$(( $(date +%s) - $(stat -c %Y /tmp/CORENAME 2>/dev/null || date +%s) )); [ "$ca" -ge 15 ] && { st=1; c1=0; }
 # whole words only: $args is " a1 a2 ..." (a space before each arg), so with a space added at the end every arg,
 # first or last, is " arg "; --cpu1 / --cpu1-after alone do not count as picking the placement
 case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3000 --settle ${SETTLE:-$st} --cpu1-after ${CPU1_AFTER:-$c1}$args";; esac

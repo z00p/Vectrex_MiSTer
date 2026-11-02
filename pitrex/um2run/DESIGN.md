@@ -84,7 +84,8 @@ a ~60 ms jitter buffer. `UM2_NOAUDIO=1` turns all of this off.
 
 Right after a core load, Main is still setting the video mode on CPU1. `mister_run.sh` therefore
 waits (`--settle`) and keeps core 1 of the guest on CPU0 for the first seconds (`--cpu1-after`);
-once the core has been up for 15 s the guard shrinks to 1 s / 2 s.
+once the core has been up for 15 s the guard shrinks to 1 s of settle, and core 1 has its own CPU
+from the start.
 
 ## What is deliberately not modelled
 

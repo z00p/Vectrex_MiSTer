@@ -168,7 +168,7 @@ set_display() {
 }
 
 # Start a UVMC2 cartridge image through mister_run.sh (its defaults: --bus --hold --cpu 0 --cpu1 1
-# --donate 3000 --settle 8 --cpu1-after 10, or 1 / 2 once the core has been up 15 s; log /tmp/um2.log). Sidecar <image>.um2.cfg, key=value:
+# --donate 3000 --settle 8 --cpu1-after 10, or 1 / 0 once the core has been up 15 s; log /tmp/um2.log). Sidecar <image>.um2.cfg, key=value:
 #   frame_cycles=25000      stream frame length in E cycles (default 30000 = 50 Hz; Punch-Out wants 25000 = 60 Hz)
 #   sd=bz_sd.img            card image; a relative name is looked up next to the .um2 file, then in $UM2SD_DIR, then in $UM2 (BattleZone WRITES to its card: own copy).
 #                           Default $UM2SD_DIR/sd.img if it exists, else no card. No spaces in the path.
