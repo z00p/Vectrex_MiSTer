@@ -187,7 +187,8 @@ def merge(src, dst):
 
 def cmd_copy(src, dst):
     entries, skips = walk(src)
-    n = 0
+    total = sum(os.path.getsize(p) for rel, p, isdir in entries if not isdir) or 1
+    n = done = shown = 0
     for rel, p, isdir in entries:
         d = os.path.join(dst, rel)
         try:
@@ -197,6 +198,12 @@ def cmd_copy(src, dst):
             else:
                 copy_file(p, d)
                 n += 1
+                # a big card takes many minutes: say how far it has got, every 5%
+                done += os.path.getsize(p)
+                pct = done * 20 // total * 5
+                if pct != shown:
+                    shown = pct
+                    print("make_card: copying %d pct" % pct, file=sys.stderr, flush=True)
         except OSError as e:
             sys.exit("make_card: ERROR: cannot copy %s to the card: %s" % (rel, e.strerror or e))
     print(n)
@@ -579,6 +586,7 @@ say "card size: $MIB MiB, FAT32 with $(( SECS * 512 ))-byte clusters"
 NEW=$OUT.new
 rm -f "$NEW"; TMPFILES="$NEW"
 py mkimg "$NEW" "$MIB" || die "cannot create $NEW"
+say "formatting"
 mkfs.vfat -F 32 -s "$SECS" -n "$LABEL" "$NEW" > "$WORK/mkfs.log" 2>&1 || { cat "$WORK/mkfs.log"; die "mkfs.vfat failed"; }
 say "formatted"
 attach "$NEW" "$WORK/mnt_new" || die "cannot mount the new card image"

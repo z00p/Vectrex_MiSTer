@@ -84,8 +84,8 @@ of your portrait games if you mix them). **Not tested on hardware:** which direc
 ## Card images
 Some images read their ROM set from an SD card and keep scores and settings on it. The card
 is **emulated from an ordinary file**: a FAT32 image of the whole card without a partition
-table (a "superfloppy"). Card images of 2 GiB or more work in PC tests but have not been tried on a
-real MiSTer, and a raw dump of a real card (with its partition table) is untested: copy the card's
+table (a "superfloppy"). The largest tried on a MiSTer is a 3.8 GiB card with
+Star Wars. A raw dump of a real card (with its partition table) is untested: copy the card's
 files instead.
 
 **The easy way is in [ADDING_GAMES.md](ADDING_GAMES.md):** copy everything on your UVMC2 SD card

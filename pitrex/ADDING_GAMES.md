@@ -25,7 +25,8 @@ cartridge images (`.um2` files) go, and how to give the games the files they rea
 2. Copy everything on your UVMC2 SD card to `/media/fat/games/Vectrex-PiTrex/UVMC2/`, with its
    folders: `roms`, `PORTDATA`, loose files such as `QBERT2.VSM`, and the `.um2` games.
 3. Build the card: run **Scripts > PiTrex_Setup** again, or pick **REFRESH CARD** in the Vectrex
-   menu. This can take a few minutes on a big card. `.uf2` firmware, `ASSETS` folders (menu
+   menu. The menu shows how far it has got. The time depends on the card size: about 25 minutes
+   for 3 GiB of files on a DE10-Nano, far less for a card with a few ROM zips. `.uf2` firmware, `ASSETS` folders (menu
    pictures) and macOS files (`__MACOSX`, `._*`, `.DS_Store`) are left out.
 4. Load the Vectrex-PiTrex core from `_Unstable`, then use the OSD: **Load UVMC2** lists your games
    and **UVMC2 Menu**.
