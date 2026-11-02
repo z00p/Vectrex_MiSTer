@@ -2,26 +2,27 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Build the MiSTer main-menu entries for PiTrex and UVMC2 programs (run on the MiSTer).
 #   "/media/fat/_PiTrex & UVMC2"/<Title>.mgl   what the menu shows
-#   /media/fat/games/Vectrex/PiTrex/<prog>.ptx   a small launch script the MGL hands the core
+#   /media/fat/games/Vectrex-PiTrex/PiTrex/<prog>.ptx   a small launch script the MGL hands the core
 # Picking an entry loads the PiTrex core, its overlay (if there is one) and the .ptx;
 # pitrexd (started at boot by PiTrex_Setup) sees the pick and runs the .ptx.
-# "UVMC2 Games" loads the core alone, as Vectrex-PiTrex: pick a .um2 game or a .ptx program in its OSD
-# (Load UVMC2 / PiTrex, folder games/Vectrex-PiTrex/UVMC2).
-# Every entry names the newest Vectrex-PiTrex core in _Unstable as it is NOW: run this again (PiTrex_Setup or PiTrex_Update do)
-# after copying a newer core in by hand.
+# The entries are plain MGLs (undated core name, paths relative to games/Vectrex-PiTrex, like any MiSTer game MGL): they keep
+# working after a core update, and anyone can write one for a game. Copy one and change the path, for example
+#   <file delay="2" type="f" index="3" path="UVMC2/Punchout.um2"/>
+# "UVMC2 Games" loads the core alone: pick a game in its OSD. "UVMC2 Menu" loads it and starts the menu on the Vectrex.
 FAT=/media/fat
 PITREX=$FAT/pitrex
 MENU="$FAT/_PiTrex & UVMC2"
-PTX=$FAT/games/Vectrex/PiTrex
+PTX=$FAT/games/Vectrex-PiTrex/PiTrex
 OVL=$FAT/games/Vectrex/Overlays
+OVLNEW=$FAT/games/Vectrex-PiTrex/Overlays
 # standard MiSTer naming from B8: Vectrex-PiTrex_YYYYMMDD.rbf (older releases: Vectrex-PiTrex_B<n>_<date>.rbf)
 CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_[0-9]*.rbf 2>/dev/null | sort | tail -1)
 [ -n "$CORE" ] || CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_*.rbf 2>/dev/null | sort -V | tail -1)
 [ -n "$CORE" ] || CORE=$(ls -1 $FAT/_Unstable/Vectrex_PiTrex_B*.rbf 2>/dev/null | sort -V | tail -1)
 [ -n "$CORE" ] || { echo "No PiTrex core in _Unstable"; exit 1; }
-RBF=${CORE#$FAT/}; RBF=${RBF%.rbf}
-echo "Menu entries load $RBF"
-mkdir -p "$MENU" "$PTX"
+RBF=_Unstable/Vectrex-PiTrex
+echo "Menu entries load the newest $RBF"
+mkdir -p "$MENU" "$PTX" "$OVLNEW"
 # the core is now Vectrex-PiTrex_*.rbf: drop the older Vectrex_PiTrex_B* files once one is there
 case "$CORE" in */Vectrex-PiTrex_*) rm -f $FAT/_Unstable/Vectrex_PiTrex_B*.rbf ;; esac
 # and the B<n>-named files once a dated one is there
@@ -62,8 +63,9 @@ PYEOF
 rm -f $FAT/Scripts/PiTrex_Cube_demo.sh $FAT/Scripts/PiTrex_Gyrocks.sh $FAT/Scripts/PiTrex_Selftest.sh \
 	$FAT/Scripts/PiTrex_VecBreak.sh $FAT/Scripts/PiTrex_VecDrive.sh $FAT/Scripts/PiTrex_VecDrive_v2.sh \
 	$FAT/Scripts/UVMC2_Hello.sh $FAT/Scripts/UVMC2_TacScan.sh
-rm -f "$MENU"/*.mgl "$PTX"/*.ptx
-mkdir -p "$FAT/games/Vectrex-PiTrex/UVMC2" "$PITREX/uvmc2/card"
+rm -f "$MENU"/*.mgl "$PTX"/*.ptx "$FAT"/games/Vectrex/PiTrex/*.ptx
+rmdir "$FAT/games/Vectrex/PiTrex" 2>/dev/null
+mkdir -p "$FAT/games/Vectrex-PiTrex/UVMC2" "$PITREX/uvmc2"
 
 # Scripts > PiTrex_Make_UVMC2_Card: a tool, not a game, so it sits next to Setup, Update, Stop and Uninstall
 # (they print to the Scripts console; a main-menu entry would load the core and show nothing)
@@ -82,10 +84,19 @@ fi
 {
 	echo "<mistergamedescription>"
 	echo "  <rbf>$RBF</rbf>"
-	echo "  <setname>Vectrex-PiTrex</setname>"
 	echo "</mistergamedescription>"
 } > "$MENU/UVMC2 Games.mgl"
 echo "UVMC2 Games (core only; pick in the OSD)"
+
+# the menu on the Vectrex: an empty file that pitrexd knows by its extension, offered in the OSD and started by this entry
+: > "$FAT/games/Vectrex-PiTrex/UVMC2/UVMC2 Menu.mnu"
+{
+	echo "<mistergamedescription>"
+	echo "  <rbf>$RBF</rbf>"
+	echo "  <file delay=\"2\" type=\"f\" index=\"3\" path=\"UVMC2/UVMC2 Menu.mnu\"/>"
+	echo "</mistergamedescription>"
+} > "$MENU/UVMC2 Menu.mgl"
+echo "UVMC2 Menu"
 
 # Tac/Scan sound: convert MAME's tacscan samples zip (games/mame/samples) once
 TS_ZIP=$FAT/games/mame/samples/tacscan.zip
@@ -107,12 +118,12 @@ while IFS='|' read -r title prog env; do
 	} > "$PTX/$prog.ptx"
 	chmod +x "$PTX/$prog.ptx"
 	ovl=$(find "$OVL" -maxdepth 1 -iname "$prog.art" 2>/dev/null | head -1)
+	[ -n "$ovl" ] && cp -f "$ovl" "$OVLNEW/"
 	{
 		echo "<mistergamedescription>"
 		echo "  <rbf>$RBF</rbf>"
-		echo "  <setname>Vectrex-PiTrex</setname>"
-		[ -n "$ovl" ] && echo "  <file delay=\"1\" type=\"f\" index=\"2\" path=\"$ovl\"/>"
-		echo "  <file delay=\"2\" type=\"f\" index=\"3\" path=\"$PTX/$prog.ptx\"/>"
+		[ -n "$ovl" ] && echo "  <file delay=\"1\" type=\"f\" index=\"2\" path=\"Overlays/${ovl##*/}\"/>"
+		echo "  <file delay=\"2\" type=\"f\" index=\"3\" path=\"PiTrex/$prog.ptx\"/>"
 		echo "</mistergamedescription>"
 	} > "$MENU/$title.mgl"
 	echo "$title${ovl:+ (overlay $(basename "$ovl"))}"

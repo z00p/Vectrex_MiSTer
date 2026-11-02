@@ -17,6 +17,9 @@ CPUS=${PITREXD_CPUS:-/sys/devices/system/cpu/online}
 UM2=$PITREX/um2run
 UM2SD_DIR=$PITREX/uvmc2
 LOG=$T/pitrexd.log
+# The Vectrex menu (.mnu pick, program uvmc2_menu) reports its choices like Main but with an absolute FULLPATH. This flag says a game came from it, so
+# the menu returns when the game ends. PiTrex_Stop removes the flag: a stop then stays a stop.
+MENUFLAG=$T/pitrex_from_menu
 # A "selected" report whose FULLPATH / CURRENTPATH are more than this many seconds older than FILESELECT is not a pick (see the main loop)
 STALE=${PITREXD_STALE:-2}
 # ... and more than this many seconds older than the current core load (CORENAME)
@@ -210,6 +213,16 @@ start_um2() {
 	[ -n "$sd" ] && opt="--sd $sd"
 
 	stop_programs
+	# a direct pick runs on the card as it is; say so for a moment if the folder has moved on (the menu says it in its list)
+	if [ "$sd" = "$UM2SD_DIR/sd.img" ] && [ ! -f "$MENUFLAG" ]; then
+		bash "$PITREX/make_card.sh" --check > /dev/null 2>&1
+		if [ $? = 1 ]; then
+			echo "$(date +%T) card out of date: starting on the current card" >> $LOG
+			show "CARD OUT OF DATE|USE REFRESH CARD|IN THE VECTREX MENU"
+			sleep 3
+			stop_programs
+		fi
+	fi
 	reloaded=0
 	set_display "$cfg"
 	cd "$UM2" || return 1
@@ -217,6 +230,36 @@ start_um2() {
 	# --secs: um2run --bus stops after 300 s by default (a test bound); a game picked from the OSD runs until stopped.
 	SETTLE=$st CPU1_AFTER=$c1 sh ./mister_run.sh "$img" --frame-cycles "$fc" $opt --secs 1000000000 $args >> $LOG 2>&1
 	echo "$(date +%T) started um2run $(basename "$img") frame_cycles=$fc card=${sd:-none}${args:+ args=$args}" >> $LOG
+}
+
+# start_ptx <file>: a PiTrex program, one at a time: stop what is running (launcher or OSD started)
+start_ptx() {
+	local f=$1 name
+	stop_programs
+	name=$(basename "$f"); name=${name%.*}; name=${name// /_}
+	if ! { mkdir -p "$RUN" && cp "$f" "$RUN/$name" && chmod +x "$RUN/$name"; }; then
+		echo "$(date +%T) REFUSED $f: cannot copy it to $RUN" >> $LOG
+		show "CANNOT START PROGRAM"
+		return 1
+	fi
+	cd "$PITREX" 2>/dev/null || cd $T
+	[ -f $T/pitrex.log ] && mv -f $T/pitrex.log $T/pitrex.prev.log
+	PTX_BACKEND=mister nohup chrt -r 49 "$RUN/$name" > $T/pitrex.log 2>&1 &
+	echo "$(date +%T) started $name from $f" >> $LOG
+}
+
+# A game chosen in the Vectrex menu has ended (looked at once a second, two looks in a row): back to the menu
+menu_gone=0; menu_tick=0
+menu_return() {
+	menu_tick=$(( menu_tick + 1 ))
+	[ $(( menu_tick % 5 )) = 0 ] || return 0
+	if [ -n "$(ptx_pids)" ]; then menu_gone=0; return 0; fi
+	menu_gone=$(( menu_gone + 1 ))
+	[ "$menu_gone" -ge 2 ] || return 0
+	menu_gone=0
+	rm -f "$MENUFLAG"
+	echo "$(date +%T) game ended: back to the Vectrex menu" >> $LOG
+	start_ptx "$PITREX/uvmc2_menu"
 }
 
 # Our core started from the cores list runs as VECTREX, not Vectrex-PiTrex: its OSD offers the games, but MiSTer.ini's log_file_entry=1 is only in our
@@ -254,6 +297,7 @@ while :; do
 	else
 		if [ "$was_ours" = 1 ]; then
 			was_ours=0
+			rm -f "$MENUFLAG"
 			if [ -n "$(ptx_pids)" ]; then
 				stop_programs
 				echo "$(date +%T) core changed away from Vectrex-PiTrex: stopped PiTrex program(s)" >> $LOG
@@ -264,6 +308,7 @@ while :; do
 		nap 1
 		continue
 	fi
+	[ -f "$MENUFLAG" ] && menu_return
 	[ "$T/FILESELECT" -nt "$SEEN" ] || continue
 	seen_now
 	[ "$(cat $T/FILESELECT 2>/dev/null)" = "selected" ] || continue
@@ -284,11 +329,12 @@ while :; do
 		continue
 	fi
 	f=$(cat $T/FULLPATH 2>/dev/null)
+	case "$f" in /*) : > "$MENUFLAG" ;; *) rm -f "$MENUFLAG" ;; esac
 	# An OSD pick (B9 hardware, 28 Oct) reports FULLPATH as the folder relative to /media/fat
 	# ("games/Vectrex-PiTrex/UVMC2") and the file name in /tmp/CURRENTPATH.
 	case "$f" in /*) ;; *) f=$FAT/$f ;; esac
 	if [ -d "$f" ]; then f=$f/$(cat $T/CURRENTPATH 2>/dev/null); fi
-	case "${f,,}" in *.ptx) kind=ptx ;; *.um2) kind=um2 ;; *) continue ;; esac
+	case "${f,,}" in *.ptx) kind=ptx ;; *.um2) kind=um2 ;; *.mnu) kind=ptx; f=$PITREX/uvmc2_menu ;; *) continue ;; esac
 	if [ ! -f "$f" ]; then
 		echo "$(date +%T) REFUSED $f: no such file" >> $LOG
 		show "GAME FILE NOT FOUND"
@@ -306,16 +352,5 @@ while :; do
 		continue
 	fi
 
-	# one program at a time: stop what is running (launcher or OSD started)
-	stop_programs
-	name=$(basename "$f"); name=${name%.*}; name=${name// /_}
-	if ! { mkdir -p "$RUN" && cp "$f" "$RUN/$name" && chmod +x "$RUN/$name"; }; then
-		echo "$(date +%T) REFUSED $f: cannot copy it to $RUN" >> $LOG
-		show "CANNOT START PROGRAM"
-		continue
-	fi
-	cd "$PITREX" 2>/dev/null || cd $T
-	[ -f $T/pitrex.log ] && mv -f $T/pitrex.log $T/pitrex.prev.log
-	PTX_BACKEND=mister nohup chrt -r 49 "$RUN/$name" > $T/pitrex.log 2>&1 &
-	echo "$(date +%T) started $name from $f" >> $LOG
+	start_ptx "$f"
 done

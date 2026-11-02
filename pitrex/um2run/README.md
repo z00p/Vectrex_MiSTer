@@ -1,4 +1,4 @@
-# um2run (alpha)
+# um2run (beta)
 
 Runs an unmodified **UVMC2 cartridge image** (`.um2`, an RP2350 firmware image) on the MiSTer's
 ARM processor, with the Vectrex-PiTrex core as the console. It emulates the cartridge's bus
@@ -9,8 +9,8 @@ Unofficial and experimental. It is not part of the UVMC2 project: please do not 
 problems to the UVMC2 team. **No cartridge images, ROM sets or card images are included**: bring
 your own. User guide: [../UVMC2_GAMES.md](../UVMC2_GAMES.md).
 
-Normally you don't run it by hand: pick the game in the core's OSD (**Load UVMC2 / PiTrex**) and
-`pitrexd` starts it with the settings from the game's sidecar file.
+Normally you don't run it by hand: pick the game in the core's OSD (**Load UVMC2**), the Vectrex
+menu or an MGL file, and `pitrexd` starts it with the settings from the game's sidecar file.
 
 ## Files
 | File | |
@@ -37,7 +37,7 @@ Self test (needs `qemu-user`, `apt install qemu-user`): `./selftest/selftest.sh`
 `PASS` lines.
 
 ## Run by hand (SSH on the MiSTer)
-The Vectrex-PiTrex core must be loaded with PiTrex Mode on (the **UVMC2 Games** entry in the
+The Vectrex-PiTrex core must be loaded with PiTrex Mode on (the **UVMC2 Menu** entry in the
 PiTrex & UVMC2 menu does that), and both CPUs must be online (`cat /sys/devices/system/cpu/online`
 says `0-1`; after BigMig a normal reboot is needed).
 ```
@@ -73,7 +73,7 @@ experimental `orient` and `view`. They are described in [../UVMC2_GAMES.md](../U
 
 The other `UM2_*` variables are developer diagnostics and A/B switches; `grep getenv um2run.c um2bus.c um2aud.c`.
 
-## Limits (alpha)
+## Limits
 - Speed: the A9 is much slower than the cartridge's RP2350, so the picture is drawn at a lower frame rate than on a real cartridge. Measured in attract modes on a DE10-Nano (2 Nov 2026): Pac-Man about 32 frames/s (game speed right), BattleZone about 40, Star Wars about 45, Veccy Road about 50, Punch-Out about 55 of the 60 frames/s it wants. VecDoom and Out Run still slow down in heavy scenes.
 - Start-up: about 1 to 2 seconds of static at the start (cart audio while both guest cores still
   share one CPU), and a LOADING screen for 10 to 20 seconds on the big images.

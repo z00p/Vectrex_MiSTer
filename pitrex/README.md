@@ -7,8 +7,8 @@ ARM processor, and the Vectrex core takes the place of the console. You don't ne
 cartridge.
 
 The same route also runs games written for the **UVMC2** multicart, rebuilt for the ARM: see
-[UVMC2.md](UVMC2.md). And, as an unofficial **alpha**, the UVMC2 cartridge images themselves
-(`.um2` files, unmodified), picked in the core's OSD: start with [ADDING_GAMES.md](ADDING_GAMES.md)
+[UVMC2.md](UVMC2.md). And, as an unofficial **beta**, the UVMC2 cartridge images themselves
+(`.um2` files, unmodified): start with [ADDING_GAMES.md](ADDING_GAMES.md)
 (where your images and the files from your UVMC2 SD card go), and see [UVMC2_GAMES.md](UVMC2_GAMES.md)
 for the details.
 
@@ -26,10 +26,10 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    It adds:
    | Path | What |
    |---|---|
-   | `_Unstable/Vectrex-PiTrex_<YYYYMMDD>.rbf` | the Vectrex core with PiTrex mode; the menu entries load it as "Vectrex-PiTrex", so its settings live in their own `config/Vectrex-PiTrex_v1.CFG` |
+   | `_Unstable/Vectrex-PiTrex_<YYYYMMDD>.rbf` | the Vectrex core with PiTrex mode; it is called "Vectrex-PiTrex", so its settings live in their own `config/Vectrex-PiTrex_v1.CFG` |
    | `pitrex/` | the programs, the launcher and the UVMC2 card builder |
-   | `pitrex/um2run/` | `um2run`, which runs UVMC2 cartridge images (alpha, see [UVMC2_GAMES.md](UVMC2_GAMES.md)) |
-   | `games/Vectrex-PiTrex/UVMC2/` | where your `.um2` images go (no images are included) |
+   | `pitrex/um2run/` | `um2run`, which runs UVMC2 cartridge images (beta, see [UVMC2_GAMES.md](UVMC2_GAMES.md)) |
+   | `games/Vectrex-PiTrex/UVMC2/` | where the contents of your UVMC2 SD card go (no images are included) |
    | `Scripts/PiTrex_*.sh` | Setup, Update, Stop and Uninstall. PiTrex_Setup adds PiTrex_Make_UVMC2_Card, which builds the UVMC2 card image |
    | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive, Tac/Scan and Gong Rider |
 
@@ -47,8 +47,8 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
      our core is affected; your other settings are left alone (details in
      [UVMC2_GAMES.md](UVMC2_GAMES.md#what-pitrex_setup-changes)).
    - It starts a small helper, `pitrexd`, at boot.
-   - It creates the card folder `pitrex/uvmc2/card`: copy your UVMC2 SD card there and run
-     PiTrex_Setup again (see [ADDING_GAMES.md](ADDING_GAMES.md)).
+   - It creates the folder `games/Vectrex-PiTrex/UVMC2`: copy your UVMC2 SD card there and build
+     the card (see [ADDING_GAMES.md](ADDING_GAMES.md)).
    - PiTrex_Uninstall undoes all of it.
 
 ## Playing
@@ -56,10 +56,12 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
   core, the overlay and the program load in one go. Games aren't in the Scripts menu; it
   only holds Setup, Update, Stop, Uninstall and Make_UVMC2_Card (which builds the UVMC2 card image,
   see [ADDING_GAMES.md](ADDING_GAMES.md)).
-- **UVMC2 cartridge images (`.um2`, alpha):** main menu > **PiTrex & UVMC2** > **UVMC2 Games**, then
-  OSD > **Load UVMC2 / PiTrex**. How to add your games and the files from your UVMC2 SD card:
-  [ADDING_GAMES.md](ADDING_GAMES.md). Per-game settings and the tested games are in
+- **UVMC2 cartridge images (`.um2`, beta):** load the core from `_Unstable`, then OSD >
+  **Load UVMC2**, or start the Vectrex menu with main menu > **PiTrex & UVMC2** > **UVMC2 Menu**.
+  A standard MGL file can start one game directly. How to add your games and the files from your
+  UVMC2 SD card: [ADDING_GAMES.md](ADDING_GAMES.md). Per-game settings and the tested games are in
   [UVMC2_GAMES.md](UVMC2_GAMES.md).
+- **PiTrex programs:** OSD > **Load PiTrex**, the Vectrex menu, or their entries in the main menu.
 - **From a shell (SSH):** `/media/fat/pitrex/pitrex_launch.sh vecdrive` loads the PiTrex core
   if needed, switches PiTrex Mode on and starts the program.
 - **Overlays:** OSD > **Load Overlay**, then pick `VecDrive.art` or `VecBreak.art`.
@@ -90,10 +92,10 @@ race, and button 3 cycles through the rest. None are included.
 - **PiTrex_Update** (Scripts) downloads the newest release from GitHub and unpacks it. It
   needs the MiSTer to be online. The new core goes into `_Unstable` next to the older PiTrex
   builds (delete those by hand if you like); the main-menu entries switch to the newest. It
-  never touches the official core in `_Console`. Run PiTrex_Setup once afterwards (coming from
-  the first UVMC2 alpha, see [ADDING_GAMES.md](ADDING_GAMES.md#updating-from-the-first-alpha)).
+  never touches the official core in `_Console`. Run PiTrex_Setup once afterwards (see
+  [ADDING_GAMES.md](ADDING_GAMES.md#updating-from-an-older-release)).
 - **PiTrex_Uninstall** removes everything PiTrex added, including the optional extras and all
-  PiTrex cores in `_Unstable` and `config/Vectrex-PiTrex_v1.CFG`. The official core, your Vectrex settings and your own files (`games/Vectrex-PiTrex`, `pitrex/uvmc2` with your card folder and card images, and anything of yours in `pitrex/um2run`) are kept.
+  PiTrex cores in `_Unstable` and `config/Vectrex-PiTrex_v1.CFG`. The official core, your Vectrex settings and your own files (`games/Vectrex-PiTrex`, `pitrex/uvmc2` with your card images, and anything of yours in `pitrex/um2run`) are kept.
 
 ## Troubleshooting
 | Symptom | Likely cause and fix |
@@ -170,7 +172,7 @@ seed 5 (set in `Vectrex.qsf`) meets timing at all four corners. After a change, 
 | `games/doom/`, `games/gongrider/` | DOOM (MiSTer entry point and platform layer; see its README) and Roger Boesch's Gong Rider, each with its build line |
 | `games/uvmc2_tacscan/z80shim/`, `third_party/aae_z80/` | the Z80 core (Tim Cottrill's AAE core) and the adapter Tac/Scan is built with |
 | `scripts/` | the launcher, the menu builder, pitrexd and the Scripts-menu tools |
-| `um2run/` | runs UVMC2 cartridge images on the ARM (alpha): loader, RP2350 device model, SD card, cart audio, self test; see its README |
+| `um2run/` | runs UVMC2 cartridge images on the ARM (beta): loader, RP2350 device model, SD card, cart audio, self test; see its README |
 | `tools/` | library patcher, build and run scripts, `ptxplay`, seed sweep and timing reports |
 | `../rtl/pitrex/` | the core side: `pitrex_ddr.sv` (ring reader) and `pitrex_player.sv` (bus player) |
 

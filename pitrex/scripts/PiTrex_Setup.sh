@@ -4,12 +4,12 @@
 #  - PiTrex Mode On in config/Vectrex-PiTrex_v1.CFG (our core's own settings file)
 #  - log_file_entry=1 for our core only, in a [Vectrex-PiTrex] section of MiSTer.ini (Main then reports the file an OSD pick
 #    or an MGL loads; the [MiSTer] settings and other cores are left alone; see pitrex/pitrex_ini.py)
-#  - the folder games/Vectrex-PiTrex/UVMC2: the core's OSD file browser ("Load UVMC2 / PiTrex") opens games/<core name>,
-#    so put UVMC2 games (.um2) and PiTrex programs (.ptx) there
+#  - the folder games/Vectrex-PiTrex/UVMC2: the core's OSD file browser opens games/<core name>, so UVMC2 games (.um2)
+#    and everything from a UVMC2 SD card go there; PiTrex programs (.ptx) in games/Vectrex-PiTrex/PiTrex
 #  - pitrexd, which starts the program or game a menu entry or an OSD pick selects: now and at every boot
 #  - builds the menu entries (make_menu.sh)
-#  - the card folder pitrex/uvmc2/card, and the UVMC2 card image pitrex/uvmc2/sd.img built from it (make_card.sh)
-#    when the folder has files and the card is missing or older; .um2 games in it are copied to games/Vectrex-PiTrex/UVMC2
+#  - the UVMC2 card image pitrex/uvmc2/sd.img built from that folder (make_card.sh) when it has card files and the
+#    card is missing or older
 # Undo with PiTrex_Uninstall.
 FAT=/media/fat
 PITREX=$FAT/pitrex
@@ -36,21 +36,21 @@ setbit("/media/fat/config/Vectrex-PiTrex_v1.CFG", True)
 setbit("/media/fat/config/VECTREX_v1.CFG", False)
 PYEOF
 
-mkdir -p "$FAT/games/Vectrex-PiTrex/UVMC2" "$PITREX/uvmc2" "$PITREX/uvmc2/card"
-# the card folder: make_card.sh builds the card image pitrex/uvmc2/sd.img from it (written once, so its date stays old)
-if [ ! -f "$PITREX/uvmc2/card/README.txt" ]; then
-	cat > "$PITREX/uvmc2/card/README.txt" <<'EOF'
+mkdir -p "$FAT/games/Vectrex-PiTrex/UVMC2" "$PITREX/uvmc2"
+# the one folder: make_card.sh builds the card image pitrex/uvmc2/sd.img from it (written once, so its date stays old)
+if [ ! -f "$FAT/games/Vectrex-PiTrex/UVMC2/README.txt" ]; then
+	cat > "$FAT/games/Vectrex-PiTrex/UVMC2/README.txt" <<'EOF'
 Copy everything from your UVMC2 SD card here, with its folders (roms, PORTDATA, loose
-files such as QBERT2.VSM and the .um2 games). Then run Scripts > PiTrex_Setup or
-Scripts > PiTrex_Make_UVMC2_Card. They copy the .um2 games to
-/media/fat/games/Vectrex-PiTrex/UVMC2 (nothing there is overwritten) and build the card
-image /media/fat/pitrex/uvmc2/sd.img from the rest. The saves on the old card are kept.
+files such as QBERT2.VSM and the .um2 games), and add new .um2 games here too.
+The OSD and the Vectrex menu list the games. The other files go on the card image the
+games see: run REFRESH CARD in the menu, or Scripts > PiTrex_Make_UVMC2_Card, after
+adding them. Saves on the card are kept.
 .um2 and .uf2 files, ASSETS folders and macOS files are not put on the card.
 See ADDING_GAMES.md in the PiTrex guide.
 (This file is not copied to the card.)
 EOF
 fi
-chmod +x "$PITREX"/*.sh "$PITREX/um2run/um2run" "$PITREX/um2run/mister_run.sh" 2>/dev/null
+chmod +x "$PITREX"/*.sh "$PITREX/um2run/um2run" "$PITREX/um2run/mister_run.sh" "$PITREX/uvmc2_menu" 2>/dev/null
 if [ ! -f "$PITREX/um2run/um2run" ]; then
 	echo "Note: $PITREX/um2run/um2run is missing, so .um2 games cannot start (unzip the release again)."
 fi

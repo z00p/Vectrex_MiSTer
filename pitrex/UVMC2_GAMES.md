@@ -27,23 +27,25 @@ images are included**: bring your own (and your own MAME ROM sets for the games 
 ## Where files go
 | What | Where |
 |---|---|
-| `.um2` images | `/media/fat/games/Vectrex-PiTrex/UVMC2/` (PiTrex_Setup creates the folder; subfolders are fine). `.ptx` programs also show up in the same OSD list. |
+| Everything from your UVMC2 SD card | `/media/fat/games/Vectrex-PiTrex/UVMC2/` (PiTrex_Setup creates the folder; subfolders are fine): the `.um2` images and the card's files, in one place. The card image `sd.img` is built from this folder, see [ADDING_GAMES.md](ADDING_GAMES.md) |
+| PiTrex programs (`.ptx`) | `/media/fat/games/Vectrex-PiTrex/PiTrex/` (PiTrex_Setup copies them there) |
 | Sidecar settings `Game.um2.cfg` | next to the image, same name plus `.cfg` |
-| Files from your UVMC2 SD card | `/media/fat/pitrex/uvmc2/card/` (copy the whole card): PiTrex_Setup (or Scripts > PiTrex_Make_UVMC2_Card) copies the `.um2` games from it to the UVMC2 folder and builds the card image `sd.img` from the rest, see [ADDING_GAMES.md](ADDING_GAMES.md) |
-| Card images (`.img`) | next to the image, or in `/media/fat/pitrex/uvmc2/` (a file called `sd.img` there is the default card for every game without an `sd=` key). The OSD list shows only `.um2` and `.ptx`, so the images do not clutter it. PiTrex_Uninstall leaves your files in both places alone, and anything of yours in `/media/fat/pitrex/um2run/` (the third place `sd=` names are looked up). |
+| Card images (`.img`) | next to the image, or in `/media/fat/pitrex/uvmc2/` (a file called `sd.img` there is the default card for every game without an `sd=` key). The OSD lists do not show them. PiTrex_Uninstall leaves your files in both places alone, and anything of yours in `/media/fat/pitrex/um2run/` (the third place `sd=` names are looked up). |
 
-The core's file browser opens `games/<core name>`. The menu entry **UVMC2 Games** loads the core
-as "Vectrex-PiTrex", so it opens `games/Vectrex-PiTrex`. If you load the core by hand from
-`_Unstable` instead, it runs as "VECTREX", opens `games/Vectrex`, uses the Vectrex settings
-file, cannot change Orientation or View Area for you (see below), and **a pick in the OSD does not
-start anything** (see [What PiTrex_Setup changes](#what-pitrex_setup-changes)).
+The core is called "Vectrex-PiTrex", however you load it: its file browser opens
+`games/Vectrex-PiTrex` and its settings are in `config/Vectrex-PiTrex_v1.CFG`.
 
 ## Playing
-1. Main menu > **PiTrex & UVMC2** > **UVMC2 Games**. This loads the core with PiTrex mode on.
-2. OSD > **Load UVMC2 / PiTrex** > pick the `.um2`. (This core switches PiTrex Mode on by itself
-   when you pick a file; if nothing happens, check OSD > System > PiTrex Mode.)
-3. A LOADING screen with a progress bar shows while the cartridge boots from its card; the big images take 10 to 20 seconds. The first second or two of sound can be static.
-4. Picking another game stops the running one and starts the new one. **Scripts > PiTrex_Stop** stops it.
+There are three ways to start a game:
+- **The OSD:** load the core, then **Load UVMC2** > pick the `.um2`. (This core switches PiTrex Mode
+  on by itself when you pick a file; if nothing happens, check OSD > System > PiTrex Mode.)
+- **The Vectrex menu:** pick **UVMC2 Menu** in **Load UVMC2**, or use **UVMC2 Menu** in the main
+  menu's **PiTrex & UVMC2** folder. When a game ends you are back in the menu.
+- **An MGL file:** a standard MiSTer shortcut, see [ADDING_GAMES.md](ADDING_GAMES.md#three-ways-to-start-a-game).
+
+Then:
+1. A LOADING screen with a progress bar shows while the cartridge boots from its card; the big images take 10 to 20 seconds. The first second or two of sound can be static.
+2. Picking another game stops the running one and starts the new one. **Scripts > PiTrex_Stop** stops it.
 
 Controls are the cartridge's own. BattleZone: button 1 starts, button 4 fires. **The OSD is sluggish while a game runs**
 (the MiSTer's menu program shares a CPU with the game): it works, give it a moment.
@@ -56,7 +58,7 @@ Nothing in it is ever executed. Unknown keys are ignored; bad values are ignored
 | Key | Meaning | Default |
 |---|---|---|
 | `frame_cycles=25000` | Length of one stream frame in Vectrex E cycles. 30000 is 50 Hz, 25000 is 60 Hz. Images with "punch" in the name get 25000 without a sidecar. | 30000 (Punch-Out 25000) |
-| `sd=name.img` | Card image the cartridge sees. A name without a folder is looked up next to the `.um2`, then in `/media/fat/pitrex/uvmc2/`, then in `/media/fat/pitrex/um2run/`. No spaces in the path. BattleZone **writes** to its card: give it its own copy. | `pitrex/uvmc2/sd.img` if it exists, else no card |
+| `sd=name.img` | Card image the cartridge sees. A name without a folder is looked up next to the `.um2`, then in `/media/fat/pitrex/uvmc2/`, then in `/media/fat/pitrex/um2run/`. No spaces in the path. | `pitrex/uvmc2/sd.img` if it exists, else no card |
 | `args=--secs 600` | Extra `um2run` arguments, appended last (see um2run/README.md). | none |
 | `settle=8` | Seconds to wait before starting (lets the MiSTer finish setting the video mode). | 8 after a core load, 1 if the core has been up 15 s |
 | `cpu1_after=10` | Seconds the game's second core stays on CPU0 before moving to CPU1. | 10 after a core load, 2 if the core has been up 15 s |
@@ -69,10 +71,6 @@ Examples:
 frame_cycles=25000
 sd=punchout_sd.img
 ```
-```
-# BattleZone.um2.cfg
-sd=bz_sd.img
-```
 
 ### orient and view (experimental)
 Landscape games (Star Wars, BattleZone) are drawn sideways on the portrait Vectrex screen, so
@@ -81,9 +79,7 @@ options for you before the game starts: pitrexd edits only
 `config/Vectrex-PiTrex_v1.CFG`, reloads the core, then starts the game. A setting you do not
 name is left alone (so it stays as the last game or you left it: add `orient=0` to the sidecars
 of your portrait games if you mix them). **Not tested on hardware:** which direction (`cw` or
-`ccw`) is the right one, and whether the cartridge's own PICTURE option must be changed as well. If the core runs as
-VECTREX (not loaded from the menu entry) the keys are skipped with a line in the log, and
-`VECTREX_v1.CFG` is never touched. You can always do the same by hand in the OSD.
+`ccw`) is the right one, and whether the cartridge's own PICTURE option must be changed as well. `VECTREX_v1.CFG` is never touched. You can always do the same by hand in the OSD.
 
 ## Card images
 Some images read their ROM set from an SD card and keep scores and settings on it. The card
@@ -93,11 +89,10 @@ real MiSTer, and a raw dump of a real card (with its partition table) is unteste
 files instead.
 
 **The easy way is in [ADDING_GAMES.md](ADDING_GAMES.md):** copy everything on your UVMC2 SD card
-(or just your ROM zips) to `/media/fat/pitrex/uvmc2/card/` and run PiTrex_Setup or
-**Scripts > PiTrex_Make_UVMC2_Card**. That copies the `.um2` games to the UVMC2 folder, builds
-`/media/fat/pitrex/uvmc2/sd.img` on the MiSTer, keeps the saves of the old card, and makes
-BattleZone's own copy. ADDING_GAMES.md also lists which
-files each tested game needs.
+(or just your ROM zips) to `/media/fat/games/Vectrex-PiTrex/UVMC2/` and pick **REFRESH CARD** in
+the Vectrex menu, or run **Scripts > PiTrex_Make_UVMC2_Card**. That builds
+`/media/fat/pitrex/uvmc2/sd.img` on the MiSTer and keeps the saves of the old card.
+ADDING_GAMES.md also lists which files each tested game needs.
 
 **Folders the images expect** (all lower or upper case, the card is case-insensitive):
 ```
@@ -122,10 +117,10 @@ mcopy -i sd.img punchout.zip ::PORTDATA/Punchout/BASEROMS/
 mdir -/ -i sd.img ::                                  # check what is on it
 ```
 `-s 1` matters: FAT32 needs at least 65525 clusters, which a 64 MiB image only reaches with
-small clusters. Make a separate image for BattleZone (`cp sd.img bz_sd.img`) and name it in its sidecar. Then copy
-the images to `/media/fat/pitrex/uvmc2/` on the MiSTer (with the SD card in your PC, or over the network).
-A card you build this way is not replaced by PiTrex_Setup unless you also put newer files in
-`pitrex/uvmc2/card/`.
+small clusters. Then copy
+the image to `/media/fat/pitrex/uvmc2/` on the MiSTer (with the SD card in your PC, or over the network).
+A card you build this way is left alone unless you put newer files in the UVMC2 folder and build
+the card there.
 
 On Windows, the easiest way is **WSL** with the commands above: the image is a normal file that you can
 find from Windows under `\\wsl$\...` or in your WSL home. A tool that mounts raw disk images
@@ -144,7 +139,7 @@ Other builds of the same games may behave differently. These are the images used
 | Game (image tested) | Card | How it ran |
 |---|---|---|
 | Star Wars (`Star_Wars.um2`) | your MAME `starwars` + `starwar1` zips in `roms/` | music and speech good; about 45 frames/s; whole picture with Open Matte |
-| BattleZone 0.3a (`BattleZone_0_3a.um2`) | its **own** copy, no ROMs (it writes to the card) | plays well, cart audio good; about 40 frames/s; whole picture with Open Matte. Button 1 starts, button 4 fires |
+| BattleZone 0.3a (`BattleZone_0_3a.um2`) | a card image, no ROMs (it writes to the card) | plays well, cart audio good; about 40 frames/s; whole picture with Open Matte. Button 1 starts, button 4 fires |
 | Pac-Man (`pacman-uvmc2-SD-card.um2`) | a card image with the folders, no ROMs | cart audio good; about 32 frames/s, game speed right |
 | Punch-Out (`Punchout.um2`) | your MAME `punchout.zip` | plays well, close to full speed (about 55 of its 60 frames/s); sound comes through the Vectrex PSG; its JACK audio route is untested |
 | Veccy Road 0.10 (`veccy_road_v010.um2`) | none | plays well, with sound, about 50 frames/s |
@@ -169,10 +164,8 @@ sd=uvmc2_sd.img
 frame_cycles=25000
 sd=uvmc2_sd.img
 ```
-Veccy Road needs no sidecar. With a card built from `pitrex/uvmc2/card/` (see
-[ADDING_GAMES.md](ADDING_GAMES.md)), `sd.img` is the default card, so the `sd=uvmc2_sd.img` lines
-are not needed; the card builder writes BattleZone's sidecar for you if it has none. `view=open` only works when the core was loaded from
-**PiTrex & UVMC2 > UVMC2 Games** (see [Where files go](#where-files-go)); otherwise set OSD > View Area = Open Matte yourself.
+Veccy Road needs no sidecar. With a card built from the UVMC2 folder (see
+[ADDING_GAMES.md](ADDING_GAMES.md)), `sd.img` is the default card, so the `sd=` lines are not needed.
 
 A game picked from the OSD does not load an overlay, and the last cartridge's overlay can stay
 on screen: OSD > Video Overlay & Geometry > Overlay = Off.
@@ -185,8 +178,8 @@ on screen: OSD > Video Overlay & Geometry > Overlay = Off.
   ```
   `log_file_entry` is a standard MiSTer.ini option: with it on, the MiSTer's menu program writes
   the name of the file you pick in the OSD to a few small files in `/tmp`. `pitrexd` reads them to
-  know which game to start. In a `[Vectrex-PiTrex]` section it is only on while our core runs under
-  that name (the PiTrex & UVMC2 menu entries load it that way); your `[MiSTer]` settings and every
+  know which game to start. In a `[Vectrex-PiTrex]` section it is only on while our core runs;
+  your `[MiSTer]` settings and every
   other core are left as they were. If you use an alternative ini (`MiSTer_alt_1.ini` and so on),
   add the same two lines to that file yourself.
 - **Older releases** (B8 and earlier) set `log_file_entry=1` for all cores in `[MiSTer]` and kept a
@@ -195,32 +188,28 @@ on screen: OSD > Video Overlay & Geometry > Overlay = Off.
 - **config/Vectrex-PiTrex_v1.CFG:** PiTrex Mode on (our core's own settings file; the official
   core's `VECTREX_v1.CFG` is not used).
 - **linux/user-startup.sh:** a comment and one line that start `pitrexd` at boot (after a blank line).
-- **Folders:** `games/Vectrex-PiTrex/UVMC2`, `pitrex/uvmc2`, the card folder `pitrex/uvmc2/card`
-  (with a short README.txt), and the menu folder `_PiTrex & UVMC2`.
+- **Folders:** `games/Vectrex-PiTrex/UVMC2` (with a short README.txt), `games/Vectrex-PiTrex/PiTrex`,
+  `pitrex/uvmc2`, and the menu folder `_PiTrex & UVMC2`.
 - **Scripts:** the entry `PiTrex_Make_UVMC2_Card`.
-- **The card:** it copies the `.um2` games in `pitrex/uvmc2/card` to `games/Vectrex-PiTrex/UVMC2`
-  (never overwriting a file there). If the folder has other files and `pitrex/uvmc2/sd.img` is missing or out of date,
-  it builds `sd.img` (and BattleZone's `bz_sd.img`, plus its sidecar if it has none), see
-  [ADDING_GAMES.md](ADDING_GAMES.md).
+- **The card:** if `pitrex/uvmc2/sd.img` is missing or out of date, it builds `sd.img` from the
+  UVMC2 folder, see [ADDING_GAMES.md](ADDING_GAMES.md).
 
 **PiTrex_Uninstall** undoes all of it (it removes the two MiSTer.ini lines, and the section header
-when nothing else is in it) and leaves your own files alone: the card folder, card images and
+when nothing else is in it) and leaves your own files alone: the UVMC2 folder, card images and
 their `.bak` backups, sidecars, and anything of yours in `pitrex/um2run/`.
 
 ## Troubleshooting
 | Symptom | What to do |
 |---|---|
-| Nothing happens after the pick | `cat /tmp/pitrexd.log` over SSH. `REFUSED ... CPUs` means a reboot is needed (BigMig). `ignored a stale file report` is normal after a restart of the MiSTer's menu program. Check OSD > System > PiTrex Mode = On. If `/tmp/pitrexd.log` shows nothing at all for the pick, load the core from **PiTrex & UVMC2 > UVMC2 Games** (a core loaded by hand does not report picks) and check that MiSTer.ini (or the alternative ini you use) has the `[Vectrex-PiTrex]` section. |
+| Nothing happens after the pick | `cat /tmp/pitrexd.log` over SSH. `REFUSED ... CPUs` means a reboot is needed (BigMig). `ignored a stale file report` is normal after a restart of the MiSTer's menu program. Check OSD > System > PiTrex Mode = On. If `/tmp/pitrexd.log` shows nothing at all for the pick, check that MiSTer.ini (or the alternative ini you use) has the `[Vectrex-PiTrex]` section. |
 | PiTrex_Setup says MiSTer.ini could not be changed | Picks in the OSD will not start games until it is fixed. Check that the SD card is not full or read-only and run PiTrex_Setup again, or add the two lines shown in [What PiTrex_Setup changes](#what-pitrex_setup-changes) to `MiSTer.ini` yourself. |
 | "Missing directory: Vectrex-PiTrex" in the OSD | Run PiTrex_Setup (it creates the folder) or create `games/Vectrex-PiTrex/UVMC2` yourself. |
 | The game says ROMS NOT FOUND or MISSING | See [ADDING_GAMES.md](ADDING_GAMES.md#which-games-need-a-card): which files, which folder, then build the card again. If the game's sidecar has an `sd=` line, it uses that card, not `sd.img`. |
 | Black screen for a long time | Wait for the LOADING screen to finish. If the screen stays black or the MiSTer's menu stops responding: Scripts > PiTrex_Stop, or SSH `killall um2run`. |
 | Static at the start | Expected for the first second or two. Up to about 10 seconds when the pick had to switch View Area (the core reloads first, see `/tmp/pitrexd.log`); the next pick starts clean. |
 | The picture is cropped at the sides | Landscape game on a portrait screen. OSD > View Area = Open Matte shows it all (the default, unless you changed it), or put `view=open` in the sidecar. |
-| A message on the Vectrex instead of the game | LINUX IS ON ONE CPU: reboot the MiSTer. UM2RUN IS MISSING: run Scripts > PiTrex_Update. GAME FILE NOT FOUND: the file went away between the pick and the start. GAME STOPPED: the game ended by itself; `/tmp/um2.log` has why and `/tmp/pitrexd.log` the exit status. |
+| A message on the Vectrex instead of the game | CARD OUT OF DATE: the game still starts, on the current card; pick REFRESH CARD in the Vectrex menu when you have time. LINUX IS ON ONE CPU: reboot the MiSTer. UM2RUN IS MISSING: run Scripts > PiTrex_Update. GAME FILE NOT FOUND: the file went away between the pick and the start. GAME STOPPED: the game ended by itself; `/tmp/um2.log` has why and `/tmp/pitrexd.log` the exit status. |
 | The game froze | Check the core's Pause button first (a mapped controller button, or Pause when OSD open): a paused core stops taking the picture and the game waits for it. `/tmp/um2.log` then says `core not fetching`, and `core fetching again` when it carries on. |
 | An old overlay is on top of the game | OSD > Video Overlay & Geometry > Overlay = Off. |
-| The OSD browser opens `games/Vectrex` | The core was loaded by hand from `_Unstable`. It reloads itself as Vectrex-PiTrex a moment later; if not, load it from PiTrex & UVMC2 > UVMC2 Games. |
-| A game started again by itself after a restart | Fixed in this release (stale file reports are ignored). |
-| A controller button does something different from the normal Vectrex core (e.g. View) | The menu entries load the core as "Vectrex-PiTrex", and the MiSTer keeps controller mappings per core name, so it has its own mapping, separate from VECTREX's. Set it up once in the OSD (Define joystick buttons) while the core runs from the PiTrex & UVMC2 menu. |
+| A controller button does something different from the normal Vectrex core (e.g. View) | The MiSTer keeps controller mappings per core name, so "Vectrex-PiTrex" has its own mapping, separate from VECTREX's. Set it up once in the OSD (Define joystick buttons). |
 | Log of the last game | `/tmp/um2.log` (the game), `/tmp/um2.prev.log` (the game before it), `/tmp/pitrexd.log` (picks and settings). |

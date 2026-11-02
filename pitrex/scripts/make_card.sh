@@ -1,7 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # make_card.sh: build the UVMC2 card image (runs on the MiSTer, as root).
-#   /media/fat/pitrex/uvmc2/card/   the files from your real UVMC2 SD card, or just your ROM zips (input)
+#   /media/fat/games/Vectrex-PiTrex/UVMC2/  the files from your real UVMC2 SD card and your .um2 games, all in one folder (input)
+#   /media/fat/pitrex/uvmc2/card/   the same input, older installs: used instead, games copied out, while it has files of its own
 #   /media/fat/pitrex/uvmc2/sd.img  the card every UVMC2 game without an sd= key in its sidecar sees (output)
 # The card is a FAT32 image of a whole card without a partition table ("superfloppy"), the layout um2run
 # was tested with. Rebuilding keeps the player's saves: what the games wrote to the old sd.img (every
@@ -10,35 +11,39 @@
 # BattleZone writes to its card: if its image is in games/Vectrex-PiTrex/UVMC2, bz_sd.img is made too
 # (same files, its own saves) and, if the image has no sidecar yet, one is written with sd=bz_sd.img.
 # A sidecar that names another card is left alone and bz_sd.img is not made.
-# .um2 games in the card folder are not put on the card: they are copied (subfolders kept) to
-# games/Vectrex-PiTrex/UVMC2, so a whole UVMC2 SD card can be copied into the card folder in one go.
-# Nothing there is overwritten: a different file of the same name is left alone and reported.
+# Older installs: .um2 games in the card folder are not put on the card: they are copied (subfolders kept) to
+# games/Vectrex-PiTrex/UVMC2. Nothing there is overwritten: a different file of the same name is left alone and reported.
+# BattleZone's own card is older installs only: in the one-folder layout it shares sd.img, as it shares a real card.
 #   make_card.sh               build now
 #   make_card.sh --if-needed   build only if sd.img is missing, the card folder changed since the last build, or
 #                              BattleZone has no card of its own yet (PiTrex_Setup uses this); quiet when there is
 #                              nothing to do. The .um2 games are copied either way.
+#   make_card.sh --check       only say: exit status 1 if a build would change the card, 0 if not. Changes nothing.
 # Needs: bash, mkfs.vfat, losetup, mount, python3 (3.9). No mtools. Undo: delete sd.img (and bz_sd.img).
 # PITREX_FAT and PITREX_TMP are test hooks (the PC test points them at a scratch tree); on the MiSTer leave them unset.
 FAT=${PITREX_FAT:-/media/fat}
 T=${PITREX_TMP:-/tmp}
 UV=$FAT/pitrex/uvmc2
-CARD=$UV/card
 OUT=$UV/sd.img
 GAMES=$FAT/games/Vectrex-PiTrex/UVMC2
+# one folder for everything, unless an older install has files in the card folder
+CARD=$GAMES; ONE=1
+if [ -n "$(find "$UV/card" -mindepth 1 -maxdepth 1 ! -name README.txt 2>/dev/null | head -1)" ]; then CARD=$UV/card; ONE=0; fi
 UM2=$FAT/pitrex/um2run
-# um2run opens the card with plain fopen (no large-file support yet), so it cannot use a card of 2 GiB or more.
-MAX_MIB=2000
+MAX_MIB=16000
+BIG_MIB=2000    # above this, 4 KiB clusters: the FAT of a big card with 512-byte clusters would be hundreds of MiB
 BLANK_MIB=64
 LABEL=UVM2SD
 
 say() { echo "make_card: $*"; }
 die() { echo "make_card: ERROR: $*"; exit 1; }
 
-IF_NEEDED=0
+IF_NEEDED=0; CHECK=0
 case "$1" in
 	--if-needed) IF_NEEDED=1 ;;
+	--check) CHECK=1 ;;
 	"") ;;
-	*) echo "usage: $0 [--if-needed]"; exit 2 ;;
+	*) echo "usage: $0 [--if-needed | --check]"; exit 2 ;;
 esac
 
 # ---------------------------------------------------------------------------------------------
@@ -59,8 +64,10 @@ def why_skip(path, name, isdir, top):
         return "macOS/Windows files"
     if isdir:
         return "ASSETS folders" if n == "assets" else None
-    if n.endswith(".um2") or n.endswith(".uf2"):
+    if n.endswith((".um2", ".uf2", ".mnu")):
         return ".um2/.uf2 files"
+    if n.endswith((".um2.cfg", ".um2.load", ".img", ".img.list", ".img.bak")):
+        return "game settings and card images"
     if top and n == "readme.txt":
         try:
             with open(path, "rb") as f:
@@ -391,6 +398,16 @@ blank_card() {
 	say "made a blank card, $OUT, so that games can save. Games that need ROMs want a real one: see ADDING_GAMES.md."
 }
 
+# --check: nothing to build, or the card matches the folder: 0. A card made by hand (no .list) is left alone: 0.
+if [ "$CHECK" = 1 ]; then
+	command -v python3 > /dev/null || exit 0
+	[ -n "$(py list "$CARD" 2>/dev/null)" ] || exit 0
+	[ -f "$OUT" ] || exit 1
+	[ -f "$OUT.list" ] || exit 0
+	[ "$(py list "$CARD")" = "$(cat "$OUT.list")" ] && exit 0
+	exit 1
+fi
+
 # ---------------------------------------------------------------------------------------------
 # 1. What is in the card folder
 if [ ! -d "$CARD" ] || [ -z "$(ls -A "$CARD" 2>/dev/null)" ]; then
@@ -409,7 +426,7 @@ command -v python3 > /dev/null || die "python3 not found"
 # gets its card and sidecar on this run. Nothing in the games folder is ever overwritten.
 mkdir -p "$GAMES" 2>/dev/null
 NUM2=0; NCOPIED=0
-while IFS= read -r l; do
+[ "$ONE" = 1 ] || while IFS= read -r l; do
 	[ -n "$l" ] || continue
 	NUM2=$((NUM2 + 1))
 	case "$l" in
@@ -427,6 +444,12 @@ set -f; set -- $scan; set +f
 NFILES=$1; DATA=$(echo "$2" | tr _ ' '); MIB=$3; shift 3; SKIPS="$*"
 [ "$SKIPS" = "-" ] && SKIPS="nothing"
 if [ "$NFILES" = 0 ]; then
+	if [ "$ONE" = 1 ]; then
+		blank_card
+		[ "$IF_NEEDED" = 1 ] && exit 0
+		say "no card files in $CARD, only games: nothing to build."
+		exit 0
+	fi
 	if [ "$NUM2" -gt 0 ]; then
 		# only games: they are in the games folder now, and there is nothing to make a card from
 		blank_card
@@ -443,7 +466,8 @@ if [ "$NFILES" = 0 ]; then
 fi
 
 # BattleZone images and the bz_sd.img each would use (normally one, $UV/bz_sd.img)
-BZ_IMGS=$(find "$GAMES" -type f -iname '*attle*one*.um2' ! -name '._*' 2>/dev/null | sort)
+BZ_IMGS=""
+[ "$ONE" = 1 ] || BZ_IMGS=$(find "$GAMES" -type f -iname '*attle*one*.um2' ! -name '._*' 2>/dev/null | sort)
 BZ_TARGETS=""
 if [ -n "$BZ_IMGS" ]; then
 	while IFS= read -r g; do
@@ -481,7 +505,7 @@ fi
 
 say "card folder: $NFILES files, $DATA (skipped: $SKIPS)"
 if [ "$MIB" -gt "$MAX_MIB" ]; then
-	say "the card would be $MIB MiB, more than the $MAX_MIB MiB um2run can use (it cannot read card images of 2 GiB or more yet)."
+	say "the card would be $MIB MiB, more than the $MAX_MIB MiB this script makes."
 	say "Remove files the games do not need from $CARD (for example ROM sets of games you do not have as .um2), then run this again."
 	exit 1
 fi
@@ -526,7 +550,7 @@ for t in $BZ_TARGETS; do i=$((i + 1)); saves_from "$t" "$SAVES/bz$i"; done
 # the card holds the folder's files plus the saves
 MIB=$(py size "$CARD" "$MAX_MIB" "$SAVES"/*) || die "cannot work out the card size"
 if [ "$MIB" -gt "$MAX_MIB" ]; then
-	say "with the saves of the old card, the card would be $MIB MiB, more than the $MAX_MIB MiB um2run can use."
+	say "with the saves of the old card, the card would be $MIB MiB, more than the $MAX_MIB MiB this script makes."
 	say "Remove files the games do not need from $CARD, then run this again. Nothing was changed."
 	exit 1
 fi
@@ -546,16 +570,16 @@ for t in $BZ_TARGETS; do
 	if [ "$(py dev "${t%/*}")" = "$dev_uv" ]; then need=$(( need + MIB )); else need_on "${t%/*}" "$MIB"; fi
 done
 need_on "$UV" "$need"
-say "card size: $MIB MiB, FAT32 with 512-byte clusters"
+SECS=1; [ "$MIB" -gt "$BIG_MIB" ] && SECS=8
+say "card size: $MIB MiB, FAT32 with $(( SECS * 512 ))-byte clusters"
 
 # 4. Build the new card under a temporary name
 # Cluster size: FAT32 needs at least 65525 clusters. With 512-byte clusters (-s 1, the layout um2run and the
-# games were tested with) a 64 MiB card has about 129000; at the 2000 MiB limit about 4 million, still far
-# below FAT32's maximum. So -s 1 works for every size this script makes and no other cluster size is used.
+# games were tested with) a 64 MiB card has about 129000; at 2000 MiB about 4 million. Bigger cards use 4 KiB.
 NEW=$OUT.new
 rm -f "$NEW"; TMPFILES="$NEW"
 py mkimg "$NEW" "$MIB" || die "cannot create $NEW"
-mkfs.vfat -F 32 -s 1 -n "$LABEL" "$NEW" > "$WORK/mkfs.log" 2>&1 || { cat "$WORK/mkfs.log"; die "mkfs.vfat failed"; }
+mkfs.vfat -F 32 -s "$SECS" -n "$LABEL" "$NEW" > "$WORK/mkfs.log" 2>&1 || { cat "$WORK/mkfs.log"; die "mkfs.vfat failed"; }
 say "formatted"
 attach "$NEW" "$WORK/mnt_new" || die "cannot mount the new card image"
 n=$(py copy "$CARD" "$WORK/mnt_new") || exit 1

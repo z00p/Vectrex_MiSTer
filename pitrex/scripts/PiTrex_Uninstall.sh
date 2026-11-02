@@ -37,11 +37,12 @@ rmdir /media/fat/pitrex/um2run 2>/dev/null
 # TACSCAN.PCM is made by make_menu.sh from MAME's tacscan samples (made again by the next Setup)
 rm -f /media/fat/pitrex/uvmc2/tacscan/README.txt /media/fat/pitrex/uvmc2/tacscan/TACSCAN.PCM /media/fat/pitrex/uvmc2/card/README.txt
 rmdir /media/fat/pitrex/uvmc2/tacscan /media/fat/pitrex/uvmc2/card /media/fat/pitrex/uvmc2 /media/fat/pitrex 2>/dev/null
-rm -f /media/fat/games/Vectrex/PiTrex/*.ptx
-rmdir /media/fat/games/Vectrex/PiTrex 2>/dev/null
+rm -f /media/fat/games/Vectrex/PiTrex/*.ptx /media/fat/games/Vectrex-PiTrex/PiTrex/*.ptx
+rmdir /media/fat/games/Vectrex/PiTrex /media/fat/games/Vectrex-PiTrex/PiTrex 2>/dev/null
 rm -rf "/media/fat/_PiTrex & UVMC2"
-rm -f /media/fat/games/Vectrex-PiTrex/UVMC2/README.txt
-rmdir /media/fat/games/Vectrex-PiTrex/UVMC2 /media/fat/games/Vectrex-PiTrex 2>/dev/null
+rm -f /media/fat/games/Vectrex-PiTrex/UVMC2/README.txt "/media/fat/games/Vectrex-PiTrex/UVMC2/UVMC2 Menu.mnu"
+rm -f /media/fat/games/Vectrex-PiTrex/Overlays/VecBreak.art /media/fat/games/Vectrex-PiTrex/Overlays/VecDrive.art /media/fat/games/Vectrex-PiTrex/Overlays/TacScan.art /media/fat/games/Vectrex-PiTrex/Overlays/GongRider.art
+rmdir /media/fat/games/Vectrex-PiTrex/Overlays /media/fat/games/Vectrex-PiTrex/UVMC2 /media/fat/games/Vectrex-PiTrex 2>/dev/null
 rm -f /media/fat/_Unstable/Vectrex_PiTrex_B*.rbf /media/fat/_Unstable/Vectrex-PiTrex_*.rbf
 rm -f /media/fat/config/Vectrex-PiTrex_v1.CFG
 rm -f /media/fat/games/Vectrex/Overlays/VecBreak.art /media/fat/games/Vectrex/Overlays/VecDrive.art /media/fat/games/Vectrex/Overlays/TacScan.art /media/fat/games/Vectrex/Overlays/GongRider.art

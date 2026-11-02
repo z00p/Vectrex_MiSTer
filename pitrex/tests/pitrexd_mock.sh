@@ -47,7 +47,9 @@ echo "  PID USER TIME COMMAND"
 [ -f $W/game.pid ] && kill -0 \$(cat $W/game.pid) 2>/dev/null && echo "\$(cat $W/game.pid) root 0:01 ./um2run --bus --hold game.um2"
 exit 0
 EOF
-chmod +x "$W/bin/ps"; export PATH=$W/bin:$PATH
+# fake chrt: real-time priority needs root, and the tests don't need the priority
+printf '#!/bin/sh\nshift 2\nexec "$@"\n' > "$W/bin/chrt"
+chmod +x "$W/bin/ps" "$W/bin/chrt"; export PATH=$W/bin:$PATH
 
 # fake core loader: when pitrexd writes load_core to the command file, "load" the core one second later
 ( while :; do
@@ -205,6 +207,43 @@ echo "== 11. refusals"
 echo 0 > "$W/cpus"
 sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain.um2; sleep 2
 check "one CPU online: refused" '[ $(runs) -eq $n ] && grep -q "REFUSED Plain.um2" "$T/pitrexd.log"'
+echo 0-1 > "$W/cpus"
+
+echo "== 12. the Vectrex menu: a .mnu pick, a pick from the menu, back to the menu when the game ends"
+kill "$(cat "$W/game.pid")" 2>/dev/null
+# fake menu: a running "game" as far as the fake ps goes
+cat > "$FAT/pitrex/uvmc2_menu" <<EOF
+#!/bin/sh
+echo menu >> $W/menu.log
+sleep 600 &
+echo \$! > $W/game.pid
+wait
+EOF
+chmod +x "$FAT/pitrex/uvmc2_menu"
+mens() { [ -f "$W/menu.log" ] && wc -l < "$W/menu.log" || echo 0; }
+touch "$UD/UVMC2 Menu.mnu"
+sleep 11; pick "games/Vectrex-PiTrex/UVMC2/UVMC2 Menu.mnu" "UVMC2 Menu.mnu"
+check "a .mnu pick starts the menu" 'waitfor "[ \$(mens) -eq 1 ]" 6'
+sleep 11; n=$(runs); pick "$UD/Plain.um2" ""
+check "a pick from the menu starts the game and sets the flag" 'waitfor "[ \$(runs) -gt $n ]" 6 && [ -f "$T/pitrex_from_menu" ]'
+kill "$(cat "$W/game.pid")" 2>/dev/null
+check "game over: back in the menu, flag gone" 'waitfor "[ \$(mens) -eq 2 ]" 12 && [ ! -f "$T/pitrex_from_menu" ]'
+sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain.um2
+check "an OSD pick from the menu starts the game, no flag" 'waitfor "[ \$(runs) -gt $n ]" 6 && [ ! -f "$T/pitrex_from_menu" ]'
+kill "$(cat "$W/game.pid")" 2>/dev/null; sleep 8
+check "game over: stays stopped" '[ $(mens) -eq 2 ]'
+
+echo "== 13. a direct pick says so when the card is out of date"
+touch "$FAT/pitrex/uvmc2/sd.img"; printf '#!/bin/sh\nexit 1\n' > "$FAT/pitrex/make_card.sh"
+sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain.um2
+check "notice, then the game on the current card" 'waitfor "[ \$(runs) -gt $n ]" 9 && grep -q "CARD OUT OF DATE" "$W/msgs.log" && tail -1 "$W/runs.log" | grep -q -- "--sd $FAT/pitrex/uvmc2/sd.img"'
+: > "$W/msgs.log"; sleep 11; n=$(runs); pick "$UD/Plain.um2" ""
+check "no notice from the menu (it says so itself)" 'waitfor "[ \$(runs) -gt $n ]" 6 && [ ! -s "$W/msgs.log" ]'
+rm -f "$T/pitrex_from_menu"; printf '#!/bin/sh\nexit 0\n' > "$FAT/pitrex/make_card.sh"
+sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain.um2
+check "no notice when the card is current" 'waitfor "[ \$(runs) -gt $n ]" 6 && [ ! -s "$W/msgs.log" ]'
+rm -f "$FAT/pitrex/make_card.sh"; sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain.um2
+check "no notice without the builder" 'waitfor "[ \$(runs) -gt $n ]" 6 && [ ! -s "$W/msgs.log" ]'
 
 echo
 if [ $fails -eq 0 ]; then echo "all passed"; else echo "$fails FAILED"; echo "--- pitrexd.log"; cat "$T/pitrexd.log"; echo "--- pitrexd.out"; cat "$W/pitrexd.out"; fi
