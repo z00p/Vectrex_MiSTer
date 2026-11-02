@@ -38,6 +38,7 @@ typedef struct {
 	volatile uint32_t *dma_mirror;               /* RW alias of the page mapped read-only at 0x50000000 (or NULL: every DMA register read traps) */
 	const char *capture_path;                    /* record the model's inputs for replay, or NULL */
 	double   (*sysclk)(void);                    /* clk_sys in Hz as the image configured it (NULL: 300 MHz); sets the cart-audio sample rate */
+	volatile int *c1_own_cpu;                    /* nonzero once the core-1 guest has its own CPU (NULL: never) */
 	void     (*irq_poke)(void);                  /* an interrupt line owned by the model changed level (NULL: the replay tool) */
 } um2bus_cfg_t;
 

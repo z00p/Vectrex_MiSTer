@@ -2162,7 +2162,7 @@ static void *fair_thread(void *arg) {
         struct timespec ts = { 0, (long)g_donate_period_us * 1000L }; nanosleep(&ts, NULL);
         static unsigned tk; tk++;
         (void)tk;
-        pthread_kill(g_th_core0, SIGUSR1);
+        if (!(g_cpu1 >= 0 && g_c1_own_cpu)) pthread_kill(g_th_core0, SIGUSR1);   /* on_donate would return at once */
         if (__atomic_load_n(&g_have_core1, __ATOMIC_ACQUIRE)) pthread_kill(g_th_core1, SIGUSR1);
     }
     return NULL;
@@ -2637,7 +2637,7 @@ static void bus_setup(void) {
     um2bus_cfg_t c; memset(&c, 0, sizeof c);
     c.vwrite = k_write; c.vread = k_read; c.advance = k_advance; c.now = k_now; c.frame = k_frame;
     c.host_ptr = k_host_ptr; c.ext_load = k_ext_load; c.ext_store = k_ext_store; c.launch_core1 = k_launch_core1;
-    c.dma_mirror = dma_rw; c.sysclk = sysclk_hz; c.irq_poke = k_irq_poke;
+    c.dma_mirror = dma_rw; c.c1_own_cpu = &g_c1_own_cpu; c.sysclk = sysclk_hz; c.irq_poke = k_irq_poke;
     c.verbose = opt.bus_verbose; c.frame_cycles = opt.frame_cycles; c.capture_path = opt.capture;
     um2bus_init(&c);
     if (g_sd_path) { g_sd_path = strdup(g_sd_path); if (um2sd_open(g_sd_path, opt.bus_verbose)) exit(1); }

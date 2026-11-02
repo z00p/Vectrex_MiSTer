@@ -523,14 +523,14 @@ static void guest_write(uint32_t a, int size, uint32_t v) {
 /* ---- guest-visible DMA register page (optional, see um2bus_cfg_t.dma_mirror)
  * The runtime polls DMA CTRL_TRIG (BUSY) once per pushed bus word: 4700 SIGSEGV traps per frame.  With the page mapped
  * read-only at 0x50000000 over a shared memory alias, reads cost nothing and only the stores trap.  The model keeps the page
- * up to date; BUSY is set on a PIO-TX trigger and cleared ~25 us later by a helper thread (the DMA is paced by the SM on
+ * up to date; BUSY is set on a PIO-TX trigger and cleared by a helper thread (the DMA is paced by the SM on
  * hardware, so words accumulate into a batch meanwhile). */
 static volatile uint32_t *g_mir;
 static pthread_mutex_t g_busy_m = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_busy_c = PTHREAD_COND_INITIALIZER;
 static int g_busy_req;
 static volatile uint32_t g_busy_mask;
-static long g_busy_ns = 25000;             /* how long BUSY stays set after a PIO-TX trigger (UM2_BUSYUS=<us>; 0: clear at once when the helper wakes).  A nanosleep takes at least ~110 us on the A9 kernel, so the real period is longer */
+static long g_busy_ns = -1;                /* how long BUSY stays set after a PIO-TX trigger (UM2_BUSYUS=<us>; 0: clear at once when the helper wakes).  -1: 25 us while both guests share a CPU, then 0, which frees core 1 (a nanosleep takes at least ~110 us on the A9 kernel, per list; at 0 from the start the first seconds are slower).  Never setting BUSY is worse still: Punch-Out 41 fps against 52 (2 Nov 2026, core 0 close to saturated; not understood yet) */
 static volatile uint32_t g_aud_busy;     /* channels with a paced cart-audio transfer running */
 static void dma_sync(int ch) {
 	if (!g_mir) return;
@@ -552,7 +552,8 @@ static void *busy_thread(void *arg) {
 		while (!g_busy_req) pthread_cond_wait(&g_busy_c, &g_busy_m);
 		g_busy_req = 0;
 		pthread_mutex_unlock(&g_busy_m);
-		if (g_busy_ns) { struct timespec ts = { 0, g_busy_ns }; nanosleep(&ts, NULL); }
+		long ns = g_busy_ns >= 0 ? g_busy_ns : C.c1_own_cpu && *C.c1_own_cpu ? 0 : 25000;
+		if (ns) { struct timespec ts = { 0, ns }; nanosleep(&ts, NULL); }
 		uint32_t m = __sync_fetch_and_and(&g_busy_mask, 0);
 		for (int ch = 0; ch < 16; ch++) if (m >> ch & 1) {
 			volatile uint32_t *w = g_mir + ch * 16;
