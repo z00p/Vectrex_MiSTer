@@ -69,6 +69,7 @@ volatile int ptx_core_stalled;   /* ditto */
 static int memfd = -1;
 static volatile uint8_t *base;
 static arm_hdr_t *hdr;
+static volatile int attached;     /* m_open finished: the audio thread may use the block (base, st and hdr appear one by one, milliseconds apart) */
 static core_status_t *st;
 static volatile ptx_input_t *in;
 static volatile uint64_t *ring;
@@ -368,6 +369,7 @@ static int m_open(void)
 	hb_tick();
 	__sync_synchronize();
 	hdr->magic = PTX_MAGIC;          /* with a moving coded heartbeat: the core takes over */
+	attached = 1;
 	return 0;
 }
 
@@ -480,7 +482,7 @@ static uint32_t aud_queued(void)
 
 int ptx_audio_ready(void)
 {
-	return base && !core_lost && st->build_magic == 0x43585450u && (st->build & 0xFF) >= 6;
+	return attached && base && !core_lost && st->build_magic == 0x43585450u && (st->build & 0xFF) >= 6;
 }
 
 uint32_t ptx_audio_space(void)
