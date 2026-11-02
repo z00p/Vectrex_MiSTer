@@ -2447,7 +2447,7 @@ static void thr_dump(FILE *f) {
     fprintf(f, "um2run: threads (cpu s = user+sys; ctxsw = voluntary/involuntary; run/wait s from schedstat when the kernel has it), run %.1f s:\n", now() - g_t0);
     while ((e = readdir(d))) {
         if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
-        char p[96], b[1024]; snprintf(p, sizeof p, "/proc/self/task/%s/stat", e->d_name);
+        char p[320], b[1024]; snprintf(p, sizeof p, "/proc/self/task/%s/stat", e->d_name);
         FILE *g = fopen(p, "r"); if (!g) continue;
         size_t n = fread(b, 1, sizeof b - 1, g); fclose(g); b[n] = 0;
         char *o = strchr(b, '('), *c = strrchr(b, ')'); if (!o || !c || c < o) continue;
