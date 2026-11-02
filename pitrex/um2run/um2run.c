@@ -232,7 +232,13 @@ static void um_note(uint32_t a, uint32_t pc, int store) {
     pthread_mutex_unlock(&g_um_m);
 }
 static uint32_t g_bootlock;                  /* BOOTRAM BOOTLOCK0..7 held (a read claims a free lock and returns nonzero, any write releases) */
+static volatile uint32_t g_clkgen;       /* bumped after every store to CLOCKS / PLL_SYS (what sysclk_hz reads): the DWT fast path caches the clock rate per generation */
+static void mmio_store_base_(uint32_t addr, int size, uint32_t val);
 static void mmio_store_base(uint32_t addr, int size, uint32_t val) {
+    mmio_store_base_(addr, size, val);
+    if ((addr & 0xFFFF8000u) == 0x40010000u || (addr & 0xFFFF8000u) == 0x40050000u) __atomic_fetch_add(&g_clkgen, 1, __ATOMIC_SEQ_CST);
+}
+static void mmio_store_base_(uint32_t addr, int size, uint32_t val) {
     uint32_t base = addr & ~3u, sh = (addr & 3) * 8;
     if (base >= 0x400E080Cu && base <= 0x400E0828u) { __atomic_fetch_and(&g_bootlock, ~(1u << ((base - 0x400E080Cu) >> 2)), __ATOMIC_SEQ_CST); return; }
     if (size == 4 && addr >= 0x40000000 && addr < 0x60000000 && (addr & 0x3000)) {   /* atomic aliases */
@@ -484,12 +490,15 @@ static double sysclk_hz(void) {
  * cart-audio code then derives the I2S clock divider from the result.  Host time between the reads is meaningless there (a trap costs microseconds on
  * the A9, nanoseconds on a PC), so while the thread polls E edges the counter advances by sysclk/1.5 MHz cycles per polled period instead; without edges it
  * follows host time at sysclk.  UM2_NODWTFIX=1 (or UM2_NOAUDIO=1): the old 150 MHz host-time counter. */
+static int g_dwtfast = 1;        /* UM2_NODWTFAST=1: DWT_CYCCNT reads from the stubs take the generic MMIO path again (shadow lookups, census, loop breaker) and recompute the clock rate each time */
 static __thread uint32_t tl_dwt, tl_dwt_us; static __thread uint64_t tl_dwt_e; static __thread int tl_dwt_init;
 static uint32_t dwt_now(void) {
     static int off = -1; if (off < 0) off = getenv("UM2_NODWTFIX") != NULL || getenv("UM2_NOAUDIO") != NULL;
     uint32_t us = micros();
     if (off) return us * 150u;
-    double hz = sysclk_hz(); uint64_t e = um2bus_edges();
+    double hz; uint64_t e = um2bus_edges();
+    if (g_dwtfast) { static __thread double chz; static __thread uint32_t cgen = ~0u; uint32_t gn = g_clkgen; if (gn != cgen) { chz = sysclk_hz(); cgen = gn; } hz = chz; }      /* per-thread cache, renewed when a clock register was written (UM2_NODWTFAST=1: recomputed on every read) */
+    else hz = sysclk_hz();
     if (!tl_dwt_init) { tl_dwt_init = 1; tl_dwt_us = us; tl_dwt_e = e; }
     if (e != tl_dwt_e) tl_dwt += (uint32_t)((double)(e - tl_dwt_e) * (hz / 1.5e6) + 0.5);
     else tl_dwt += (uint32_t)((double)(uint32_t)(us - tl_dwt_us) * (hz / 1e6));
@@ -565,6 +574,7 @@ static void mmio_store(uint32_t addr, int size, uint32_t val) {
     if (opt.bus) { uint64_t b0 = g_isrstat ? ns_wall() : 0; int r = um2bus_store(addr, size, val, tl_core); if (b0) tl_bus_ns += ns_wall() - b0; if (r) return; }
     mmio_store_base(addr, size, val);
 }
+static uint32_t mmio_dwt_read(void) { tl_n_ml++; tl_act++; return dwt_now(); }      /* what mmio_load does for DWT_CYCCNT (no NVIC, timer or bus-model address; canned value), without the shadow lookups, the census and the loop-breaker bookkeeping */
 static uint32_t mmio_load(uint32_t addr, int size, uint32_t pc) {
     uint32_t v; tl_n_ml++;
     if ((addr & 0xFFFF4000u) != 0x400B0000u) tl_act++; else tl_n_tl++;        /* anything but the timer pages (incl. aliases) is activity */
@@ -1018,6 +1028,7 @@ static void stub_setup(void) {
     g_novfp = getenv("UM2_NOVFP") != NULL;
     g_nospi = getenv("UM2_NOSPIPATCH") != NULL;
     g_nonewblk = getenv("UM2_NONEWBLK") != NULL;
+    g_dwtfast = getenv("UM2_NODWTFAST") == NULL;
     g_noreach = getenv("UM2_NOREACH") != NULL;
     g_novrint = getenv("UM2_NOVRINT") != NULL;
     if (!g_stub_ready) perror("um2run: stub area (division stays on the trap path)");
@@ -1199,7 +1210,12 @@ static void vt_probe(void) {
 #else
 #define VT_PROBE() ((void)0)
 #endif
-uint32_t um2_mload(uint32_t addr, uint32_t site) { VT_PROBE(); if (__builtin_expect(g_hs_on > 0, 0)) sc_note(site, addr, 1); if (addr < 0x40000000u) return *(volatile uint32_t *)(uintptr_t)addr; return mmio_load(addr, 4, site); }
+uint32_t um2_mload(uint32_t addr, uint32_t site) {
+    VT_PROBE(); if (__builtin_expect(g_hs_on > 0, 0)) sc_note(site, addr, 1);
+    if (addr < 0x40000000u) return *(volatile uint32_t *)(uintptr_t)addr;
+    if (addr == 0xE0001004u && g_dwtfast && !opt.no_canned) return mmio_dwt_read();
+    return mmio_load(addr, 4, site);
+}
 /* Review finding 2: every direct branch target in the image (B/Bcc/CBZ/CBNZ, B.W/Bcc.W/BL), from one linear sweep at load.  The sweep follows instruction lengths and
  * steps over the literal-pool words the PC-relative loads it has passed refer to (a pool word such as 0x2005E578 otherwise reads as `b.n` back into the code); other data
  * can still put it out of step for a few halfwords, so target_hits() keeps the old local scan of every halfword as well.  TBB/TBH tables are not decoded. */

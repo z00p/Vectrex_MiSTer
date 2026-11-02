@@ -19,13 +19,15 @@
 #  12. vrint: VRINTA/N/P/M.F32 (UNDEFINED on the A9; VecDoom runs ~270 a frame): emulated at the first trap, then a stub; 108 sites x 12 iterations must give the IEEE results, keep the flags and the other VFP registers
 #  13. svc:   the runtime's `svc #n ; bx lr` veneers and the ones whose second instruction is a pc-relative `ldr` (Enduro's #7 and #13, every image has them) become native stubs: 4 sites x 60 calls
 #            give the right return values, constants, stored bytes, flags and registers (UM2_NOSVCLIT=1 keeps the pc-relative ones on the trap path)
-# Work files go to /tmp/um2self.  Expected: thirteen PASS lines.
+#  14. dwt:   DWT_CYCCNT steps by edges * clk_sys / 1.5 MHz while E is polled: 400 at 12 MHz, 5000 at 150 MHz, alternating 24 times through writes to the clock registers
+#            (the stub path caches the rate and must notice each change); the counter never goes backwards (UM2_NODWTFAST=1 = generic path, same result)
+# Work files go to /tmp/um2self.  Expected: fourteen PASS lines.
 H=$(cd "$(dirname "$0")" && pwd); T=$H/..; S=$T/../../src; [ -f $S/ptx_core.c ] || S=$T/../src; W=/tmp/um2self; mkdir -p $W; cd $W || exit 1
 BIN=${1:-$T/um2run}
 run() { PTX_STREAM=$W/s.ptxs timeout 60 qemu-arm -cpu cortex-a9 "$@"; }
 mark() { grep -E "^ +[0-9]+ +40001000" "$1" | head -1 | sed 's/.*last=//'; }
 (cd $T && arm-linux-gnueabihf-gcc -O2 -static -pthread -I$S -I$T -DUM2_VFPTEST -o $W/um2run_vt um2run.c um2bus.c um2sd.c um2aud.c $S/ptx_core.c $S/ptx_backend_file.c $S/ptx_backend_mister.c -lm) || { echo "build failed"; exit 1; }
-for g in gen_vfp gen_race gen_v8 gen_pre gen_prim gen_aud gen_vsel gen_alarm gen_frame gen_far gen_reach gen_vrint gen_svc; do python3 $H/$g.py >/dev/null 2>&1 || { echo "$g failed"; exit 1; }; done
+for g in gen_vfp gen_race gen_v8 gen_pre gen_prim gen_aud gen_vsel gen_alarm gen_frame gen_far gen_reach gen_vrint gen_svc gen_dwt; do python3 $H/$g.py >/dev/null 2>&1 || { echo "$g failed"; exit 1; }; done
 run $W/um2run_vt --bus --bus-verbose --no-loading --secs 3 --log 100 $W/vfptest.um2 > vfp.out 2> vfp.err
 [ "$(mark vfp.out)" = c0de0000 ] && grep -q ", 0 of them on the guest stack" vfp.err && echo "vfp:  PASS" || echo "vfp:  FAIL ($(mark vfp.out))"
 ok=0; for i in $(seq 1 30); do
@@ -71,3 +73,5 @@ n=$(grep -c "^vrint_patch" vrint.err)
 run "$BIN" --bus --bus-verbose --no-loading --secs 10 --log 100 $W/svc.um2 > svc.out 2> svc.err
 n=$(grep -c "^svc_patch" svc.err)
 [ "$(mark svc.out)" = c0de0000 ] && [ "$n" -ge 4 ] && echo "svc:  PASS ($n native SVC stubs)" || echo "svc:  FAIL ($(mark svc.out), $n stubs)"
+run "$BIN" --bus --bus-verbose --no-loading --secs 10 --log 100 $W/dwt.um2 > dwt.out 2> dwt.err
+[ "$(mark dwt.out)" = c0de0000 ] && echo "dwt:  PASS" || echo "dwt:  FAIL ($(mark dwt.out), expect c0de0000)"

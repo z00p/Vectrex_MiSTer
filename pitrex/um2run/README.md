@@ -33,7 +33,7 @@ cd pitrex/um2run
 The binary is not kept in git. Copy `um2run` and `mister_run.sh` to `/media/fat/pitrex/um2run/` on
 the MiSTer (the release zip and PiTrex_Setup do this for you).
 
-Self test (needs `qemu-user`, `apt install qemu-user`): `./selftest/selftest.sh` should print thirteen
+Self test (needs `qemu-user`, `apt install qemu-user`): `./selftest/selftest.sh` should print fourteen
 `PASS` lines.
 
 ## Run by hand (SSH on the MiSTer)
