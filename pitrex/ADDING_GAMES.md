@@ -68,6 +68,8 @@ the Vectrex menu says CARD OUT OF DATE: pick **REFRESH CARD**, or run
 
 ## Updating from an older release
 - After **Scripts > PiTrex_Update**, run **Scripts > PiTrex_Setup** once.
+- This core now uses `[Vectrex-PiTrex]` in `MiSTer.ini`, not `[Vectrex]`. PiTrex_Setup copies your
+  `[Vectrex]` settings across, so the picture stays as you had it.
 - If `pitrex/uvmc2/card/` has your files in it, it keeps working as before: the builder uses it
   and copies games from it to the UVMC2 folder. Cards and settings files that already work are
   not touched. To move to the one folder, move the files from `pitrex/uvmc2/card/` to

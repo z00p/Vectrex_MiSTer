@@ -182,6 +182,11 @@ on screen: OSD > Video Overlay & Geometry > Overlay = Off.
   your `[MiSTer]` settings and every
   other core are left as they were. If you use an alternative ini (`MiSTer_alt_1.ini` and so on),
   add the same two lines to that file yourself.
+- **MiSTer.ini, your `[Vectrex]` section:** if you have one, its settings (`direct_video`, `video_mode` and so
+  on) are copied into `[Vectrex-PiTrex]`, after the line `; copied from [Vectrex] by PiTrex_Setup`. This core
+  has its own name now, so `[Vectrex]` no longer applies to it, and your picture would change without them.
+  Settings already in `[Vectrex-PiTrex]` are kept. `[Vectrex]` itself is not touched. If you change it later,
+  change `[Vectrex-PiTrex]` too.
 - **Older releases** (B8 and earlier) set `log_file_entry=1` for all cores in `[MiSTer]` and kept a
   backup, `MiSTer.ini.pitrex-bak`. Setup now puts that line back as it was in the backup, then
   deletes the backup.

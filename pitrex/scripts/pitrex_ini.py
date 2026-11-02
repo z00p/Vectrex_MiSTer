@@ -5,8 +5,11 @@
 #   pitrex_ini.py uninstall [INI]   remove that line (and the section, if nothing else is in it)
 # Why: pitrexd learns about an OSD pick from the files Main writes to /tmp (FILESELECT, FULLPATH,
 # CURRENTPATH), and Main only writes them with log_file_entry=1. A core section applies when the
-# core runs under that name, which the PiTrex & UVMC2 menu entries give it (MGL setname), so the
-# [MiSTer] settings and every other core are left alone.
+# core runs under that name, so the [MiSTer] settings and every other core are left alone.
+# Setup also copies the settings of a [Vectrex] section: up to B10 the core's own name was VECTREX, so
+# they applied to it, and without them a display set up for this core changes (direct_video, video_mode).
+# The copy is a block after the section header, starting with COPIED, and only adds keys the section
+# does not have yet. Uninstall removes the block; [Vectrex] itself is never touched.
 # Both modes also undo what releases up to B8 and the first alpha draft did: log_file_entry=1 in
 # [MiSTer], with the original file kept as MiSTer.ini.pitrex-bak. That is put back as it was in
 # the backup, and the backup is removed.
@@ -23,6 +26,8 @@ TEXT = {"encoding": "utf-8", "errors": "surrogateescape", "newline": ""}
 
 SECTION = "vectrex-pitrex"
 LINE = "log_file_entry=1"
+OLD_SECTION = "vectrex"
+COPIED = "; copied from [Vectrex] by PiTrex_Setup"
 
 
 def norm(line):
@@ -87,7 +92,48 @@ def setup(lines, nl):
     return lines[:head + 1] + [LINE] + lines[head + 1:], "MiSTer.ini: log_file_entry=1 added to [Vectrex-PiTrex]"
 
 
+def key_of(line):
+    return norm(line).split("=", 1)[0]
+
+
+def is_setting(line):
+    s = line.strip()
+    return "=" in s and not s.startswith((";", "#", "["))
+
+
+def copy_old_section(lines):
+    """Add the settings of [Vectrex] that [Vectrex-PiTrex] does not have yet (setup() made the section)."""
+    secs = section_of(lines)
+    have = {key_of(l) for l, s in zip(lines, secs) if s == SECTION and is_setting(l)}
+    new = [l.strip() for l, s in zip(lines, secs) if s == OLD_SECTION and is_setting(l) and key_of(l) not in have]
+    if not new:
+        return lines, None
+    at = next(i for i, l in enumerate(lines) if is_header(l, SECTION)) + 1
+    if lines[at].strip() == COPIED:
+        at += 1
+    else:
+        new = [COPIED] + new
+    return lines[:at] + new + lines[at:], "MiSTer.ini: copied your [Vectrex] settings to [Vectrex-PiTrex]: " + \
+        ", ".join(key_of(l) for l in new if l != COPIED)
+
+
+def drop_copied(lines):
+    """Remove the block copy_old_section() wrote: COPIED and the settings right after it."""
+    secs = section_of(lines)
+    out, inside = [], False
+    for l, s in zip(lines, secs):
+        if s == SECTION and l.strip() == COPIED:
+            inside = True
+            continue
+        if inside and s == SECTION and is_setting(l) and norm(l) != LINE:
+            continue
+        inside = False
+        out.append(l)
+    return out
+
+
 def uninstall(lines, nl):
+    lines = drop_copied(lines)
     secs = section_of(lines)
     out = [l for l, s in zip(lines, secs) if not (s == SECTION and norm(l) == LINE)]
     if len(out) == len(lines):
@@ -142,12 +188,15 @@ def main():
     had_bak = os.path.exists(bak)
     lines, m1 = undo_global(lines, ini)
     lines, m2 = (setup if mode == "setup" else uninstall)(lines, nl)
+    m3 = None
+    if mode == "setup":
+        lines, m3 = copy_old_section(lines)
     new = nl.join(lines)
     if new != data:
         write_atomic(ini, new)
     if had_bak:
         os.remove(bak)
-    for m in (m1, m2):
+    for m in (m1, m2, m3):
         if m:
             print(m)
 
