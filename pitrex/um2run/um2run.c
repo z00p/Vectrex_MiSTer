@@ -1382,12 +1382,17 @@ static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int 
             nop = 1; nx = -1; nx2 = -1; span = 4; nbr = -1;
             int pp = g_rd16(site - 2), pq = g_rd16(site - 4);
             if (pp < 0 || pq < 0 || pq >= 0xE800 || target_hits(site, site) || bm_get(g_pcover, site - 2)) return NOPE(HW_NOPRE);
+            /* site - 2 might sit in an IT block (or a 32-bit instruction ends in what looks like one): leave it where it is.  An IT covers up to 4 instructions of up to 4 bytes, so it can be 16 bytes back */
+            for (int q = 4; q <= 16; q += 2) {
+                int w = g_rd16(site - q); if (w < 0) return NOPE(HW_NOPRE);
+                int nit = w & 15 ? 4 - __builtin_ctz(w & 15) : 0;                              /* instructions in the block if this is an IT; 0: a hint such as nop */
+                if (!bm_get(g_pcover, site - q) && (w & 0xFF00) == 0xBF00 && nit >= (q - 1) / 4 + 1) return NOPE(HW_NOPRE);
+            }
             if ((pp & 0xF800) == 0x4800) {
                 uint32_t la = ((site - 2 + 4) & ~3u) + (uint32_t)(pp & 0xFF) * 4;
                 if (la < IMG_BASE || la + 4 > IMG_TOP) return NOPE(HW_POOL);
                 op[1] = op[0]; op[0] = (HOp){ 1, (pp >> 8) & 7, 0, 0, 1, *(volatile uint32_t *)(uintptr_t)la }; nop = 2; pre = 1;
             } else if (!g_noreach && safe16_pre((uint16_t)pp)) {
-                for (int q = 4; q <= 8; q += 2) { int w = g_rd16(site - q); if (w < 0 || (!bm_get(g_pcover, site - q) && (w & 0xFF00) == 0xBF00)) return NOPE(HW_NOPRE); }   /* site - 2 might sit in an IT block (or a 32-bit instruction ends in what looks like one): leave it where it is */
                 preh = (uint16_t)pp; pre = 2;
             } else return NOPE(HW_NOPRE);
         }
@@ -2055,6 +2060,11 @@ __attribute__((noreturn)) static void guest_jump(void) {
 static void wr16_inproc(uint32_t a, uint16_t v) { *(volatile uint16_t *)(uintptr_t)a = v; __builtin___clear_cache((char *)(uintptr_t)a, (char *)(uintptr_t)a + 2); }
 static int rd16_inproc(uint32_t a) { if (a < IMG_BASE || a + 2 > IMG_TOP || (a & 1)) return -1; return *(volatile uint16_t *)(uintptr_t)a; }
 
+/* An exit is claimed once, or every thread that gets there while it runs starts its own bus_finish (VecOS, 1 Nov 2026: six at once from the timer, two producers
+ * on the ring, the process alive 2 h after its limit).  The losers from the timer return, and the ticks that follow are the deadline; the others stop here. */
+static volatile int g_exit_claimed, g_exit_rc; static volatile double g_exit_t;
+static int exit_claim(int rc) { if (__sync_lock_test_and_set(&g_exit_claimed, 1)) return 0; g_exit_rc = rc; g_exit_t = now(); return 1; }
+
 /* ---- in-process back-end */
 static void on_fault(int sig, siginfo_t *si, void *vuc) {
     ucontext_t *uc = vuc; Cpu c;
@@ -2066,7 +2076,7 @@ static void on_fault(int sig, siginfo_t *si, void *vuc) {
         act = cpu_trap(sig, &c, (uint32_t)(uintptr_t)si->si_addr, 0, 0);
         clock_gettime(CLOCK_MONOTONIC, &t1_); g_trap_ns += (uint64_t)((t1_.tv_sec - t0_.tv_sec) * 1000000000LL + (t1_.tv_nsec - t0_.tv_nsec)); g_trap_n++;
     } else act = cpu_trap(sig, &c, (uint32_t)(uintptr_t)si->si_addr, 0, 0);
-    if (act == ACT_STOP) { print_summary(1); fflush(stdout); bus_finish(); _exit(0); }
+    if (act == ACT_STOP) { if (!exit_claim(0)) for (;;) pause(); print_summary(1); fflush(stdout); bus_finish(); _exit(0); }
     memcpy(&uc->uc_mcontext.arm_r0, c.r, sizeof c.r);
 }
 #ifdef USE_SECCOMP
@@ -2095,10 +2105,6 @@ static void install_seccomp(void) {
 static volatile int g_ptx_up, g_guest_seen;   /* g_guest_seen: the image itself has produced a bus event (ptx may be up earlier: loading indicator) */
 static const char *g_sd_path;
 static double g_last_frame_t, g_bus_timeout = 60, g_frame_timeout = 30;    /* --bus: exit if the bus stays unused / no frame for this long */
-/* The timer goes to whichever thread is running: an exit from it is claimed once, or every thread that takes a tick while it runs starts its own bus_finish
- * (VecOS, 1 Nov 2026: six at once, two producers on the ring, the process alive 2 h after its limit).  The ticks that follow are the deadline. */
-static volatile int g_exit_claimed, g_exit_rc; static volatile double g_exit_t;
-static int exit_claim(int rc) { if (__sync_lock_test_and_set(&g_exit_claimed, 1)) return 0; g_exit_rc = rc; g_exit_t = now(); return 1; }
 static void on_alarm(int sig, siginfo_t *si, void *vuc) {
     ucontext_t *uc = vuc; (void)sig; (void)si;
     if (g_exit_claimed) { if (g_exit_t > 0 && now() - g_exit_t > 3) _exit(g_exit_rc); return; }
@@ -2467,6 +2473,7 @@ static void thr_dump(FILE *f) {
     closedir(d);
     char pr[512]; if (ptx_pace_report(pr, sizeof pr) > 0) fprintf(f, "um2run: %s\n", pr);
 }
+static void bus_atexit(void) { if (!exit_claim(0)) for (;;) pause(); bus_finish(); }
 static void bus_finish(void) {
     rh_dump(); hs_dump();
     if (!opt.bus) return;
@@ -2654,7 +2661,7 @@ static int run_inproc(void) {
     g_rd16 = rd16_inproc; g_wr16 = wr16_inproc;
     static char altstack[1 << 16] __attribute__((aligned(64)));
     stack_t ss = { altstack, 0, sizeof altstack }; sigaltstack(&ss, NULL);
-    if (opt.bus) { bus_setup(); atexit(bus_finish); }
+    if (opt.bus) { bus_setup(); atexit(bus_atexit); }
     struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_sigaction = on_fault; sa.sa_flags = SA_SIGINFO | SA_ONSTACK; sigfillset(&sa.sa_mask);
     sigdelset(&sa.sa_mask, SIGKILL);
     sigaction(SIGILL, &sa, NULL); sigaction(SIGSEGV, &sa, NULL); sigaction(SIGBUS, &sa, NULL); sigaction(SIGTRAP, &sa, NULL); sigaction(SIGFPE, &sa, NULL);

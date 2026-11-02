@@ -541,6 +541,10 @@ static void dma_sync(int ch) {
 	m[4] = c; m[5] = d->read; m[6] = d->write; m[7] = d->count;
 	m[8] = c; m[9] = d->count; m[10] = d->read; m[11] = d->write;
 	m[12] = c; m[13] = d->write; m[14] = d->count; m[15] = d->read;
+	if (c & (1u << 26)) {                      /* the helper may have taken the bit between the read above and these stores, and cleared the old words: look again, or BUSY stays set for good */
+		__sync_synchronize();
+		if (!((g_busy_mask | g_aud_busy) >> ch & 1)) { c &= ~(1u << 26); m[3] = c; m[4] = c; m[8] = c; m[12] = c; }
+	}
 }
 __attribute__((weak)) void um2_rt_boost(int delta) { (void)delta; }   /* um2run overrides it */
 static void *busy_thread(void *arg) {

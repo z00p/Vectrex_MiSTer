@@ -39,6 +39,25 @@ x{i}:
     it ne
     orrne r7, r7, #4
 """
+# the constant load is the last instruction of a 4-instruction IT block, 16 bytes after the `it`, and the block is skipped: a b.w at site - 2 would be skipped too, and the load with it (r7 bit 4)
+Y = """    ldr r2, lit_sio
+    movs r0, #1
+    cmp r3, #1
+    itttt eq
+    addeq.w r6, r6, #1
+    addeq.w r6, r6, #2
+    addeq.w r6, r6, #3
+    ldreq r2, lit_sio
+    ldr r0, [r2, #0]
+y{i}:
+    adds r3, r3, #1
+    cmp r3, #2
+    bne y{i}
+    movs r3, #0
+    cmp r0, #0
+    it ne
+    orrne r7, r7, #16
+"""
 S = """
 .syntax unified
 .arch armv7-a
@@ -63,6 +82,7 @@ iter:
 """ % ITER
 for i in range(N): S += T.format(i=i)
 for i in range(N): S += X.format(i=i, v=i + 1)
+for i in range(2): S += Y.format(i=i)
 S += """    mov r1, sp
     mov r0, r9
     subs r0, r0, #4

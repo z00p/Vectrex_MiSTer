@@ -515,7 +515,7 @@ void ptx_audio_write(const int16_t *s, uint32_t n)
 /* One line for um2run's summary: the core's own counters plus ours (see ps_* above).  Returns the length, 0 when there is nothing to say. */
 int ptx_pace_report(char *buf, unsigned n)
 {
-	if (!st || !ps_frames) return 0;
+	if (!base || !st || !ps_frames) return 0;       /* base: st points into the block, which m_close unmaps */
 	return snprintf(buf, n, "ptx pacing: %lu frame marks, producer ahead by more than %u frames at %lu (waited %lu naps), not ahead at %lu; commands unfetched at a mark: avg %.0f max %llu; ring-full naps %lu; core frames %u underruns %u",
 	                ps_frames, PTX_LEAD_FRAMES, ps_waited, ps_naps, ps_behind, (double)ps_lead_sum / (double)ps_frames, (unsigned long long)ps_lead_max, ps_fullnaps, st->frames, st->underruns);
 }

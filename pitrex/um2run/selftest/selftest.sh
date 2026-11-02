@@ -5,7 +5,7 @@
 #   1. vfp:  VFP d0-d7 + FPSCR + flags survive a stub's C helper (the test build's helpers clobber them) and the helper runs on the host stack
 #   2. race: both cores run the same 48 hot-patch sites in lock step, 30 runs (an unparked patch showed "STOP: undecodable memory fault" in half of them)
 #   3. v8:   LDA/STL/LDAEX/STLEX become stubs with dmb ish and still work (one conditional LDA in an IT block stays on the in-place path)
-#   4. pre:  `ldr rX,[pc,#imm]` + a load whose next halfword is a branch target: patched from site - 2 (the access that trapped finishes in the emulation), registers/sp intact
+#   4. pre:  `ldr rX,[pc,#imm]` + a load whose next halfword is a branch target: patched from site - 2 (the access that trapped finishes in the emulation), registers/sp intact; a constant load that ends a 4-instruction IT block stays where it is (a skipped block must not skip the site)
 #   5. prim: `mrs rd,PRIMASK ; cpsid i` / `msr PRIMASK,rd` pairs (7 registers incl. r12, lr) become stubs; mask values and registers stay right
 #   6. aud:  cart audio: a guest sets up the SDK's PIO2 I2S program + an endless ring DMA like the UVMC2 images and plays a 1 kHz square wave through it; the DMA READ_ADDR
 #            must advance at the I2S rate (32 kHz from clk_sys / clkdiv: 62400 frames in ~1950 ms) and the .wav (UM2_WAV) must hold the tone
