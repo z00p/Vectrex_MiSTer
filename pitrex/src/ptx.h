@@ -92,4 +92,7 @@ int      ptx_audio_ready(void);
 uint32_t ptx_audio_space(void);
 void     ptx_audio_write(const int16_t *s, uint32_t n);
 
+/* One text line of pacing statistics (MiSTer backend; 0 elsewhere or before the first frame). */
+int      ptx_pace_report(char *buf, unsigned n);
+
 #endif

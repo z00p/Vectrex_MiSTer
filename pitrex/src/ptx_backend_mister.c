@@ -79,6 +79,10 @@ static unsigned aud_nsamp;
 static uint64_t wr, published, rd_cache;   /* rd_cache: last rd_idx seen (it only grows between re-attaches) */
 static uint64_t frame_end[8];
 static uint32_t n_frames;
+/* Pacing statistics (ptx_pace_report): was the producer ahead of the core at the frame marks (it had to wait: the stream length, i.e. the
+ * Vectrex, sets the speed) or behind (it never waited: the host sets the speed)?  Counters only, no clock reads. */
+static unsigned long ps_frames, ps_waited, ps_naps, ps_fullnaps, ps_behind;
+static uint64_t ps_lead_sum, ps_lead_max;   /* commands written but not yet fetched by the core, at each frame mark */
 static uint32_t hb;
 static volatile sig_atomic_t core_lost;   /* set once we no longer own the block: never write again */
 static uint32_t session;               /* random id written to the header; another value read back = another producer */
@@ -374,6 +378,7 @@ static void m_push(uint64_t cmd)
 		rd_cache = st->rd_idx;
 		while (wr - rd_cache >= PTX_RING_N - PTX_PUBLISH) {   /* ring full: wait */
 			if (published != wr) publish();
+			ps_fullnaps++;
 			nap_us(50);
 			rd_cache = st->rd_idx;
 		}
@@ -396,7 +401,11 @@ static void m_frame(uint64_t stream_cycles)
 	if (n_frames <= PTX_LEAD_FRAMES) return;
 	uint64_t target = frame_end[(n_frames - 1 - PTX_LEAD_FRAMES) % 8];
 	int waited_ms = 0;
+	{ uint64_t rd = st->rd_idx; uint64_t lead = wr > rd ? wr - rd : 0;
+	  ps_frames++; ps_lead_sum += lead; if (lead > ps_lead_max) ps_lead_max = lead;
+	  if (rd < target) ps_waited++; else ps_behind++; }
 	while (st->rd_idx < target) {
+		ps_naps++;
 		nap_us(200);
 		if (++waited_ms == 10000) {              /* 2 s without progress */
 			fprintf(stderr, "ptx: core not fetching (rd_idx %llu < %llu) - PiTrex Mode on?\n",
@@ -501,6 +510,14 @@ void ptx_audio_write(const int16_t *s, uint32_t n)
 	hdr->aud_wr = aud_wr;
 }
 
+/* One line for um2run's summary: the core's own counters plus ours (see ps_* above).  Returns the length, 0 when there is nothing to say. */
+int ptx_pace_report(char *buf, unsigned n)
+{
+	if (!st || !ps_frames) return 0;
+	return snprintf(buf, n, "ptx pacing: %lu frame marks, producer ahead by more than %u frames at %lu (waited %lu naps), not ahead at %lu; commands unfetched at a mark: avg %.0f max %llu; ring-full naps %lu; core frames %u underruns %u",
+	                ps_frames, PTX_LEAD_FRAMES, ps_waited, ps_naps, ps_behind, (double)ps_lead_sum / (double)ps_frames, (unsigned long long)ps_lead_max, ps_fullnaps, st->frames, st->underruns);
+}
+
 #else  /* not Linux: keep the symbol so the harness links everywhere */
 static int m_unavailable(void) { return -1; }
 static void m_nop_push(uint64_t c) { (void)c; }
@@ -510,6 +527,7 @@ static void m_nop(void) {}
 static void m_nop_status(ptx_status_t *o) { o->valid = 0; }
 const ptx_backend_t ptx_backend_mister = { m_unavailable, m_nop_push, m_nop_frame, m_nop_input, m_nop_status, m_nop };
 int      ptx_audio_ready(void) { return 0; }
+int      ptx_pace_report(char *buf, unsigned n) { (void)buf; (void)n; return 0; }
 uint32_t ptx_audio_space(void) { return 0; }
 void     ptx_audio_write(const int16_t *s, uint32_t n) { (void)s; (void)n; }
 #endif

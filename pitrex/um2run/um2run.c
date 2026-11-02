@@ -43,6 +43,7 @@
 #include <ucontext.h>
 #include <sched.h>
 #include <sys/resource.h>
+#include <dirent.h>
 #include <pthread.h>
 #include <sys/syscall.h>
 #include <linux/futex.h>
@@ -2432,6 +2433,37 @@ static void hs_dump(void) {
                 blockname(s->amin), pat ? "PATCHED" : "open   ", s->tries, pat ? "(traps before the patch)" : g_why_txt[s->why < HW_NKIND ? s->why : 0]);
     }
 }
+/* Per-thread CPU time and scheduling counts at the end of a run, from /proc/self/task (UM2_NOTHREADS=1: off).  The PC sampler (UM2_PROF) is a
+ * process-wide ITIMER_PROF whose signal lands on whichever thread the tick found running, so its per-core sample counts say little about how long
+ * each guest core really ran; this does.  cpu = user+sys seconds; wait = time runnable but not running (CONFIG_SCHEDSTATS kernels only). */
+static void thr_dump(FILE *f) {
+    if (getenv("UM2_NOTHREADS")) return;
+    DIR *d = opendir("/proc/self/task"); if (!d) return;
+    long hz = sysconf(_SC_CLK_TCK); if (hz <= 0) hz = 100;
+    struct dirent *e;
+    fprintf(f, "um2run: threads (cpu s = user+sys; ctxsw = voluntary/involuntary; run/wait s from schedstat when the kernel has it), run %.1f s:\n", now() - g_t0);
+    while ((e = readdir(d))) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+        char p[96], b[1024]; snprintf(p, sizeof p, "/proc/self/task/%s/stat", e->d_name);
+        FILE *g = fopen(p, "r"); if (!g) continue;
+        size_t n = fread(b, 1, sizeof b - 1, g); fclose(g); b[n] = 0;
+        char *o = strchr(b, '('), *c = strrchr(b, ')'); if (!o || !c || c < o) continue;
+        *c = 0; char nm[32]; snprintf(nm, sizeof nm, "%s", o + 1);
+        unsigned long ut = 0, st = 0; int cpu = -1;
+        { char *q = c + 2; int fld = 3; while (*q && fld < 40) { if (fld == 14) ut = strtoul(q, NULL, 10); if (fld == 15) st = strtoul(q, NULL, 10); if (fld == 39) cpu = atoi(q); while (*q && *q != ' ') q++; if (*q) q++; fld++; } }
+        unsigned long vol = 0, inv = 0;
+        snprintf(p, sizeof p, "/proc/self/task/%s/status", e->d_name);
+        if ((g = fopen(p, "r"))) { char l[128]; while (fgets(l, sizeof l, g)) { sscanf(l, "voluntary_ctxt_switches: %lu", &vol); sscanf(l, "nonvoluntary_ctxt_switches: %lu", &inv); } fclose(g); }
+        unsigned long long rn = 0, wn = 0; int ss = 0;
+        snprintf(p, sizeof p, "/proc/self/task/%s/schedstat", e->d_name);
+        if ((g = fopen(p, "r"))) { ss = fscanf(g, "%llu %llu", &rn, &wn) == 2 && (rn || wn); fclose(g); }
+        fprintf(f, "  %-8s tid %s cpu %.2f (user %.2f sys %.2f) on CPU %d, ctxsw %lu/%lu", nm, e->d_name, (double)(ut + st) / hz, (double)ut / hz, (double)st / hz, cpu, vol, inv);
+        if (ss) fprintf(f, ", run %.2f wait %.2f", rn * 1e-9, wn * 1e-9);
+        fputc('\n', f);
+    }
+    closedir(d);
+    char pr[512]; if (ptx_pace_report(pr, sizeof pr) > 0) fprintf(f, "um2run: %s\n", pr);
+}
 static void bus_finish(void) {
     rh_dump(); hs_dump();
     if (!opt.bus) return;
@@ -2440,6 +2472,7 @@ static void bus_finish(void) {
     if (g_nvrint) fprintf(stderr, "um2run: %u VRINT sites became stubs\n", g_nvrint);
     if (g_nsvcp) { fprintf(stderr, "um2run: %u SVC veneers became stubs; native SVC entries (call number:count):", g_nsvcp); for (int q = 0; q < 256; q++) if (g_svc_nat[q]) fprintf(stderr, " %d:%lu", q, g_svc_nat[q]); fputc(10, stderr); }
     lb_dump(stderr); um_dump(stderr);
+    thr_dump(stderr);
     um2bus_stats(stderr); um2sd_stats();
     if (getenv("UM2_HASHMEM") && !opt.no_psram) {      /* test hook: FNV-1a of the guest's PSRAM (where the images stage what they read from the SD card): what the guest really received */
         uint64_t h = 0xcbf29ce484222325ull; const uint32_t *p = (const uint32_t *)(uintptr_t)PSRAM_BASE;
