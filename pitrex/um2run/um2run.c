@@ -2181,7 +2181,7 @@ static void mon_open(void) {
 }
 static double thr_cpu(pthread_t th) { clockid_t cid; struct timespec ts; if (pthread_getcpuclockid(th, &cid) || clock_gettime(cid, &ts)) return 0; return ts.tv_sec + ts.tv_nsec * 1e-9; }
 static void mon_sample(int final) {
-    static double t_last; static uint64_t min_cmd = ~0ull, max_cmd, min_cyc = ~0ull, max_cyc; static uint32_t u_prev, f_prev; static int have;
+    static double t_last; static uint64_t min_cmd = ~0ull, max_cmd, min_cyc = ~0ull, max_cyc; static uint32_t u_prev, f_prev; static int have; static uint64_t cc_prev;
     if (!g_mon) return;
     uint64_t rd = (uint64_t)g_mon[0x40 / 4] | ((uint64_t)g_mon[0x44 / 4] << 32);
     uint64_t wr = (uint64_t)g_mon[0x10 / 4] | ((uint64_t)g_mon[0x14 / 4] << 32);
@@ -2190,15 +2190,15 @@ static void mon_sample(int final) {
     uint64_t ahead = wr - rd, lead = ptx_now_cycles() - cc;
     if (rd && wr >= rd) { if (ahead < min_cmd) min_cmd = ahead; if (ahead > max_cmd) max_cmd = ahead; if ((int64_t)lead < (int64_t)min_cyc) min_cyc = lead; if (lead > max_cyc) max_cyc = lead; }
     double t = now();
-    if (!have) { have = 1; t_last = t; u_prev = un; f_prev = fr; return; }
+    if (!have) { have = 1; t_last = t; u_prev = un; f_prev = fr; cc_prev = cc; return; }
     if (t - t_last >= 1.0 || final) {
-        fprintf(stderr, "ringmon t=%.0f ahead cmds %llu..%llu, cycles %lld..%lld (%.1f..%.1f ms), underruns %u (+%u), core frames +%u, maxgap %.2f ms%c",
+        fprintf(stderr, "ringmon t=%.0f ahead cmds %llu..%llu, cycles %lld..%lld (%.1f..%.1f ms), underruns %u (+%u), core frames +%u, played %.1f%% of real time, maxgap %.2f ms%c",
                 t - g_t0, (unsigned long long)min_cmd, (unsigned long long)max_cmd, (long long)min_cyc, (long long)max_cyc, (double)(int64_t)min_cyc / 1500.0, (double)max_cyc / 1500.0,
-                un, un - u_prev, fr - f_prev, g_maxgap * 1e3, 10);
+                un, un - u_prev, fr - f_prev, (double)(cc - cc_prev) / (t - t_last) / 15000.0, g_maxgap * 1e3, 10);
         { static double c0p, c1p; double c0 = thr_cpu(g_th_core0), c1 = g_have_core1 ? thr_cpu(g_th_core1) : 0;
           static unsigned long i0p, i10p; unsigned long i0 = g_irq_cnt[0], i10 = g_irq_cnt[10];
           fprintf(stderr, "  cpu per second: core0 %.0f ms, core1 %.0f ms (of %.0f ms wall); irq0 +%lu irq10 +%lu, alarm lag %d ms\n", (c0 - c0p) * 1e3, (c1 - c1p) * 1e3, (t - t_last) * 1e3, i0 - i0p, i10 - i10p, g_irq_cnt[0] ? -(int32_t)(g_tm[0].target[0] - micros()) / 1000 : 0); c0p = c0; c1p = c1; i0p = i0; i10p = i10; }
-        t_last = t; min_cmd = ~0ull; max_cmd = 0; min_cyc = ~0ull; max_cyc = 0; u_prev = un; f_prev = fr; g_maxgap = 0;
+        t_last = t; min_cmd = ~0ull; max_cmd = 0; min_cyc = ~0ull; max_cyc = 0; u_prev = un; f_prev = fr; cc_prev = cc; g_maxgap = 0;
     }
 }
 static void *hb_thread(void *arg) {
@@ -2493,7 +2493,7 @@ static void bus_finish(void) {
     um2aud_stop();
     if (g_ptx_up) { ld_stop(); if (g_hold) hq_flush(); g_ptx_up = 0; ptx_shutdown(); }
 }
-static inline void gap_note(void) { if (g_ringmon) { double t = now(); if (g_lastw && t - g_lastw > g_maxgap) g_maxgap = t - g_lastw; g_lastw = t; } }
+static inline void gap_note(void) { if (g_ringmon > 1) { double t = now(); if (g_lastw && t - g_lastw > g_maxgap) g_maxgap = t - g_lastw; g_lastw = t; } }
 /* --hold: a whole frame's commands are queued here and handed to the ring only at the next frame mark (or before a read, or after 50 ms),
  * so the core never starves in the middle of a list: with the producer slower than real time, cmd-by-cmd publication made the ring
  * run dry mid-vector (see DESIGN.md).  Costs one frame of latency.  Stream time is tracked in g_vnow meanwhile. */
@@ -2939,6 +2939,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--bus-timeout") && i + 1 < argc) g_bus_timeout = atof(argv[++i]);
         else if (!strcmp(a, "--frame-timeout") && i + 1 < argc) g_frame_timeout = atof(argv[++i]);
         else if (!strcmp(a, "--ringmon")) g_ringmon = 1;
+        else if (!strcmp(a, "--ringmon-gap")) g_ringmon = 2;   /* also the longest gap between ring writes: a clock read per write, which slows the producer */
         else if (!strcmp(a, "--hold")) g_hold = 1;
         else if (!strcmp(a, "--no-loading")) g_noload = 1;
         else if (!strcmp(a, "--message") && i + 1 < argc) g_msg = argv[++i];
