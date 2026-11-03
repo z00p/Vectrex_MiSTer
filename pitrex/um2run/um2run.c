@@ -2566,18 +2566,22 @@ static uint8_t sh_read(uint16_t a, uint8_t v) {
     int8_t cap = g_sh_en ? pot_get(g_sh_sel) : g_sh_cap;           /* mux on: the cap follows the pot */
     return (uint8_t)((v & ~0x20) | (cap > g_sh_dac ? 0x20 : 0));
 }
-static void k_write_raw(uint16_t a, uint8_t d) { gup(); sh_write(a, d); if (g_hold) { hq_add(0, a, d, 0); g_vnow += 1; } else { ld_take(); gap_note(); ptx_write(a, d); } }
+static void k_out(uint16_t a, uint8_t d) { if (g_hold) { hq_add(0, a, d, 0); g_vnow += 1; } else { ld_take(); gap_note(); ptx_write(a, d); } }
+static void k_write_raw(uint16_t a, uint8_t d) { gup(); sh_write(a, d); k_out(a, d); }
 /* The SDK's re-zero primes the zero reference with a value meant for a real console's analogue error (0x23, then 0xFF for
  * 4 cycles). The core has no such error and its reference settles at about -1, so every ramp picks up a constant drift and
- * rows of text lean.  Keep the reference at 0: charge it once, then leave the mux closed on that channel.  Env UM2_ZEROGAME: the image's own value. */
+ * rows of text lean.  Keep the reference at 0: charge it once, then leave the mux closed on that channel.  Env UM2_ZEROGAME: the image's own value.
+ * Only the core sees the closed mux: the same select (PB2:1 = 1, PB0 = 0) samples stick Y1, so the stick model gets the game's own value. */
 static void k_advance(uint32_t c);
 static void k_write(uint16_t a, uint8_t d) {
     static int game = -1, primed;
     if (a == V_ORB && (d & 7) == 2) {
         if (game < 0) game = getenv("UM2_ZEROGAME") != NULL;
         if (!game) {
-            if (!primed) { primed = 1; k_write_raw(V_ORA, 0); k_write_raw(V_ORB, d); k_advance(16); }
-            d |= 1;
+            gup();
+            if (!primed) { primed = 1; k_out(V_ORA, 0); k_out(V_ORB, d); k_advance(16); }
+            sh_write(a, d); k_out(a, d | 1);
+            return;
         }
     }
     k_write_raw(a, d);
