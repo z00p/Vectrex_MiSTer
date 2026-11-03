@@ -21,6 +21,9 @@ images are included**: bring your own (and your own MAME ROM sets for the games 
   using the BigMig core the MiSTer needs a normal reboot first; until then `pitrexd` refuses to
   start a game and says so on the Vectrex (and writes `REFUSED ... CPUs` to `/tmp/pitrexd.log`),
   because the game would starve the MiSTer's own program (menu, controllers).
+- **A wired (USB) controller.** Bluetooth controllers lag badly and lose moves while a UVMC2 game
+  runs (they are fine in the normal Vectrex core and in PiTrex programs). The Vectrex reads
+  players 1 and 2 only, so make the wired pad player 1.
 - Your `.um2` images, and for some of them the files from your UVMC2 SD card. Start with
   [ADDING_GAMES.md](ADDING_GAMES.md): it has the steps and says which games need a card.
 
