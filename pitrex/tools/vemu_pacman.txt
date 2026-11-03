@@ -1,0 +1,124 @@
+# Vectrex_EMU vtest script (tools/vemu_ref.sh): Pac-Man (UVMC2) boots, starts a game with buttons 1-4 and
+# wanders the maze for 48 s (right, down, left, up, 1 s each) while the sound is recorded to pac_ref.wav.
+wav pac_ref.wav
+run 400
+shot boot.png
+btn 1
+run 6
+btn 0
+run 60
+btn 2
+run 6
+btn 0
+run 60
+btn 4
+run 6
+btn 0
+run 60
+btn 8
+run 6
+btn 0
+run 60
+shot started.png
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+shot play2.png
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+shot play6.png
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+joy 127 0
+run 50
+joy 0 -128
+run 50
+joy -128 0
+run 50
+joy 0 127
+run 50
+shot play11.png
+joy 0 0
+wavend
+stats
