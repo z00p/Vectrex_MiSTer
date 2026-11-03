@@ -1887,6 +1887,22 @@ static void prof_dump(void) {
         printf("-- syscalls %s (number:samples):", nm[c]); for (int i = 0; i < 512; i++) if (g_prof_sys[c][i]) printf(" %d:%u", i, g_prof_sys[c][i]); putchar('\n');
     }
 }
+/* UM2_PROFSLICE=1 (with UM2_PROF): at every heartbeat, the frame marks and the busiest pcs per guest core since the last one, to tell a slow stretch from a normal one */
+static void prof_slice(void) {
+    static int on = -1; static uint32_t prev[3][4096]; static unsigned m0;
+    if (on < 0) on = g_prof_hz && getenv("UM2_PROFSLICE") != NULL;
+    if (!on) return;
+    fprintf(stderr, "prof slice: frame marks %u", g_marks - m0); m0 = g_marks;
+    for (int c = 0; c < 2; c++) {
+        uint32_t top[8][2] = {{0}}, tot = 0;
+        for (int i = 0; i < 4096; i++) {
+            uint32_t d = g_prof[c][i].n - prev[c][i]; prev[c][i] = g_prof[c][i].n; if (!d) continue; tot += d;
+            for (int k = 0; k < 8; k++) if (d > top[k][1]) { memmove(top[k + 1], top[k], (size_t)(7 - k) * sizeof top[0]); top[k][0] = g_prof[c][i].pc; top[k][1] = d; break; }
+        }
+        fprintf(stderr, " | core %d %u:", c, tot); for (int k = 0; k < 8 && top[k][1]; k++) fprintf(stderr, " %08x:%u", top[k][0], top[k][1]);
+    }
+    fputc('\n', stderr);
+}
 static void print_summary(int final) {
     uint64_t tot[K_NKINDS] = {0};
     for (int i = 0; i < EVCAP; i++) if (g_ev[i].kind && g_ev[i].kind != K_OTHER) tot[g_ev[i].kind] += g_ev[i].n;
@@ -1993,6 +2009,7 @@ static void heartbeat(pid_t child) {
         }
     }
     fputc('\n', stderr);
+    prof_slice();
 }
 
 static void setup_sched(void) {
