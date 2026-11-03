@@ -75,6 +75,10 @@ The other `UM2_*` variables are developer diagnostics and A/B switches; `grep ge
 
 ## Limits
 - Speed: the A9 is much slower than the cartridge's RP2350, so the picture is drawn at a lower frame rate than on a real cartridge. Measured in attract modes on a DE10-Nano (2 Nov 2026): Pac-Man about 32 frames/s (game speed right), BattleZone about 40, Star Wars about 45, Veccy Road about 50, Punch-Out about 55 of the 60 frames/s it wants. VecDoom and Out Run still slow down in heavy scenes.
+- Controls: a game reacts a little later than on a real cartridge, because um2run draws up to one
+  frame ahead of the core. Use a wired (USB) controller: testers found Bluetooth much laggier while a
+  UVMC2 game runs, probably because um2run keeps both ARM cores busy and the Bluetooth stack gets
+  less time.
 - Start-up: about 1 to 2 seconds of static at the start (cart audio while both guest cores still
   share one CPU), and a LOADING screen for 10 to 20 seconds on the big images.
 - Picture: occasional jitter; the left edge is clipped in the cartridge menus; landscape games are cropped on the portrait screen.
