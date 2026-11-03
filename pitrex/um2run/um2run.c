@@ -50,6 +50,7 @@
 #include "um2bus.h"
 #include "um2sd.h"
 #include "um2aud.h"
+#include "um2clock.h"
 #include "ptx.h"
 #include "ptx_font.h"
 #ifdef __arm__
@@ -101,11 +102,11 @@ static int g_logged;
 static char g_patched[(IMG_TOP - IMG_BASE) / 2 / 8 + 1];   /* bitmap: halfword was 0xDFnn, patched */
 static uint8_t g_patch_orig_n[(IMG_TOP - IMG_BASE) / 2];
 
-static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec * 1e-9; }
+static double now(void) { return (double)um2_clock_ns() * 1e-9; }
 /* CLOCK_MONOTONIC is seconds since boot: *1e6 exceeds 2^32 after 71.6 min of uptime and a double->uint32 cast then SATURATES on ARM (timer stuck at 0xFFFFFFFF). Go through uint64 and wrap. */
-static uint32_t micros_ts(const struct timespec *t) { static double add = -1; if (add < 0) { const char *e = getenv("UM2_UPTIME_ADD"); add = e ? atof(e) : 0; }   /* test hook: pretend a long uptime */
-    return (uint32_t)((uint64_t)((t->tv_sec + t->tv_nsec * 1e-9 + add) * 1e6)); }
-static uint32_t micros(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return micros_ts(&t); }
+static double up_add(void) { static double add = -1; if (add < 0) { const char *e = getenv("UM2_UPTIME_ADD"); add = e ? atof(e) : 0; } return add; }   /* test hook: pretend a long uptime */
+static uint32_t micros_ts(const struct timespec *t) { return (uint32_t)((uint64_t)((t->tv_sec + t->tv_nsec * 1e-9 + up_add()) * 1e6)); }
+static uint32_t micros(void) { return (uint32_t)((uint64_t)((double)um2_clock_ns() * 1e-3 + up_add() * 1e6)); }   /* micros_ts without the timespec (no 64-bit divide on this hot path) */
 
 static void logf_(const char *fmt, ...) {
     if (opt.quiet || g_logged >= opt.logmax) return;
@@ -276,7 +277,7 @@ typedef struct {
 static Nvic g_nv[2];
 /* UM2_ISRSTAT=1 (diagnostics): per-ISR wall and thread-CPU time, MMIO accesses and traps inside the ISR, per core; printed with --bus-verbose at exit. */
 static int g_isrstat;
-static uint64_t ns_wall(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
+static uint64_t ns_wall(void) { return um2_clock_ns(); }
 static uint64_t ns_cpu(void) { struct timespec t; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
 static __thread uint64_t tl_bus_ns, tl_n_ml, tl_n_ms, tl_n_tl, tl_n_ts, tl_n_trap, tl_ts_ns, tl_is_w, tl_is_c, tl_is_s[8];
 static struct { uint64_t n, wall, cpu, ml, ms, tl, ts, trap, ts_ns; uint32_t wh[14], ch[14]; } g_is[2];
@@ -403,7 +404,7 @@ static void *irq_thread(void *arg) {
     pthread_mutex_lock(&g_irq_m);
     for (;;) {
         uint32_t seq = __atomic_load_n(&g_irq_seq, __ATOMIC_SEQ_CST);         /* before the scan: a wake-up after this point makes the futex wait below return at once */
-        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);              /* the one clock read of this round: the sleep below ends `wait` after it (a few us early at most) */
+        struct timespec ts; um2_mono(&ts);                                     /* the one clock read of this round: the sleep below ends `wait` after it (a few us early at most) */
         uint32_t nowu = micros_ts(&ts), gen = g_tm_gen; int64_t wait = 20000; int fired = 0;
         for (int t = 0; t < 2; t++) for (int n = 0; n < 4; n++) {
             if (!((g_tm[t].armed >> n) & 1)) continue;
@@ -2009,6 +2010,7 @@ static void heartbeat(pid_t child) {
         }
     }
     fputc('\n', stderr);
+    um2_clock_sync();
     prof_slice();
 }
 
@@ -2988,6 +2990,7 @@ static void usage(void) {
 }
 
 int main(int argc, char **argv) {
+    um2_clock_init();
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "--parse")) opt.parse = 1;

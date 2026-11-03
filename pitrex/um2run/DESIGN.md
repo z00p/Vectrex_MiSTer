@@ -41,6 +41,13 @@ commands, so the cartridge and the core never need to know about each other.
   throttled where it only spins (timer polls, E-clock polls).
 - **Interrupts.** Alarm, DMA and spare IRQs are delivered by a per-core NVIC model: pending and
   enable bits, priorities, tail chaining, round robin among equal priorities.
+- **Clock.** The MiSTer kernel has no vDSO, so every `clock_gettime` is a real system call
+  (1.3 us on the A9), and the guest TIMER and DWT reads, the audio thread and the ring backend
+  read the clock a lot. `um2clock.c` reads the Cortex-A9 global timer through `/dev/mem` instead
+  (63 ns), calibrated against CLOCK_MONOTONIC at start and slewed back onto it every heartbeat, so
+  it never goes backwards and deadlines made from it stay right. That saved about 4% of core 1's
+  CPU. Where the timer cannot be mapped (the PC) it falls back to `clock_gettime`;
+  `UM2_SLOWCLOCK=1` forces that.
 
 ## Bus side
 

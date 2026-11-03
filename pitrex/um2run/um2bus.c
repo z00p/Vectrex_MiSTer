@@ -8,6 +8,7 @@
  */
 #define _GNU_SOURCE
 #include "um2bus.h"
+#include "um2clock.h"
 #include "um2sd.h"
 #include "um2aud.h"
 #include <stdlib.h>
@@ -20,7 +21,7 @@
 static int g_busstat; static __thread uint64_t tl_bl_t0;
 static struct { uint64_t n, wait, hold, max, big, bigw; } g_bst[12];
 static const char *const g_bst_name[12] = { "sio store", "sio load", "dma store", "dma load", "spi", "qmi", "pio store", "pio load", "audio pump", "cap push", "aud_start lock", "irq_poke" };
-static uint64_t bl_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
+static uint64_t bl_ns(void) { return um2_clock_ns(); }
 #ifndef UM2BUS_NO_THREADS
 static pthread_mutex_t g_bus = PTHREAD_MUTEX_INITIALIZER;   /* PIO, DMA, GPIO, sink */
 static pthread_mutex_t g_misc = PTHREAD_MUTEX_INITIALIZER;  /* SIO FIFO */
@@ -74,7 +75,7 @@ static void frame_mark(int forced);
 __attribute__((weak)) uint64_t g_trap_ns, g_trap_n;   /* the loader owns them */
 static double g_tw, g_tf, g_wall0, g_wall1; static uint64_t g_frames0;      /* seconds spent in sink writes / ptx_frame (profiling, um2bus_stats) */
 static double cpu_s(clockid_t id) { struct timespec t; clock_gettime(id, &t); return t.tv_sec + t.tv_nsec * 1e-9; }
-static inline double tnow(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec * 1e-9; }
+static inline double tnow(void) { return (double)um2_clock_ns() * 1e-9; }
 /* ------------------------------------------------------------------ bus-cycle decode */
 /* UVM2 board pin map (uvm2_bus.h): D0-7 = GP0-7, A0-A13 = GP8-21, A14 = GP24, A15 = GP25, R/W = GP26 */
 #define PIN_RW   (1u << 26)
@@ -628,7 +629,7 @@ static pthread_cond_t g_aud_c;
 static uint64_t g_aud_sleep_until; static int g_aud_sleeping, g_aud_pred = 1; static uint32_t g_aud_gen; static unsigned long g_aud_sig, g_aud_skip;
 static int g_aud_used; static uint32_t g_dbg_wr, g_dbg_dump; static struct { uint64_t n, bad, t0; int mn, mx; double sum; FILE *log; } DF;
 static volatile uint32_t g_dma_intr; static uint32_t g_dma_inte[4], g_dma_intf[4];    /* DMA IRQ registers (INTR, INTEn, INTFn); INTSn is derived */
-static uint64_t mono_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
+static uint64_t mono_ns(void) { return um2_clock_ns(); }
 static uint32_t dma_ints(int g) { return (g_dma_intr | g_dma_intf[g]) & g_dma_inte[g]; }
 static void dma_irq_sync(void) {            /* guest-visible copies (the page is read-only for the guest, so INTS0 polls in an ISR are plain loads) */
 	if (!g_mir) return;
@@ -800,7 +801,7 @@ static void *aud_thread(void *arg) {
 		int act = 0; for (int ch = 0; ch < 16; ch++) act |= g_ad[ch].act;
 		if (g_aud_pred && g_aud_gen != gen) continue;                              /* a block was started while the lock was open: rescan */
 		if (!act && !any) {
-			struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); g_aud_sleeping = 1;
+			struct timespec ts; um2_mono(&ts); g_aud_sleeping = 1;
 			if (g_aud_used) { g_aud_sleep_until = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec + 50000000ull; ts.tv_nsec += 50000000; if (ts.tv_nsec >= 1000000000L) { ts.tv_nsec -= 1000000000L; ts.tv_sec++; } pthread_cond_timedwait(&g_aud_c, &g_aud_m, &ts); }
 			else { g_aud_sleep_until = ~0ull; pthread_cond_wait(&g_aud_c, &g_aud_m); }
 			g_aud_sleeping = 0; continue; }

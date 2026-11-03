@@ -113,12 +113,15 @@ static int name_st_ok, name_ours;
  * one header word per check. scripts/pitrexd.sh also kills the program when CORENAME changes.
  * Both are best effort; only the core-loading lifecycle could close the window entirely. */
 
-static long now_ms(void)
+/* um2run supplies a cheaper clock (um2run/um2clock.c: the MiSTer kernel has no vDSO, so clock_gettime is a 1.3 us syscall) */
+__attribute__((weak)) long ptx_clock_ms(void)
 {
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	return t.tv_sec * 1000L + t.tv_nsec / 1000000L;
 }
+
+static long now_ms(void) { return ptx_clock_ms(); }
 
 /* Raw syscalls only, so the signal handler can use it too. Returns the name's length. */
 static int read_corename(char *name, size_t sz)

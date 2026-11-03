@@ -28,7 +28,7 @@ H=$(cd "$(dirname "$0")" && pwd); T=$H/..; S=$T/../../src; [ -f $S/ptx_core.c ] 
 BIN=${1:-$T/um2run}
 run() { PTX_STREAM=$W/s.ptxs timeout 60 qemu-arm -cpu cortex-a9 "$@"; }
 mark() { grep -E "^ +[0-9]+ +40001000" "$1" | head -1 | sed 's/.*last=//'; }
-(cd $T && arm-linux-gnueabihf-gcc -O2 -static -pthread -I$S -I$T -DUM2_VFPTEST -o $W/um2run_vt um2run.c um2bus.c um2sd.c um2aud.c $S/ptx_core.c $S/ptx_backend_file.c $S/ptx_backend_mister.c -lm) || { echo "build failed"; exit 1; }
+(cd $T && arm-linux-gnueabihf-gcc -O2 -static -pthread -I$S -I$T -DUM2_VFPTEST -o $W/um2run_vt um2run.c um2bus.c um2sd.c um2aud.c um2clock.c $S/ptx_core.c $S/ptx_backend_file.c $S/ptx_backend_mister.c -lm) || { echo "build failed"; exit 1; }
 for g in gen_vfp gen_race gen_v8 gen_pre gen_prim gen_aud gen_vsel gen_alarm gen_frame gen_far gen_reach gen_vrint gen_svc gen_dwt gen_ite; do python3 $H/$g.py >/dev/null 2>&1 || { echo "$g failed"; exit 1; }; done
 run $W/um2run_vt --bus --bus-verbose --no-loading --secs 3 --log 100 $W/vfptest.um2 > vfp.out 2> vfp.err
 [ "$(mark vfp.out)" = c0de0000 ] && grep -q ", 0 of them on the guest stack" vfp.err && echo "vfp:  PASS" || echo "vfp:  FAIL ($(mark vfp.out))"
