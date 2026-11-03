@@ -314,7 +314,9 @@ while :; do
 	# ("games/Vectrex-PiTrex/UVMC2") and the file name in /tmp/CURRENTPATH.
 	case "$f" in /*) ;; *) f=$FAT/$f ;; esac
 	if [ -d "$f" ]; then f=$f/$(cat $T/CURRENTPATH 2>/dev/null); fi
-	case "${f,,}" in *.ptx) kind=ptx ;; *.um2) kind=um2 ;; *) continue ;; esac
+	# From B12 each OSD entry takes one file type, and Main then leaves the extension off the reported name (3 Nov).
+	case "${f,,}" in *.ptx|*.um2) ;; *) if [ -f "$f.um2" ]; then f=$f.um2; elif [ -f "$f.ptx" ]; then f=$f.ptx; fi ;; esac
+	case "${f,,}" in *.ptx) kind=ptx ;; *.um2) kind=um2 ;; *) echo "$(date +%T) ignored $f: not a .um2 or .ptx file" >> $LOG; continue ;; esac
 	if [ ! -f "$f" ]; then
 		echo "$(date +%T) REFUSED $f: no such file" >> $LOG
 		show "GAME FILE NOT FOUND"

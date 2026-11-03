@@ -221,6 +221,12 @@ check "no notice when the card is current" 'waitfor "[ \$(runs) -gt $n ]" 6 && [
 rm -f "$FAT/pitrex/make_card.sh"; sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain.um2
 check "no notice without the builder" 'waitfor "[ \$(runs) -gt $n ]" 6 && [ ! -s "$W/msgs.log" ]'
 
+echo "== 13. B12 OSD pick: one file type per entry, Main reports the name without its extension"
+sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain
+check "Plain (no .um2) starts Plain.um2" 'waitfor "[ \$(runs) -gt $n ]" 6 && tail -1 "$W/runs.log" | grep -q "Plain.um2"'
+sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Nothing; sleep 2
+check "a name with no matching file is logged, nothing starts" '[ $(runs) -eq $n ] && grep -q "ignored $UD/Nothing: not a .um2 or .ptx file" "$T/pitrexd.log"'
+
 echo
 if [ $fails -eq 0 ]; then echo "all passed"; else echo "$fails FAILED"; echo "--- pitrexd.log"; cat "$T/pitrexd.log"; echo "--- pitrexd.out"; cat "$W/pitrexd.out"; fi
 exit $(( fails > 0 ))
