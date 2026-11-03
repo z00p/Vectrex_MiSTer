@@ -79,7 +79,8 @@ The other `UM2_*` variables are developer diagnostics and A/B switches; `grep ge
   frame ahead of the core. Use a wired (USB) controller. Bluetooth controllers are fine in the
   normal Vectrex core but lag badly while a UVMC2 game runs: in tests on a DE10-Nano (3 Nov 2026) a
   third of the Bluetooth pad's reports arrived late and in bunches, and a third of the moves never
-  reached the game. The same pad on a USB cable was unaffected. The cause is not known yet; raising
+  reached the game. The same pad on a USB cable was unaffected, and so was the Bluetooth pad in a
+  PiTrex program (Gyrocks), so it comes with um2run's load. The cause is not known yet; raising
   the priority of the Linux Bluetooth threads did not cure it.
 - Start-up: about 1 to 2 seconds of static at the start (cart audio while both guest cores still
   share one CPU), and a LOADING screen for 10 to 20 seconds on the big images.
