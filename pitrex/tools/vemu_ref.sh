@@ -10,7 +10,7 @@
 # BIOS: the Vectrex BIOS, 8192 bytes, CRC32 ba13fb57 (MAME vectrex.zip exec_rom.bin). VEMU_DIR (default
 # ~/vemu) keeps the clone and the build; VEMU_TAG picks the version (default v1.5.4, used 3 Nov 2026).
 set -e
-[ $# -eq 5 ] || { sed -n '6,10p' "$0"; exit 2; }
+[ $# -eq 5 ] || { sed -n '7,11p' "$0"; exit 2; }
 bios=$(realpath "$1"); game=$(realpath "$2"); sd=$(realpath "$3"); script=$(realpath "$4"); out=$5
 V=${VEMU_DIR:-$HOME/vemu}; tag=${VEMU_TAG:-v1.5.4}
 [ -d "$V/src/.git" ] || git clone -q --depth 1 --branch "$tag" https://github.com/hugonl31/Vectrex_EMU.git "$V/src"
