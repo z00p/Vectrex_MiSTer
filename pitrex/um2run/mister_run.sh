@@ -23,11 +23,13 @@ st=8; c1=10; ca=$(( $(date +%s) - $(stat -c %Y /tmp/CORENAME 2>/dev/null || date
 # whole words only: $args is " a1 a2 ..." (a space before each arg), so with a space added at the end every arg,
 # first or last, is " arg "; --cpu1 / --cpu1-after alone do not count as picking the placement
 case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3000 --settle ${SETTLE:-$st} --cpu1-after ${CPU1_AFTER:-$c1}$args";; esac
+# PTX_LEAD=1 (3 Nov 2026): the game runs at most one frame ahead of the core, not the backend's two. Same frame rate on ten games, about 40% less
+# queued picture, so input reaches the screen sooner (GitHub issue 1).
 # The last game's log is kept as /tmp/um2.prev.log. A game that dies by itself is said on the Vectrex and in pitrexd's log, with its exit status: a SIGUSR1 death left
 # nothing anywhere until 31 Oct. Stopped on purpose (the backend's signal handler exits 0, or killed) and core changes stay quiet.
 [ -f /tmp/um2.log ] && mv -f /tmp/um2.log /tmp/um2.prev.log
 (
-	PTX_BACKEND=mister PTX_WAIT_CORE=60 nohup chrt -r 50 ./um2run --bus $hold $args "$img" > /tmp/um2.log 2>&1
+	PTX_LEAD=${PTX_LEAD:-1} PTX_BACKEND=mister PTX_WAIT_CORE=60 nohup chrt -r 50 ./um2run --bus $hold $args "$img" > /tmp/um2.log 2>&1
 	rc=$?
 	case $rc in 0|137|143) exit 0 ;; esac
 	sleep 3                                       # um2run sees a core change before Main names the new core

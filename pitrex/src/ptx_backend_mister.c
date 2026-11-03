@@ -43,7 +43,7 @@
 #define PTX_AUD_TARGET 800u                   /* words kept queued: 3200 samples = 100 ms */
 #define PTX_MAP_SIZE   (0x1000u + PTX_RING_N * 8u + PTX_AUD_N * 8u)
 #define PTX_PUBLISH    32u                    /* = one 256-byte DDR burst */
-#define PTX_LEAD_FRAMES 2u                    /* frames the ARM may run ahead */
+#define PTX_LEAD_FRAMES 2u                    /* frames the ARM may run ahead (um2run's mister_run.sh sets PTX_LEAD=1) */
 #define PTX_SEQ_TIMEOUT_MS 200                /* core input counter must move at least this often */
 #define PTX_NAME_RECHECK_MS 1000              /* re-read /tmp/CORENAME at least this often, changed or not */
 
@@ -80,6 +80,7 @@ static unsigned aud_nsamp;
 static uint64_t wr, published, rd_cache;   /* rd_cache: last rd_idx seen (it only grows between re-attaches) */
 static uint64_t frame_end[8];
 static uint32_t n_frames;
+static int lead_f = -1;                 /* frames ahead: PTX_LEAD_FRAMES, or env PTX_LEAD (0-6) for tests */
 /* Pacing statistics (ptx_pace_report): was the producer ahead of the core at the frame marks (it had to wait: the stream length, i.e. the
  * Vectrex, sets the speed) or behind (it never waited: the host sets the speed)?  Counters only, no clock reads. */
 static unsigned long ps_frames, ps_waited, ps_naps, ps_fullnaps, ps_behind;
@@ -400,8 +401,9 @@ static void m_frame(uint64_t stream_cycles)
 	   scheduling, little enough that input still feels immediate. */
 	frame_end[n_frames % 8] = wr;
 	n_frames++;
-	if (n_frames <= PTX_LEAD_FRAMES) return;
-	uint64_t target = frame_end[(n_frames - 1 - PTX_LEAD_FRAMES) % 8];
+	if (lead_f < 0) { const char *e = getenv("PTX_LEAD"); lead_f = e && *e >= '0' && *e <= '6' ? *e - '0' : (int)PTX_LEAD_FRAMES; }
+	if (n_frames <= (unsigned)lead_f) return;
+	uint64_t target = frame_end[(n_frames - 1 - lead_f) % 8];
 	int waited_ms = 0;
 	{ uint64_t rd = st->rd_idx; uint64_t lead = wr > rd ? wr - rd : 0;
 	  ps_frames++; ps_lead_sum += lead; if (lead > ps_lead_max) ps_lead_max = lead;
@@ -517,7 +519,7 @@ int ptx_pace_report(char *buf, unsigned n)
 {
 	if (!base || !st || !ps_frames) return 0;       /* base: st points into the block, which m_close unmaps */
 	return snprintf(buf, n, "ptx pacing: %lu frame marks, producer ahead by more than %u frames at %lu (waited %lu naps), not ahead at %lu; commands unfetched at a mark: avg %.0f max %llu; ring-full naps %lu; core frames %u underruns %u",
-	                ps_frames, PTX_LEAD_FRAMES, ps_waited, ps_naps, ps_behind, (double)ps_lead_sum / (double)ps_frames, (unsigned long long)ps_lead_max, ps_fullnaps, st->frames, st->underruns);
+	                ps_frames, lead_f < 0 ? PTX_LEAD_FRAMES : (unsigned)lead_f, ps_waited, ps_naps, ps_behind, (double)ps_lead_sum / (double)ps_frames, (unsigned long long)ps_lead_max, ps_fullnaps, st->frames, st->underruns);
 }
 
 #else  /* not Linux: keep the symbol so the harness links everywhere */
