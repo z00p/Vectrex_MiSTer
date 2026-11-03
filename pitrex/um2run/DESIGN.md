@@ -80,6 +80,16 @@ their fill level), and hands the samples to `um2aud`, which resamples to 32 kHz 
 sinc), removes the DC offset of the AC-coupled DAC, and writes into the core's PCM queue behind
 a ~60 ms jitter buffer. `UM2_NOAUDIO=1` turns all of this off.
 
+The helper thread runs on wall-clock time, the game on whatever CPU it gets. When a game refills
+its ring late, a plain reader catches up with the write index and plays the previous lap again:
+an echo exactly one ring later (Pac-Man: 64 ms). So an endless ring keeps a copy of what each
+position held when it was last played, and the reader waits at a block of 32 frames that is still
+unchanged (and not flat, so silence never holds it up). It plays what it owes as soon as the game
+has written it, and after `UM2_AUDHOLD` ms (default 30, 0 = off) it plays on regardless. On the
+MiSTer this cut Pac-Man's echo from about 2.8% of the loud 8 ms windows to about 0.7%
+(`tools/audio_echo.py`); longer limits make it worse, because the reader then stays behind for
+good. The echo that is left comes where the game itself drops to about half speed.
+
 ## Black-screen guard and CPU placement
 
 Right after a core load, Main is still setting the video mode on CPU1. `mister_run.sh` therefore

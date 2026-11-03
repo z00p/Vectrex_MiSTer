@@ -384,7 +384,7 @@ static void v2_word(uint32_t w) {
 	if (C.frame_cycles && g_fstarted && (g_v2_words & 255) == 0 && C.now() - g_fstart > 5ull * C.frame_cycles) frame_mark(1);
 }
 
-static struct { uint64_t cpu_words, starts, blocks, irqs, steps, words, aborts, late[5], maxlate; double fps[NPIO][4]; int bits[NPIO][4]; } AS;   /* cart audio statistics */
+static struct { uint64_t cpu_words, starts, blocks, irqs, steps, words, aborts, late[5], maxlate, held, forced; double maxheld; double fps[NPIO][4]; int bits[NPIO][4]; } AS;   /* cart audio statistics */
 static void pio_txf_push(int pio, int smn, uint32_t w) {
 	cap(CAP_PIO_PUSH, 4, (uint32_t)(pio * 4 + smn), w);
 	if (pio == 0 && smn == 0) { if (g_v2 && (g_pio[0].ctrl & 1)) { S.pushes++; v2_word(w); return; } sm_push(SIMPIO, w); }
@@ -603,9 +603,19 @@ static void spi_dma_run(Dch *d, unsigned treq, uint32_t n, int ir, int iw) {
  * UM2_NOAUDIO=1 drops all of it (words vanish as before). */
 #define AUD_TICK_NS 4000000ull            /* pacing tick of an endless transfer; READ_ADDR is published half a tick ahead (stale by <= 2 ms either way) */
 #define AUD_TOL_NS  30000000ull           /* a restart this late after a block ended still continues its timeline (the hardware's IRQ latency is microseconds, ours up to milliseconds: the late block then plays back to back with the one before, as a FIFO would) */
+/* Ring hold (3 Nov 2026).  The reader runs on wall-clock time, the game on whatever CPU it gets: when the game refills its ring late, the reader catches up with its
+ * write index and plays the previous lap again (Pac-Man: an echo exactly one ring, 64 ms, later; audio_echo.py measured 15.7% of the windows in play).  On the
+ * hardware the game is never that late.  So an endless ring keeps a copy of what each position held when it was last played; a block of 32 frames that is still
+ * unchanged (and not flat, i.e. not silence or a constant) has not been rewritten by the game, and the reader waits there instead of replaying it.  The frames it
+ * owes are played as soon as the game has written them, so the timeline is kept; after UM2_AUDHOLD ms (default 30, 0 = off) it plays on regardless, as before.
+ * Measured on the MiSTer (Pac-Man, 75 s, start injected, audio_echo.py from 12 s): off 2.7-2.9%, 10 ms 2.7%, 20 ms 1.6%, 30 ms 0.6-0.8% (3 runs), 40 ms 0.6-1.1% (4 runs),
+ * 60 ms and more 3-4%: the reader then stays behind for good (15000 waits instead of 600).  What is left comes where the game itself drops to about half speed. */
+#define AUD_HOLD_BLK 32u
+static uint64_t g_aud_hold_ns = 30000000ull; static int g_aud_hold_log;               /* UM2_AUDHOLD_LOG=1: every wait to stderr (diagnostics) */
 typedef struct {
 	int act, endless, ir, pio, sm; unsigned bytes; uint32_t rd, rbase, rmask;
 	uint64_t left, words, t_last, gap_ns, blk; double acc;
+	uint8_t *sh; unsigned shsz, shn;                                             /* ring hold: the ring as last played (bytes, frames) */
 } Adma;
 static Adma g_ad[16];
 static uint64_t g_sm_end[NPIO][4]; static double g_sm_acc[NPIO][4];          /* timeline end of the last transfer per state machine */
@@ -656,6 +666,11 @@ static void aud_start(int ch, int p, int s, unsigned bytes, uint32_t n, int endl
 	if (a->act) { te = a->t_last; acc = a->acc; }                                  /* restarted while running: keep its timeline */
 	a->act = 1; a->endless = endless; a->ir = ir; a->pio = p; a->sm = s; a->bytes = bytes; a->rd = d->read; a->rbase = 0; a->rmask = 0;
 	if (ring_sz && !ring_sel && ir) { a->rmask = (1u << ring_sz) - 1; a->rbase = d->read & ~a->rmask; }
+	if (endless && a->rmask && g_aud_hold_ns) {                                  /* ring hold: valid once the reader has gone round once */
+		unsigned nb = a->rmask + 1;
+		if (a->shsz != nb) { free(a->sh); a->sh = calloc(nb, 1); a->shsz = a->sh ? nb : 0; }
+		a->shn = a->sh ? nb / bytes : 0;
+	} else a->shn = 0;
 	a->left = n; a->words = 0; a->blk = n;
 	if (te && now >= te) { uint64_t late = now - te; int b = late < 1000000 ? 0 : late < 3000000 ? 1 : late < 10000000 ? 2 : late < AUD_TOL_NS ? 3 : 4; AS.late[b]++; if (late > AS.maxlate) AS.maxlate = late;
 		{ static int lt = -2; static uint64_t t0; if (lt == -2) { const char *e = getenv("UM2_AUDLATE"); lt = e ? atoi(e) : -1; t0 = now; } if (lt >= 0 && late >= (uint64_t)lt * 1000000ull) fprintf(stderr, "audlate: block restart %.1f ms late at t=%.3f s (ch%d)\n", late / 1e6, (double)(now - t0) * 1e-9, ch); } }
@@ -677,6 +692,43 @@ static void aud_start(int ch, int p, int s, unsigned bytes, uint32_t n, int endl
 	  if (sig) { g_aud_sig++; pthread_cond_signal(&g_aud_c); } else g_aud_skip++; }
 	pthread_mutex_unlock(&g_aud_m);
 }
+/* ring hold: how many of the run's frames at a->rd the game has rewritten since they were last played (stops at the first unchanged, non-flat block) */
+static uint32_t aud_fresh(const Adma *a, const uint8_t *src, uint32_t run) {
+	const uint8_t *sh = a->sh + (a->rd - a->rbase); uint32_t n = 0;
+	while (n < run) {
+		uint32_t k = run - n < AUD_HOLD_BLK ? run - n : AUD_HOLD_BLK; unsigned len = k * a->bytes; const uint8_t *p = src + n * a->bytes;
+		if (!memcmp(p, sh + n * a->bytes, len)) {
+			unsigned i = a->bytes; while (i < len && !memcmp(p + i, p, a->bytes)) i += a->bytes;
+			if (i < len) break;                                                     /* unchanged and not flat: not written yet */
+		}
+		n += k;
+	}
+	return n;
+}
+/* play up to w frames from a->rd (fewer if hold and the game has not written them yet); returns the frames played */
+static uint64_t aud_consume(Adma *a, uint64_t w, double fps, uint64_t *gap, int hold) {
+	uint64_t done = 0;
+	while (w) {
+		int16_t buf[1024]; uint32_t k = w > 1024 ? 1024 : (uint32_t)w, run = k;
+		if (a->rmask) { uint32_t to_end = (a->rbase + a->rmask + 1 - a->rd) / a->bytes; if (to_end && to_end < run) run = to_end; }
+		if (!a->ir) run = 1;
+		const uint8_t *src = C.host_ptr ? C.host_ptr(a->rd, run * a->bytes) : NULL;
+		int stop = 0;
+		if (hold && src) { uint32_t f = aud_fresh(a, src, run); if (f < run) { run = f; stop = 1; } }
+		for (uint32_t i = 0; i < run; i++) {
+			uint32_t v = 0;
+			if (src) { const uint8_t *q = src + (a->ir ? i * a->bytes : 0); if (a->bytes == 4) memcpy(&v, q, 4); else if (a->bytes == 2) { uint16_t h; memcpy(&h, q, 2); v = h * 0x10001u; } else v = q[0] * 0x01010101u; }
+			buf[i] = (int16_t)(((int32_t)(int16_t)(v >> 16) + (int32_t)(int16_t)v) / 2);
+		}
+		if (run) { um2aud_put(buf, run, (uint32_t)(fps + 0.5), *gap); *gap = 0; }
+		if (a->shn && src && run) memcpy(a->sh + (a->rd - a->rbase), src, run * a->bytes);
+		if (a->ir) { a->rd += run * a->bytes; if (a->rmask) a->rd = a->rbase | (a->rd & a->rmask); }
+		w -= run; a->words += run; AS.words += run; done += run;
+		if (!a->endless) a->left -= run;
+		if (stop) break;
+	}
+	return done;
+}
 /* consume what the state machine has taken since the last step; returns 1 if a completion interrupt was raised */
 static int aud_step(int ch, uint64_t now, uint64_t *dl) {
 	Adma *a = &g_ad[ch]; Dch *d = &g_dma[ch]; int irq = 0;
@@ -689,20 +741,14 @@ static int aud_step(int ch, uint64_t now, uint64_t *dl) {
 	int fin = 0; double over = 0;
 	if (!a->endless && w >= a->left) { over = (double)(w - a->left) + a->acc; w = a->left; fin = 1; }
 	uint64_t gap = a->gap_ns; a->gap_ns = 0;
-	while (w) {
-		int16_t buf[1024]; uint32_t k = w > 1024 ? 1024 : (uint32_t)w, run = k;
-		if (a->rmask) { uint32_t to_end = (a->rbase + a->rmask + 1 - a->rd) / a->bytes; if (to_end && to_end < run) run = to_end; }
-		if (!a->ir) run = 1;
-		const uint8_t *src = C.host_ptr ? C.host_ptr(a->rd, run * a->bytes) : NULL;
-		for (uint32_t i = 0; i < run; i++) {
-			uint32_t v = 0;
-			if (src) { const uint8_t *q = src + (a->ir ? i * a->bytes : 0); if (a->bytes == 4) memcpy(&v, q, 4); else if (a->bytes == 2) { uint16_t h; memcpy(&h, q, 2); v = h * 0x10001u; } else v = q[0] * 0x01010101u; }
-			buf[i] = (int16_t)(((int32_t)(int16_t)(v >> 16) + (int32_t)(int16_t)v) / 2);
-		}
-		um2aud_put(buf, run, (uint32_t)(fps + 0.5), gap); gap = 0;
-		if (a->ir) { a->rd += run * a->bytes; if (a->rmask) a->rd = a->rbase | (a->rd & a->rmask); }
-		w -= run; a->words += run; AS.words += run;
-		if (!a->endless) a->left -= run;
+	int hold = a->endless && a->shn && a->words >= a->shn;
+	uint64_t got = aud_consume(a, w, fps, &gap, hold);
+	if (got < w) {                                                                  /* ring hold: the game has not written the next block yet */
+		double owe = (double)(w - got) + a->acc, lim = fps * (double)g_aud_hold_ns * 1e-9;
+		AS.held++;
+		if (owe > lim) { uint64_t f = (uint64_t)(owe - lim); f = aud_consume(a, f, fps, &gap, 0); AS.forced += f; owe -= (double)f; }   /* waited long enough: play on */
+		a->acc = owe; if (owe / fps * 1e3 > AS.maxheld) AS.maxheld = owe / fps * 1e3;
+		if (g_aud_hold_log) { static uint64_t t0; if (!t0) t0 = now - (uint64_t)((double)a->words / fps * 1e9); fprintf(stderr, "audhold: t=%.3f s owed %.1f ms%s frames %llu\n", (double)(now - t0) * 1e-9, owe / fps * 1e3, owe >= lim - 1 ? " (limit, played on)" : "", (unsigned long long)S.frames); }
 	}
 	if (fin) {
 		uint64_t te = now - (uint64_t)(over / fps * 1e9);
@@ -1180,6 +1226,7 @@ void um2bus_init(const um2bus_cfg_t *cfg) {
 	if (C.dma_mirror) { g_mir = C.dma_mirror; pthread_t th; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setstacksize(&at, 1 << 16); if (!pthread_create(&th, &at, busy_thread, NULL)) pthread_detach(th); else g_mir = NULL; }
 	if (getenv("UM2BUS_NOEDGE")) g_edge_time = 0;
 	{ const char *e = getenv("UM2_AUDDUMP"); if (e) g_dbg_dump = (uint32_t)atoi(e); }
+	{ const char *e = getenv("UM2_AUDHOLD"); if (e) { long m = atol(e); g_aud_hold_ns = m <= 0 ? 0 : (uint64_t)(m > 500 ? 500 : m) * 1000000ull; } } g_aud_hold_log = getenv("UM2_AUDHOLD_LOG") != NULL;
 	{ const char *e = getenv("UM2_AUDFILL"); if (e) g_dbg_wr = (uint32_t)strtoul(e, NULL, 16); e = getenv("UM2_AUDFILL_LOG"); if (e && g_dbg_wr) { DF.log = fopen(e, "w"); DF.t0 = mono_ns(); } }
 	um2aud_init(aud_trylock, aud_unlock);
 	if (um2aud_enabled()) {         /* created here, not at the first transfer: it must inherit the main thread's CPU affinity (core 1 may be pinned next to Main) */
@@ -1233,6 +1280,8 @@ void um2bus_stats(FILE *f) {
 		fprintf(f, "um2bus: audio thread signalled by aud_start %lu times, signal skipped %lu (wake predicted from the block end)\n", g_aud_sig, g_aud_skip);
 		if (AS.blocks) fprintf(f, "um2bus: cart audio block restarts after the previous block ended: <1 ms %llu, <3 ms %llu, <10 ms %llu, <30 ms %llu, later (underrun, silence inserted) %llu; worst %.1f ms\n",
 			(unsigned long long)AS.late[0], (unsigned long long)AS.late[1], (unsigned long long)AS.late[2], (unsigned long long)AS.late[3], (unsigned long long)AS.late[4], (double)AS.maxlate * 1e-6);
+		if (AS.held) fprintf(f, "um2bus: cart audio ring hold (UM2_AUDHOLD %llu ms): reader waited for the game in %llu steps, longest %.1f ms; %llu frames played unrefreshed after the limit\n",
+			(unsigned long long)(g_aud_hold_ns / 1000000ull), (unsigned long long)AS.held, AS.maxheld, (unsigned long long)AS.forced);
 		if (DF.n) fprintf(f, "um2bus: ring fill (guest write index - READ_ADDR, UM2_AUDFILL): min %d mean %.0f max %d frames of %u, %llu of %llu samples above 7/8 (an overrun of the reader = the game resyncs)\n", DF.mn, DF.sum / (double)DF.n, DF.mx, 2048u, (unsigned long long)DF.bad, (unsigned long long)DF.n);
 		um2aud_stats(f);
 	}

@@ -68,6 +68,7 @@ experimental `orient` and `view`. They are described in [../UVMC2_GAMES.md](../U
 | `PTX_WAIT_CORE=60` | set by `mister_run.sh`: wait up to 60 s for the Vectrex-PiTrex core |
 | `UM2_NOAUDIO=1` | no cart audio (the games' sound then comes from the Vectrex PSG where they use it) |
 | `UM2_AUDPRE=<ms>` | cart audio jitter buffer, default 60, at most about 90 |
+| `UM2_AUDHOLD=<ms>` | how long the cart audio waits for a game that is late refilling its ring before it plays the old lap again, default 30, 0 = off |
 | `SETTLE=<s>`, `CPU1_AFTER=<s>` | `mister_run.sh`: black-screen guard timings (sidecar keys `settle`, `cpu1_after`) |
 | `UM2_NOVFP=1`, `UM2_NOSPIPATCH=1` | switch off an optimisation, to find out whether it is to blame for a problem |
 
