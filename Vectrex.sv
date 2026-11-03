@@ -63,16 +63,18 @@ assign HDMI_BOB_DEINT = 0;
 `include "build_id.v"
 // PiTrex mode build number: shown on the System page and reported in the ring's
 // status block. Bump both together for every build that goes on a MiSTer.
-localparam [7:0] PTX_BUILD = 8'd10;
+localparam [7:0] PTX_BUILD = 8'd12;
 
 localparam CONF_STR = {
-	"VECTREX;;",
+	"Vectrex-PiTrex;;",
 	"-;",
 	"f1,ART;",
 	"FS1,VECBINROM;",
-	// B9: UVMC2 first. Index 3 is the launcher index the MGL menu entries already use (pitrex_reset: no reset,
+	// B9: UVMC2 first. B11: UVMC2 and PiTrex programs each have an entry, on the same
+	// slot. Index 3 is the launcher index the MGL menu entries already use (pitrex_reset: no reset,
 	// no dropped takeover); the core ignores the file, Main reports the pick and pitrexd runs it.
-	"F3,UM2PTX,Load UVMC2 / PiTrex;",
+	"F3,UM2,Load UVMC2;",
+	"F3,PTX,Load PiTrex;",
 	"F2,ART,Load Overlay;",
 	"-;",
 	// Fixed profiles and two independently saved custom profiles.
@@ -192,7 +194,7 @@ localparam CONF_STR = {
 	"P3O[12],Port 2,Joystick,VecVoice (SP0256);",
 	"P3O[36],PiTrex Mode,Off,On;",
 	// B10: the build line lives here, not in Core Info: Main loops when a page of only non-selectable lines is taller than the OSD
-	"P3-,PiTrex mode: build B10;",
+	"P3-,PiTrex mode: build B12;",
 	"d8P3O[19:18],Speech Level,Normal,Low,High;",
 	"hFP3O[118],Cartridge Autosave,On,Off;",
 	"hFP3R[119],Save Cartridge;",
