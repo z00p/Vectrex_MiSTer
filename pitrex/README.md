@@ -26,7 +26,7 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    It adds:
    | Path | What |
    |---|---|
-   | `_Unstable/Vectrex-PiTrex_<YYYYMMDD>.rbf` | the Vectrex core with PiTrex mode; it is called "Vectrex-PiTrex", so its settings live in their own `config/Vectrex-PiTrex_v1.CFG` |
+   | `_Unstable/Vectrex-PiTrex_<YYYYMMDD>.rbf` | the Vectrex core with PiTrex mode; it is called "Vectrex-PiTrex", so its settings live in their own `config/Vectrex-PiTrex_v2.CFG` |
    | `pitrex/` | the programs, the launcher and the UVMC2 card builder |
    | `pitrex/um2run/` | `um2run`, which runs UVMC2 cartridge images (beta, see [UVMC2_GAMES.md](UVMC2_GAMES.md)) |
    | `games/Vectrex-PiTrex/UVMC2/` | where the contents of your UVMC2 SD card go (no images are included) |
@@ -95,7 +95,7 @@ race, and button 3 cycles through the rest. None are included.
   never touches the official core in `_Console`. Run PiTrex_Setup once afterwards (see
   [ADDING_GAMES.md](ADDING_GAMES.md#updating-from-an-older-release)).
 - **PiTrex_Uninstall** removes everything PiTrex added, including the optional extras and all
-  PiTrex cores in `_Unstable` and `config/Vectrex-PiTrex_v1.CFG`. The official core, your Vectrex settings and your own files (`games/Vectrex-PiTrex`, `pitrex/uvmc2` with your card images, and anything of yours in `pitrex/um2run`) are kept.
+  PiTrex cores in `_Unstable` and `config/Vectrex-PiTrex_v1.CFG` / `_v2.CFG`. The official core, your Vectrex settings and your own files (`games/Vectrex-PiTrex`, `pitrex/uvmc2` with your card images, and anything of yours in `pitrex/um2run`) are kept.
 
 ## Troubleshooting
 | Symptom | Likely cause and fix |

@@ -28,10 +28,11 @@ case "$CORE" in */Vectrex-PiTrex_*) rm -f $FAT/_Unstable/Vectrex_PiTrex_B*.rbf ;
 # and the B<n>-named files once a dated one is there
 case "$CORE" in */Vectrex-PiTrex_[0-9]*) rm -f $FAT/_Unstable/Vectrex-PiTrex_B*.rbf ;; esac
 python3 - <<'PYEOF'
-# PiTrex Mode = OSD status bit 36 (byte 4, bit 4). Our core loads as "Vectrex-PiTrex" (the MGL's
-# setname), so its settings live in their own file; clear the bit older releases set in the
+# PiTrex Mode = OSD status bit 117 (byte 14, bit 5). Our core loads as "Vectrex-PiTrex" (the MGL's
+# setname), so its settings live in their own file, Vectrex-PiTrex_v2.CFG since B13 (Videodr0me's
+# VECTREX_v2 layout). Clear the bit older releases set (status bit 36, byte 4 bit 4) in the
 # official core's VECTREX_v1.CFG.
-def setbit(path, on):
+def setbit(path, i, m, on):
     try:
         b = bytearray(open(path, "rb").read())
     except OSError:
@@ -39,21 +40,22 @@ def setbit(path, on):
             return
         b = bytearray()
     b += bytes(max(0, 16 - len(b)))
-    new = (b[4] | 0x10) if on else (b[4] & ~0x10)
-    if new != b[4]:
-        b[4] = new
+    new = (b[i] | m) if on else (b[i] & ~m)
+    if new != b[i]:
+        b[i] = new
         open(path, "wb").write(b)
-setbit("/media/fat/config/Vectrex-PiTrex_v1.CFG", True)
-setbit("/media/fat/config/VECTREX_v1.CFG", False)
-# Open Matte is our core's default: View Area = status[31] = byte 3 bit 7, in our own settings file only. Once: a later choice in the OSD stands.
+setbit("/media/fat/config/Vectrex-PiTrex_v2.CFG", 14, 0x20, True)
+setbit("/media/fat/config/VECTREX_v1.CFG", 4, 0x10, False)
+# Open Matte is our core's default: View Area = status[65] = byte 8 bit 1, in our own settings file only. Once: a later choice in the OSD stands.
+# (The mark has a _v2 name since B13's new settings file, so installs that had Open Matte in the old file get it again.)
 import os
-MARK = "/media/fat/pitrex/.open_matte_default"
+MARK = "/media/fat/pitrex/.open_matte_default_v2"
 if not os.path.exists(MARK):
-    path = "/media/fat/config/Vectrex-PiTrex_v1.CFG"
+    path = "/media/fat/config/Vectrex-PiTrex_v2.CFG"
     try:
         b = bytearray(open(path, "rb").read())
         b += bytes(max(0, 16 - len(b)))
-        b[3] |= 0x80
+        b[8] |= 0x02
         open(path, "wb").write(b)
         open(MARK, "w").close()
     except OSError as e:

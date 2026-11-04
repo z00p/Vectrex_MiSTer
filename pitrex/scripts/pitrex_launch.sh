@@ -32,10 +32,11 @@ else
 	PTX_BACKEND=mister PTX_WAIT_CORE=60 nohup chrt -r 49 "$PITREX/$PROG" "$@" > /tmp/pitrex.log 2>&1 &
 	echo "Starting $PROG on $(basename "$CORE")"
 python3 - <<'PYEOF'
-# PiTrex Mode = OSD status bit 36 (byte 4, bit 4). Our core loads as "Vectrex-PiTrex" (the MGL's
-# setname), so its settings live in their own file; clear the bit older releases set in the
+# PiTrex Mode = OSD status bit 117 (byte 14, bit 5). Our core loads as "Vectrex-PiTrex" (the MGL's
+# setname), so its settings live in their own file, Vectrex-PiTrex_v2.CFG since B13 (Videodr0me's
+# VECTREX_v2 layout). Clear the bit older releases set (status bit 36, byte 4 bit 4) in the
 # official core's VECTREX_v1.CFG.
-def setbit(path, on):
+def setbit(path, i, m, on):
     try:
         b = bytearray(open(path, "rb").read())
     except OSError:
@@ -43,12 +44,12 @@ def setbit(path, on):
             return
         b = bytearray()
     b += bytes(max(0, 16 - len(b)))
-    new = (b[4] | 0x10) if on else (b[4] & ~0x10)
-    if new != b[4]:
-        b[4] = new
+    new = (b[i] | m) if on else (b[i] & ~m)
+    if new != b[i]:
+        b[i] = new
         open(path, "wb").write(b)
-setbit("/media/fat/config/Vectrex-PiTrex_v1.CFG", True)
-setbit("/media/fat/config/VECTREX_v1.CFG", False)
+setbit("/media/fat/config/Vectrex-PiTrex_v2.CFG", 14, 0x20, True)
+setbit("/media/fat/config/VECTREX_v1.CFG", 4, 0x10, False)
 PYEOF
 	RBF=${CORE#$FAT/}; RBF=${RBF%.rbf}
 	printf '<mistergamedescription>\n  <rbf>%s</rbf>\n  <setname>Vectrex-PiTrex</setname>\n</mistergamedescription>\n' "$RBF" > /tmp/pitrex_core.mgl

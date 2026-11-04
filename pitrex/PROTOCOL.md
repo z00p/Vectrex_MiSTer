@@ -148,7 +148,7 @@ until a live program is present.
   data and R/W outputs are multiplexed with the player's, so every downstream decode (VIA, RAM,
   cartridge, the renderer's Timer 2 frame detector) is unchanged.
 - **`pitrex_audio.sv` (clk_sys, B6):** plays the PCM channel from its FIFO at 32 kHz.
-- **OSD:** System > **PiTrex Mode** (status bit 36). Core Info shows the PiTrex build.
+- **OSD:** System > **PiTrex Mode** (status bit 117). Core Info shows the PiTrex build.
 
 ## Frame boundaries
 Videodr0me's renderer starts a new displayed frame when VIA Timer 2 is reloaded, as the BIOS

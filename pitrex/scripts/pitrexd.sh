@@ -93,14 +93,15 @@ newest_core() {
 	[ -n "$c" ] && echo "$c"
 }
 
-# display_apply <orientation 0|1|2|-> <view 0|1|-> : read-modify-write the core's settings file ($FAT/config/Vectrex-PiTrex_v1.CFG),
+# display_apply <orientation 0|1|2|-> <view 0|1|-> : read-modify-write the core's settings file ($FAT/config/Vectrex-PiTrex_v2.CFG),
 # the same way pitrex_launch.sh sets PiTrex Mode (Main rewrites the file whenever the OSD is used, so only our bits are touched).
-#   Orientation = status[21:20] = byte 2 bits 5:4 (0 normal, 1 rotated 90 degrees counter-clockwise, 2 clockwise)
-#   View Area   = status[31]    = byte 3 bit 7    (0 standard, 1 open matte)
-#   PiTrex Mode = status[36]    = byte 4 bit 4    (forced on when the file is rewritten, as the core is about to be reloaded for the program)
+# The layout is B13's (Videodr0me's VECTREX_v2):
+#   Orientation = status[76:75] = byte 9 bits 4:3  (0 normal, 1 rotated 90 degrees counter-clockwise, 2 clockwise)
+#   View Area   = status[65]    = byte 8 bit 1     (0 standard, 1 open matte)
+#   PiTrex Mode = status[117]   = byte 14 bit 5    (forced on when the file is rewritten, as the core is about to be reloaded for the program)
 # Exit status: 0 file changed, 1 nothing to change, 2 error. "-" leaves a value alone.
 display_apply() {
-	DCFG=$FAT/config/Vectrex-PiTrex_v1.CFG python3 - "$1" "$2" <<'PYEOF'
+	DCFG=$FAT/config/Vectrex-PiTrex_v2.CFG python3 - "$1" "$2" <<'PYEOF'
 import os, sys
 path = os.environ["DCFG"]
 try:
@@ -110,12 +111,12 @@ except OSError:
 b += bytes(max(0, 16 - len(b)))
 new = bytearray(b)
 if sys.argv[1] != "-":
-    new[2] = (new[2] & ~0x30) | (int(sys.argv[1]) << 4)
+    new[9] = (new[9] & ~0x18) | (int(sys.argv[1]) << 3)
 if sys.argv[2] != "-":
-    new[3] = (new[3] & ~0x80) | (0x80 if sys.argv[2] == "1" else 0)
+    new[8] = (new[8] & ~0x02) | (0x02 if sys.argv[2] == "1" else 0)
 if new == b:
     sys.exit(1)
-new[4] |= 0x10
+new[14] |= 0x20
 try:
     open(path, "wb").write(new)
 except OSError:
@@ -143,7 +144,7 @@ reload_core() {
 
 # Sidecar keys orient= and view= (EXPERIMENTAL): set the core's Orientation / View Area for a game (landscape games such as Star Wars
 # and BattleZone are drawn sideways on the portrait Vectrex screen) and reload the core when the saved setting differs.
-# Only the core's own settings file Vectrex-PiTrex_v1.CFG is touched, never VECTREX_v1.CFG: a core that runs as VECTREX is left alone.
+# Only the core's own settings file Vectrex-PiTrex_v2.CFG is touched, never VECTREX_v1.CFG: a core that runs as VECTREX is left alone.
 # An unset key leaves that setting as it is. Sets reloaded=1 when the core was reloaded.
 reloaded=0
 set_display() {
@@ -160,9 +161,9 @@ set_display() {
 	fi
 	display_apply "$ob" "$vb"
 	case $? in
-		0) echo "$(date +%T) orient=${o:--} view=${v:--}: Vectrex-PiTrex_v1.CFG updated, reloading the core" >> $LOG
+		0) echo "$(date +%T) orient=${o:--} view=${v:--}: Vectrex-PiTrex_v2.CFG updated, reloading the core" >> $LOG
 		   if reload_core; then reloaded=1; else echo "$(date +%T) orient/view: no Vectrex-PiTrex core in $FAT/_Unstable to reload" >> $LOG; fi ;;
-		2) echo "$(date +%T) orient/view: cannot write $FAT/config/Vectrex-PiTrex_v1.CFG" >> $LOG ;;
+		2) echo "$(date +%T) orient/view: cannot write $FAT/config/Vectrex-PiTrex_v2.CFG" >> $LOG ;;
 	esac
 	return 0
 }

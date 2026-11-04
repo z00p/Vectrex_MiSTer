@@ -7,7 +7,7 @@
 # Also: a pick that cannot start says so on the Vectrex; our core started without the menu entry is loaded again as Vectrex-PiTrex (the official core is not); Punch-Out needs no sidecar;
 # no forks from one poll to the next.
 # Covers: a fresh .um2 pick starts; a stale "selected" report (Main restart / core load) is ignored; orient= / view= in the
-# sidecar change only Vectrex-PiTrex_v1.CFG (right bits, other bytes kept) and reload the core before um2run starts; the same
+# sidecar change only Vectrex-PiTrex_v2.CFG (right bits, other bytes kept) and reload the core before um2run starts; the same
 # setting twice reloads once; a core running as VECTREX is left alone; the game started after the reload is not killed by the
 # core-change supervisor; a real core change still stops the game.
 D=$(cd "$(dirname "$0")" && pwd)
@@ -64,7 +64,7 @@ trap cleanup EXIT
 pick() { echo -n "$1" > "$T/FULLPATH"; [ -n "$2" ] && echo -n "$2" > "$T/CURRENTPATH"; sleep 0.3; echo -n selected > "$T/FILESELECT"; }
 runs() { [ -f "$W/runs.log" ] && wc -l < "$W/runs.log" || echo 0; }
 waitfor() { local i=0; while [ $i -lt $(( $2 * 10 )) ]; do eval "$1" && return 0; sleep 0.1; i=$((i+1)); done; return 1; }
-bytes() { od -An -tx1 -N16 "$FAT/config/Vectrex-PiTrex_v1.CFG" 2>/dev/null | tr -d ' \n'; }
+bytes() { od -An -tx1 -N16 "$FAT/config/Vectrex-PiTrex_v2.CFG" 2>/dev/null | tr -d ' \n'; }
 gamealive() { [ -f "$W/game.pid" ] && kill -0 "$(cat "$W/game.pid")" 2>/dev/null; }
 
 bash "$PD" > "$W/pitrexd.out" 2>&1 &
@@ -79,7 +79,7 @@ echo "orient=0" > "$UD/Port.um2.cfg"
 echo "== 1. fresh OSD pick (folder in FULLPATH, file in CURRENTPATH)"
 n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain.um2
 check "plain pick starts mister_run.sh with the sidecar frame length" 'waitfor "[ \$(runs) -gt $n ]" 6 && tail -1 "$W/runs.log" | grep -q -- "--frame-cycles 25000" && tail -1 "$W/runs.log" | grep -q "Plain.um2"'
-check "no core reload without orient/view" '[ ! -s "$W/cmds.log" ] && [ ! -f "$FAT/config/Vectrex-PiTrex_v1.CFG" ]'
+check "no core reload without orient/view" '[ ! -s "$W/cmds.log" ] && [ ! -f "$FAT/config/Vectrex-PiTrex_v2.CFG" ]'
 
 echo "== 2. stale report after a Main restart: FILESELECT rewritten, path files old"
 sleep 1; n=$(runs)
@@ -116,9 +116,9 @@ t0=$(date +%s)
 pick games/Vectrex-PiTrex/UVMC2 Land.um2
 check "mister_run.sh runs after the reload" 'waitfor "[ \$(runs) -gt $n ]" 12'
 check "core was reloaded through an MGL naming the newest rbf" 'grep -q "load_core $T/pitrex_core.mgl" "$W/cmds.log" && grep -q "Vectrex-PiTrex_20261029" "$T/pitrex_core.mgl" && grep -q "<setname>Vectrex-PiTrex</setname>" "$T/pitrex_core.mgl"'
-check "CFG bits: byte2 0x20 (orientation 2 = cw), byte3 0x80 (open matte), byte4 0x10 (PiTrex mode)" '[ "$(bytes)" = "00002080100000000000000000000000" ]'
+check "CFG bits: byte9 0x10 (orientation 2 = cw), byte8 0x02 (open matte), byte14 0x20 (PiTrex mode)" '[ "$(bytes)" = "00000000000000000210000000002000" ]'
 check "um2run was started after the CORENAME change (core=Vectrex-PiTrex, takes >= 1 s)" 'tail -1 "$W/runs.log" | grep -q "core=Vectrex-PiTrex" && [ $(( $(date +%s) - t0 )) -ge 1 ]'
-check "pitrexd logged the update" 'grep -q "orient=cw view=open: Vectrex-PiTrex_v1.CFG updated" "$T/pitrexd.log"'
+check "pitrexd logged the update" 'grep -q "orient=cw view=open: Vectrex-PiTrex_v2.CFG updated" "$T/pitrexd.log"'
 sleep 2
 check "the supervisor did not kill the game started after the reload" 'gamealive'
 check "VECTREX_v1.CFG was not created" '[ ! -e "$FAT/config/VECTREX_v1.CFG" ]'
@@ -129,10 +129,10 @@ pick games/Vectrex-PiTrex/UVMC2 Land.um2
 check "started without a reload" 'waitfor "[ \$(runs) -gt $n ]" 6 && [ ! -s "$W/cmds.log" ]'
 
 echo "== 7. read-modify-write: Main saved other options meanwhile; orient=0 only clears orientation"
-printf '\x11\x22\x23\xe5\x13\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' > "$FAT/config/Vectrex-PiTrex_v1.CFG"
+printf '\x11\x22\x33\x44\x55\x66\x77\x88\xe7\x15\x00\x00\x00\x00\x21\x00' > "$FAT/config/Vectrex-PiTrex_v2.CFG"
 sleep 11; n=$(runs); : > "$W/cmds.log"
 pick games/Vectrex-PiTrex/UVMC2 Port.um2
-check "orient=0 reloads and clears only bits 5:4 of byte 2 (0x23 -> 0x03; view untouched)" 'waitfor "[ \$(runs) -gt $n ]" 12 && [ "$(bytes)" = "112203e5130000000000000000000000" ] && grep -q load_core "$W/cmds.log"'
+check "orient=0 reloads and clears only bits 4:3 of byte 9 (0x15 -> 0x05; view untouched)" 'waitfor "[ \$(runs) -gt $n ]" 12 && [ "$(bytes)" = "1122334455667788e705000000002100" ] && grep -q load_core "$W/cmds.log"'
 
 echo "== 7b. Punch-Out without a sidecar, a sidecar that says otherwise"
 touch "$UD/Punchout.um2" "$UD/PUNCH2.um2"; echo "frame_cycles=30000" > "$UD/PUNCH2.um2.cfg"

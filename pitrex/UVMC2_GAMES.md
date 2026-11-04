@@ -36,7 +36,7 @@ images are included**: bring your own (and your own MAME ROM sets for the games 
 | Card images (`.img`) | next to the image, or in `/media/fat/pitrex/uvmc2/` (a file called `sd.img` there is the default card for every game without an `sd=` key). The OSD lists do not show them. PiTrex_Uninstall leaves your files in both places alone, and anything of yours in `/media/fat/pitrex/um2run/` (the third place `sd=` names are looked up). |
 
 The core is called "Vectrex-PiTrex", however you load it: its file browser opens
-`games/Vectrex-PiTrex` and its settings are in `config/Vectrex-PiTrex_v1.CFG`.
+`games/Vectrex-PiTrex` and its settings are in `config/Vectrex-PiTrex_v2.CFG`.
 
 ## Playing
 There are two ways to start a game:
@@ -77,7 +77,7 @@ sd=punchout_sd.img
 Landscape games (Star Wars, BattleZone) are drawn sideways on the portrait Vectrex screen, so
 their sides are cropped. `orient` and `view` change the core's own Orientation and View Area
 options for you before the game starts: pitrexd edits only
-`config/Vectrex-PiTrex_v1.CFG`, reloads the core, then starts the game. A setting you do not
+`config/Vectrex-PiTrex_v2.CFG`, reloads the core, then starts the game. A setting you do not
 name is left alone (so it stays as the last game or you left it: add `orient=0` to the sidecars
 of your portrait games if you mix them). **Not tested on hardware:** which direction (`cw` or
 `ccw`) is the right one, and whether the cartridge's own PICTURE option must be changed as well. `VECTREX_v1.CFG` is never touched. You can always do the same by hand in the OSD.
@@ -191,7 +191,7 @@ on screen: OSD > Video Overlay & Geometry > Overlay = Off.
 - **Older releases** (B8 and earlier) set `log_file_entry=1` for all cores in `[MiSTer]` and kept a
   backup, `MiSTer.ini.pitrex-bak`. Setup now puts that line back as it was in the backup, then
   deletes the backup.
-- **config/Vectrex-PiTrex_v1.CFG:** PiTrex Mode on (our core's own settings file; the official
+- **config/Vectrex-PiTrex_v2.CFG:** PiTrex Mode on (our core's own settings file; the official
   core's `VECTREX_v1.CFG` is not used).
 - **linux/user-startup.sh:** a comment and one line that start `pitrexd` at boot (after a blank line).
 - **Folders:** `games/Vectrex-PiTrex/UVMC2` (with a short README.txt), `games/Vectrex-PiTrex/PiTrex`,

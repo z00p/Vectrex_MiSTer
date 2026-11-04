@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # One-time setup for the main-menu folder "PiTrex & UVMC2" (run again after adding programs):
-#  - PiTrex Mode On in config/Vectrex-PiTrex_v1.CFG (our core's own settings file)
+#  - PiTrex Mode On in config/Vectrex-PiTrex_v2.CFG (our core's own settings file)
 #  - log_file_entry=1 for our core only, in a [Vectrex-PiTrex] section of MiSTer.ini (Main then reports the file an OSD pick
 #    or an MGL loads; the [MiSTer] settings and other cores are left alone; see pitrex/pitrex_ini.py)
 #  - the folder games/Vectrex-PiTrex/UVMC2: the core's OSD file browser opens games/<core name>, so UVMC2 games (.um2)
@@ -17,10 +17,11 @@ INI=$FAT/MiSTer.ini
 START=$FAT/linux/user-startup.sh
 
 python3 - <<'PYEOF'
-# PiTrex Mode = OSD status bit 36 (byte 4, bit 4). Our core loads as "Vectrex-PiTrex" (the MGL's
-# setname), so its settings live in their own file; clear the bit older releases set in the
+# PiTrex Mode = OSD status bit 117 (byte 14, bit 5). Our core loads as "Vectrex-PiTrex" (the MGL's
+# setname), so its settings live in their own file, Vectrex-PiTrex_v2.CFG since B13 (Videodr0me's
+# VECTREX_v2 layout). Clear the bit older releases set (status bit 36, byte 4 bit 4) in the
 # official core's VECTREX_v1.CFG.
-def setbit(path, on):
+def setbit(path, i, m, on):
     try:
         b = bytearray(open(path, "rb").read())
     except OSError:
@@ -28,12 +29,12 @@ def setbit(path, on):
             return
         b = bytearray()
     b += bytes(max(0, 16 - len(b)))
-    new = (b[4] | 0x10) if on else (b[4] & ~0x10)
-    if new != b[4]:
-        b[4] = new
+    new = (b[i] | m) if on else (b[i] & ~m)
+    if new != b[i]:
+        b[i] = new
         open(path, "wb").write(b)
-setbit("/media/fat/config/Vectrex-PiTrex_v1.CFG", True)
-setbit("/media/fat/config/VECTREX_v1.CFG", False)
+setbit("/media/fat/config/Vectrex-PiTrex_v2.CFG", 14, 0x20, True)
+setbit("/media/fat/config/VECTREX_v1.CFG", 4, 0x10, False)
 PYEOF
 
 mkdir -p "$FAT/games/Vectrex-PiTrex/UVMC2" "$PITREX/uvmc2"
