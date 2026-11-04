@@ -65,6 +65,7 @@ Nothing in it is ever executed. Unknown keys are ignored; bad values are ignored
 | `cpu1_after=10` | Seconds the game's second core stays on CPU0 before moving to CPU1. | 10 after a core load, 2 if the core has been up 15 s |
 | `orient=0` / `ccw` / `cw` | **Experimental.** Set the core's Orientation (normal / rotated 90 degrees counter-clockwise / clockwise) for this game and reload the core if the saved setting differs. | leave as it is |
 | `view=standard` / `open` | **Experimental.** Set the core's View Area (standard / open matte). Open matte is the default for this core: PiTrex_Setup or PiTrex_Update sets it once, and your OSD choice stands after that. | leave as it is |
+| `overlay=Star_Castle.art` | Overlay art for a game whose art is not named like it. A path is relative to the game's folder; a bare file name is looked up there, then in `games/Vectrex-PiTrex/Overlays/` and `games/Vectrex/Overlays/`. See [Overlays](#overlays). | `<game>.art` |
 
 Examples:
 ```
@@ -168,8 +169,25 @@ sd=uvmc2_sd.img
 Veccy Road needs no sidecar. With a card built from the UVMC2 folder (see
 [ADDING_GAMES.md](ADDING_GAMES.md)), `sd.img` is the default card, so the `sd=` lines are not needed.
 
-A game picked from the OSD does not load an overlay, and the last cartridge's overlay can stay
-on screen: OSD > Video Overlay & Geometry > Overlay = Off.
+## Overlays
+A game picked with OSD > Load UVMC2 (or a program with Load PiTrex) gets its overlay
+automatically, the way the official core does for cartridges: the core loads `<game>.art` from
+beside the game file. After the art loads, the core selects Overlay On, Framing Overlay and View
+Area Standard, as the official core does; you can change them afterwards.
+
+You do not have to copy the art yourself. **PiTrex_Make_UVMC2_Card** puts it next to each `.um2`
+game, and **PiTrex_Setup** next to the PiTrex programs. They take a file with the game's name from
+`games/Vectrex/Overlays/` (where update_all puts the overlays) or `games/Vectrex-PiTrex/Overlays/`,
+or the file named by `overlay=` in the game's sidecar.
+- A `.art` that is already there is never replaced, so your own art stays.
+- A game whose sidecar says `orient=cw` or `ccw` only gets the rotated art from the overlays'
+  `Tate` folder (`<name>_90CW.art` / `<name>_90CCW.art`), or none.
+- A game whose sidecar says `view=open` gets no art: loaded art would switch it to View Area
+  Standard and crop it.
+- When the core is reloaded for `orient` or `view`, the art is loaded again with it.
+
+A game without art leaves the last overlay on screen: OSD > Video Overlay & Geometry >
+Overlay = Off.
 
 ## What PiTrex_Setup changes
 - **MiSTer.ini:** it adds this section at the end of the file:
@@ -216,6 +234,6 @@ their `.bak` backups, sidecars, and anything of yours in `pitrex/um2run/`.
 | The picture is cropped at the sides | Landscape game on a portrait screen. OSD > View Area = Open Matte shows it all (the default, unless you changed it), or put `view=open` in the sidecar. |
 | A message on the Vectrex instead of the game | CARD OUT OF DATE: the game still starts, on the current card; run Scripts > PiTrex_Make_UVMC2_Card when you have time. LINUX IS ON ONE CPU: reboot the MiSTer. UM2RUN IS MISSING: run Scripts > PiTrex_Update. GAME FILE NOT FOUND: the file went away between the pick and the start. GAME STOPPED: the game ended by itself; `/tmp/um2.log` has why and `/tmp/pitrexd.log` the exit status. |
 | The game froze | Check the core's Pause button first (a mapped controller button, or Pause when OSD open): a paused core stops taking the picture and the game waits for it. `/tmp/um2.log` then says `core not fetching`, and `core fetching again` when it carries on. |
-| An old overlay is on top of the game | OSD > Video Overlay & Geometry > Overlay = Off. |
+| An old overlay is on top of the game | The game has no art of its own (see [Overlays](#overlays)): OSD > Video Overlay & Geometry > Overlay = Off. |
 | A controller button does something different from the normal Vectrex core (e.g. View) | The MiSTer keeps controller mappings per core name, so "Vectrex-PiTrex" has its own mapping, separate from VECTREX's. Set it up once in the OSD (Define joystick buttons). |
 | Log of the last game | `/tmp/um2.log` (the game), `/tmp/um2.prev.log` (the game before it), `/tmp/pitrexd.log` (picks and settings). |

@@ -15,6 +15,7 @@ MENU="$FAT/_PiTrex & UVMC2"
 PTX=$FAT/games/Vectrex-PiTrex/PiTrex
 OVL=$FAT/games/Vectrex/Overlays
 OVLNEW=$FAT/games/Vectrex-PiTrex/Overlays
+case "$0" in */*) . "${0%/*}/art_lib.sh" ;; *) . ./art_lib.sh ;; esac
 # standard MiSTer naming from B8: Vectrex-PiTrex_YYYYMMDD.rbf, in _Console from 1.0 (the alphas and betas used _Unstable;
 # older releases: Vectrex-PiTrex_B<n>_<date>.rbf)
 CORE=$(ls -1 $FAT/_Console/Vectrex-PiTrex_[0-9]*.rbf 2>/dev/null | sort | tail -1)
@@ -126,6 +127,9 @@ while IFS='|' read -r title prog env; do
 		echo "</mistergamedescription>"
 	} > "$MENU/$title.mgl"
 	echo "$title${ovl:+ (overlay $(basename "$ovl"))}"
+	# the same art beside the program (never over a .art of yours), where the core's OSD pick finds it
+	r=$(art_place "$PTX/$prog.ptx")
+	[ -z "$r" ] || echo "  overlay $prog.ptx: $r"
 done <<'EOF'
 VecDrive|vecdrive|
 VecBreak|vecbreak|

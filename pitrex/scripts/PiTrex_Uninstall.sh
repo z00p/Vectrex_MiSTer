@@ -38,6 +38,8 @@ rmdir /media/fat/pitrex/um2run 2>/dev/null
 rm -f /media/fat/pitrex/uvmc2/tacscan/README.txt /media/fat/pitrex/uvmc2/tacscan/TACSCAN.PCM /media/fat/pitrex/uvmc2/card/README.txt
 rmdir /media/fat/pitrex/uvmc2/tacscan /media/fat/pitrex/uvmc2/card /media/fat/pitrex/uvmc2 /media/fat/pitrex 2>/dev/null
 rm -f /media/fat/games/Vectrex/PiTrex/*.ptx /media/fat/games/Vectrex-PiTrex/PiTrex/*.ptx
+# the overlays make_menu.sh copied next to the programs (pitrex/art_lib.sh goes with the pitrex folder above)
+rm -f /media/fat/games/Vectrex-PiTrex/PiTrex/VecBreak.art /media/fat/games/Vectrex-PiTrex/PiTrex/VecDrive.art /media/fat/games/Vectrex-PiTrex/PiTrex/TacScan.art /media/fat/games/Vectrex-PiTrex/PiTrex/GongRider.art
 rmdir /media/fat/games/Vectrex/PiTrex /media/fat/games/Vectrex-PiTrex/PiTrex 2>/dev/null
 rm -rf "/media/fat/_PiTrex & UVMC2"
 rm -f /media/fat/games/Vectrex-PiTrex/UVMC2/README.txt

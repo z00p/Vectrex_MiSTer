@@ -19,6 +19,8 @@
 #                              BattleZone has no card of its own yet (PiTrex_Setup uses this); quiet when there is
 #                              nothing to do. The .um2 games are copied either way.
 #   make_card.sh --check       only say: exit status 1 if a build would change the card, 0 if not. Changes nothing.
+# Overlay art: for each .um2 game the art is copied next to it as <game>.art, where the core's OSD pick finds it (see art_lib.sh), unless a
+# .art is there already (yours is never replaced). .art files are not put on the card.
 # Needs: bash, mkfs.vfat, losetup, mount, python3 (3.9). No mtools. Undo: delete sd.img (and bz_sd.img).
 # PITREX_FAT and PITREX_TMP are test hooks (the PC test points them at a scratch tree); on the MiSTer leave them unset.
 FAT=${PITREX_FAT:-/media/fat}
@@ -34,6 +36,7 @@ MAX_MIB=16000
 BIG_MIB=2000    # above this, 4 KiB clusters: the FAT of a big card with 512-byte clusters would be hundreds of MiB
 BLANK_MIB=64
 LABEL=UVM2SD
+case "$0" in */*) . "${0%/*}/art_lib.sh" ;; *) . ./art_lib.sh ;; esac
 
 say() { echo "make_card: $*"; }
 die() { echo "make_card: ERROR: $*"; exit 1; }
@@ -68,6 +71,8 @@ def why_skip(path, name, isdir, top):
         return ".um2/.uf2 files"
     if n.endswith((".um2.cfg", ".um2.load", ".img", ".img.list", ".img.bak")):
         return "game settings and card images"
+    if n.endswith(".art"):
+        return "overlay art"
     if top and n == "readme.txt":
         try:
             with open(path, "rb") as f:
@@ -446,6 +451,15 @@ $(py um2 "$CARD" "$GAMES")
 EOF
 [ "$NCOPIED" = 0 ] || say "copied $NCOPIED .um2 game(s) from the card folder to $GAMES (the OSD's UVMC2 folder)"
 
+# Overlay art next to each game (no card rebuild for it: .art files are not on the card)
+while IFS= read -r g; do
+	[ -n "$g" ] || continue
+	r=$(art_place "$g")
+	[ -z "$r" ] || say "overlay ${g##*/}: $r"
+done <<EOF
+$(find "$GAMES" -type f -iname '*.um2' ! -name '._*' 2>/dev/null | sort)
+EOF
+
 scan=$(py scan "$CARD" "$MAX_MIB") || die "cannot read $CARD"
 set -f; set -- $scan; set +f
 NFILES=$1; DATA=$(echo "$2" | tr _ ' '); MIB=$3; shift 3; SKIPS="$*"
@@ -504,7 +518,7 @@ if [ "$IF_NEEDED" = 1 ] && [ -f "$OUT" ]; then
 			[ "$LIST" = "$(cat "$OUT.list")" ] && exit 0
 		else
 			# a card made some other way: rebuild only if the folder has a file newer than it
-			[ -z "$(find "$CARD" -type f ! -iname '*.um2' -newer "$OUT" 2>/dev/null | head -1)" ] && exit 0
+			[ -z "$(find "$CARD" -type f ! -iname '*.um2' ! -iname '*.art' -newer "$OUT" 2>/dev/null | head -1)" ] && exit 0
 		fi
 		say "the card folder has changed since sd.img was made: building it again"
 	fi
