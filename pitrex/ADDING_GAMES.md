@@ -28,7 +28,7 @@ cartridge images (`.um2` files) go, and how to give the games the files they rea
    It shows how far it has got. The time depends on the card size: about 25 minutes for 3 GiB of
    files on a DE10-Nano, far less for a card with a few ROM zips. `.uf2` firmware, `ASSETS` folders
    (menu pictures) and macOS files (`__MACOSX`, `._*`, `.DS_Store`) are left out.
-4. Load the Vectrex-PiTrex core from `_Unstable`, then use the OSD: **Load UVMC2** lists your games.
+4. Load the Vectrex-PiTrex core (main menu > Console > Vectrex-PiTrex), then use the OSD: **Load UVMC2** lists your games.
 
 **Or** just put `.um2` files in that folder (subfolders are fine). A game that needs no card
 (Veccy Road, the demos) then plays at once. With nothing to put on a card, PiTrex_Setup makes a
@@ -42,7 +42,7 @@ You can copy the files with the MiSTer's SD card in your PC, or over the network
   menu:
   ```xml
   <mistergamedescription>
-    <rbf>_Unstable/Vectrex-PiTrex</rbf>
+    <rbf>_Console/Vectrex-PiTrex</rbf>
     <file delay="2" type="f" index="3" path="UVMC2/Punchout.um2"/>
   </mistergamedescription>
   ```
@@ -72,6 +72,11 @@ a game shows CARD OUT OF DATE for a moment and starts on the current card: run
   `games/Vectrex-PiTrex/UVMC2/`, leaving nothing but `README.txt` behind, and build the card.
 - The menu entries are rewritten as standard MGLs. PiTrex programs move to
   `games/Vectrex-PiTrex/PiTrex`.
+- From 1.0 the core is in `_Console` (the alphas and betas put it in `_Unstable`); the old copies
+  are removed and the menu entries follow. An MGL file of your own that says
+  `<rbf>_Unstable/Vectrex-PiTrex</rbf>` needs `_Console/Vectrex-PiTrex` instead.
+- From 1.0 the core keeps its settings in `config/Vectrex-PiTrex_v2.CFG`, so OSD options start
+  from their defaults; PiTrex_Setup sets PiTrex Mode and Open Matte again.
 
 ## Which games need a card
 These are the games tested on the MiSTer (see [UVMC2_GAMES.md](UVMC2_GAMES.md#tested-games)).

@@ -21,10 +21,11 @@ check() { if eval "$2"; then pass "$1"; else fail "$1   [$2]"; fi; }
 
 export PITREXD_RT=1 PITREXD_FAT=$W/fat PITREXD_TMP=$W/tmp PITREXD_CMD=$W/cmd PITREXD_CPUS=$W/cpus PITREXD_MAINCMD=$W/maincmd
 FAT=$PITREXD_FAT; T=$PITREXD_TMP
-mkdir -p "$FAT/pitrex/um2run" "$FAT/pitrex/uvmc2" "$FAT/config" "$FAT/_Unstable" "$FAT/games/Vectrex-PiTrex/UVMC2" "$T" "$W/bin"
+mkdir -p "$FAT/pitrex/um2run" "$FAT/pitrex/uvmc2" "$FAT/config" "$FAT/_Console" "$FAT/_Unstable" "$FAT/games/Vectrex-PiTrex/UVMC2" "$T" "$W/bin"
 echo 0-1 > "$W/cpus"; : > "$W/cmd"
 echo Vectrex-PiTrex > "$T/CORENAME"
-touch "$FAT/_Unstable/Vectrex-PiTrex_20261027.rbf" "$FAT/_Unstable/Vectrex-PiTrex_20261029.rbf"
+# 1.0 layout: the core in _Console; an older beta core left in _Unstable must not be picked
+touch "$FAT/_Console/Vectrex-PiTrex_20261027.rbf" "$FAT/_Console/Vectrex-PiTrex_20261029.rbf" "$FAT/_Unstable/Vectrex-PiTrex_20261103.rbf"
 UD=$FAT/games/Vectrex-PiTrex/UVMC2
 
 # fake mister_run.sh: record the call, start a "game" (a sleep) and remember its pid
@@ -175,11 +176,11 @@ printf '/media/fat/MiSTer\0/media/fat/_Console/Vectrex_20261018.rbf\0' > "$W/mai
 echo -n VECTREX > "$T/CORENAME"; sleep 2
 check "official core: no reload" '[ ! -s "$W/cmds.log" ]'
 echo -n MENU > "$T/CORENAME"; sleep 2
-printf '/media/fat/MiSTer\0/media/fat/_Unstable/Vectrex-PiTrex_20261029.rbf\0/media/fat/_PiTrex/x.mgl\0' > "$W/maincmd"
+printf '/media/fat/MiSTer\0/media/fat/_Console/Vectrex-PiTrex_20261029.rbf\0/media/fat/_PiTrex/x.mgl\0' > "$W/maincmd"
 echo -n VECTREX > "$T/CORENAME"; sleep 2
 check "our rbf through an MGL: no reload" '[ ! -s "$W/cmds.log" ]'
 echo -n MENU > "$T/CORENAME"; sleep 2
-printf '/media/fat/MiSTer\0/media/fat/_Unstable/Vectrex-PiTrex_20261029.rbf\0' > "$W/maincmd"
+printf '/media/fat/MiSTer\0/media/fat/_Console/Vectrex-PiTrex_20261029.rbf\0' > "$W/maincmd"
 echo -n VECTREX > "$T/CORENAME"
 check "our rbf with no MGL: reloaded once and comes up as Vectrex-PiTrex" 'waitfor "grep -q load_core $W/cmds.log" 6 && waitfor "[ \"\$(cat $T/CORENAME)\" = Vectrex-PiTrex ]" 6 && sleep 2 && [ $(grep -c load_core "$W/cmds.log") -eq 1 ] && grep -q "without the menu entry" "$T/pitrexd.log"'
 rm -f "$W/maincmd"

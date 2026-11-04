@@ -6,12 +6,13 @@
 # waits, read-only, for the Vectrex core and PiTrex Mode), then loads the core.
 PITREX=/media/fat/pitrex
 FAT=/media/fat
-CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_[0-9]*.rbf 2>/dev/null | sort | tail -1)
+CORE=$(ls -1 $FAT/_Console/Vectrex-PiTrex_[0-9]*.rbf 2>/dev/null | sort | tail -1)
+[ -n "$CORE" ] || CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_[0-9]*.rbf 2>/dev/null | sort | tail -1)
 [ -n "$CORE" ] || CORE=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_*.rbf 2>/dev/null | sort -V | tail -1)
 [ -n "$CORE" ] || CORE=$(ls -1 $FAT/_Unstable/Vectrex_PiTrex_B*.rbf 2>/dev/null | sort -V | tail -1)
 PROG="$1"; shift
 
-if [ -z "$CORE" ]; then echo "No Vectrex-PiTrex core found in /media/fat/_Unstable"; exit 1; fi
+if [ -z "$CORE" ]; then echo "No Vectrex-PiTrex core found in /media/fat/_Console or _Unstable"; exit 1; fi
 if [ ! -x "$PITREX/$PROG" ]; then echo "No program $PITREX/$PROG"; exit 1; fi
 
 # stop a running PiTrex program (it hands the Vectrex back cleanly on SIGTERM)

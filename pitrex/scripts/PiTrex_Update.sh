@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Download the newest PiTrex-on-MiSTer release from GitHub and unpack it onto the SD card.
-# Only the release's own files are written: the core in _Unstable, /media/fat/pitrex,
+# Only the release's own files are written: the core in _Console, /media/fat/pitrex,
 # the PiTrex_*.sh Scripts entries and the overlays in games/Vectrex/Overlays.
 REPO=z00p/Vectrex_MiSTer
 CA="--cacert /etc/ssl/certs/cacert.pem"
@@ -32,4 +32,4 @@ rm -f /media/fat/Scripts/PiTrex_Cube_demo.sh /media/fat/Scripts/PiTrex_Gyrocks.s
 	/media/fat/Scripts/UVMC2_Hello.sh /media/fat/Scripts/UVMC2_TacScan.sh
 # the main-menu entries name the core file: point them at the newest one
 [ -d "/media/fat/_PiTrex & UVMC2" ] && bash /media/fat/pitrex/make_menu.sh > /dev/null
-echo "Updated. The launcher and the menu use the newest core (from B8 named Vectrex-PiTrex_<date>.rbf; the older _B<n>_ files are removed)."
+echo "Updated. The launcher and the menu use the newest core, _Console/Vectrex-PiTrex_<date>.rbf from 1.0; older PiTrex cores (also those in _Unstable) are removed."

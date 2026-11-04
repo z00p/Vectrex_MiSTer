@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Remove PiTrex-on-MiSTer: the programs, the PiTrex cores in _Unstable, the overlays it
+# Remove PiTrex-on-MiSTer: the programs, the PiTrex cores in _Console and _Unstable, the overlays it
 # installed, its Scripts entries (this one last) and the OSD-loader setup (pitrexd line in
 # linux/user-startup.sh, log_file_entry=1 in the [Vectrex-PiTrex] section of MiSTer.ini).
 # Your Vectrex settings (config/VECTREX_v1.CFG) are left alone; PiTrex's own
@@ -43,7 +43,7 @@ rm -rf "/media/fat/_PiTrex & UVMC2"
 rm -f /media/fat/games/Vectrex-PiTrex/UVMC2/README.txt
 rm -f /media/fat/games/Vectrex-PiTrex/Overlays/VecBreak.art /media/fat/games/Vectrex-PiTrex/Overlays/VecDrive.art /media/fat/games/Vectrex-PiTrex/Overlays/TacScan.art /media/fat/games/Vectrex-PiTrex/Overlays/GongRider.art
 rmdir /media/fat/games/Vectrex-PiTrex/Overlays /media/fat/games/Vectrex-PiTrex/UVMC2 /media/fat/games/Vectrex-PiTrex 2>/dev/null
-rm -f /media/fat/_Unstable/Vectrex_PiTrex_B*.rbf /media/fat/_Unstable/Vectrex-PiTrex_*.rbf
+rm -f /media/fat/_Console/Vectrex-PiTrex_*.rbf /media/fat/_Unstable/Vectrex_PiTrex_B*.rbf /media/fat/_Unstable/Vectrex-PiTrex_*.rbf
 rm -f /media/fat/config/Vectrex-PiTrex_v1.CFG /media/fat/config/Vectrex-PiTrex_v2.CFG
 rm -f /media/fat/games/Vectrex/Overlays/VecBreak.art /media/fat/games/Vectrex/Overlays/VecDrive.art /media/fat/games/Vectrex/Overlays/TacScan.art /media/fat/games/Vectrex/Overlays/GongRider.art
 

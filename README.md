@@ -8,13 +8,13 @@ With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everyt
 
 ## Quick start
 1. Download `PiTrex_MiSTer_UVMC2_<version>_<date>.zip` (currently 1.0) from [Releases](https://github.com/z00p/Vectrex_MiSTer/releases) and unzip it onto the root of your MiSTer's SD card (`/media/fat`). It contains:
-   - `_Unstable/Vectrex-PiTrex_<YYYYMMDD>.rbf`: the core with PiTrex mode (it runs as "Vectrex-PiTrex", with its own settings file `config/Vectrex-PiTrex_v2.CFG`, so it never touches the official core's settings), including (from B6) a 32 kHz PCM sound channel that programs can mix in next to the Vectrex's own sound;
+   - `_Console/Vectrex-PiTrex_<YYYYMMDD>.rbf`: the core with PiTrex mode (it runs as "Vectrex-PiTrex", with its own settings file `config/Vectrex-PiTrex_v2.CFG`, so it never touches the official core's settings), including (from B6) a 32 kHz PCM sound channel that programs can mix in next to the Vectrex's own sound;
    - `pitrex/`: the PiTrex and UVMC2 programs, the launcher and the menu helper;
    - `Scripts/PiTrex_*.sh`: Setup, Update, Stop and Uninstall;
    - `games/Vectrex/Overlays/`: overlays for VecBreak, VecDrive, Tac/Scan and Gong Rider.
 
-   **Your official Vectrex core is not touched.** The PiTrex core is a separate file in `_Unstable`;
-   the MiSTer-devel Vectrex core in `_Console` (as installed by update_all) stays exactly as it is,
+   **Your official Vectrex core is not touched.** The PiTrex core is a separate file next to it in `_Console`,
+   with its own name; the MiSTer-devel Vectrex core (as installed by update_all) stays exactly as it is,
    and updates to it carry on as normal.
 2. On the MiSTer, run **Scripts > PiTrex_Setup** once (required). It adds a **PiTrex & UVMC2** folder to the main menu.
    Each entry loads the core, the game's overlay and the program in one go. Every program is

@@ -84,10 +84,12 @@ show() {
 	PTX_BACKEND=mister nohup chrt -r 49 "$UM2/um2run" --message "$1" > $T/um2msg.log 2>&1 &
 }
 
-# newest Vectrex-PiTrex core in _Unstable (standard MiSTer naming from B8: Vectrex-PiTrex_YYYYMMDD.rbf; older B<n> names as a fallback)
+# newest Vectrex-PiTrex core in _Console (from 1.0), else in _Unstable (the alphas and betas)
+# (standard MiSTer naming from B8: Vectrex-PiTrex_YYYYMMDD.rbf; older B<n> names as a fallback)
 newest_core() {
 	local c
-	c=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_[0-9]*.rbf 2>/dev/null | sort | tail -1)
+	c=$(ls -1 $FAT/_Console/Vectrex-PiTrex_[0-9]*.rbf 2>/dev/null | sort | tail -1)
+	[ -n "$c" ] || c=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_[0-9]*.rbf 2>/dev/null | sort | tail -1)
 	[ -n "$c" ] || c=$(ls -1 $FAT/_Unstable/Vectrex-PiTrex_*.rbf 2>/dev/null | sort -V | tail -1)
 	[ -n "$c" ] || c=$(ls -1 $FAT/_Unstable/Vectrex_PiTrex_B*.rbf 2>/dev/null | sort -V | tail -1)
 	[ -n "$c" ] && echo "$c"
@@ -162,7 +164,7 @@ set_display() {
 	display_apply "$ob" "$vb"
 	case $? in
 		0) echo "$(date +%T) orient=${o:--} view=${v:--}: Vectrex-PiTrex_v2.CFG updated, reloading the core" >> $LOG
-		   if reload_core; then reloaded=1; else echo "$(date +%T) orient/view: no Vectrex-PiTrex core in $FAT/_Unstable to reload" >> $LOG; fi ;;
+		   if reload_core; then reloaded=1; else echo "$(date +%T) orient/view: no Vectrex-PiTrex core in $FAT/_Console or _Unstable to reload" >> $LOG; fi ;;
 		2) echo "$(date +%T) orient/view: cannot write $FAT/config/Vectrex-PiTrex_v2.CFG" >> $LOG ;;
 	esac
 	return 0
@@ -261,7 +263,7 @@ core_arrived() {
 	read -r c 2>/dev/null < $T/CORENAME
 	[ "$c" = VECTREX ] && plain_ours || return 0
 	echo "$(date +%T) our core was started without the menu entry: loading it again as Vectrex-PiTrex" >> $LOG
-	reload_core || echo "$(date +%T) core reload: no Vectrex-PiTrex core in $FAT/_Unstable" >> $LOG
+	reload_core || echo "$(date +%T) core reload: no Vectrex-PiTrex core in $FAT/_Console or _Unstable" >> $LOG
 }
 
 # Supervisor. A program may only write the shared DDR block while our core is the loaded core.
