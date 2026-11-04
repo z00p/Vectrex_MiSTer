@@ -1896,12 +1896,15 @@ static void prof_dump(void) {
         printf("-- syscalls %s (number:samples):", nm[c]); for (int i = 0; i < 512; i++) if (g_prof_sys[c][i]) printf(" %d:%u", i, g_prof_sys[c][i]); putchar('\n');
     }
 }
-/* UM2_PROFSLICE=1 (with UM2_PROF): at every heartbeat, the frame marks and the busiest pcs per guest core since the last one, to tell a slow stretch from a normal one */
+/* UM2_PROFSLICE=1 (with UM2_PROF): at every heartbeat, the frame marks and the busiest pcs per guest core since the last one, to tell a slow stretch from a normal one.
+ * UM2_PROFSLICE=<ms> (50 or more, 4 Nov 2026): every <ms> from a thread of its own instead, with the time and the interrupts delivered, to catch dips shorter than a heartbeat. */
+static int g_slice_ms;
 static void prof_slice(void) {
-    static int on = -1; static uint32_t prev[3][4096]; static unsigned m0;
+    static int on = -1; static uint32_t prev[3][4096]; static unsigned m0; static unsigned long q0;
     if (on < 0) on = g_prof_hz && getenv("UM2_PROFSLICE") != NULL;
     if (!on) return;
-    fprintf(stderr, "prof slice: frame marks %u", g_marks - m0); m0 = g_marks;
+    unsigned long q = 0; for (int i = 0; i < NIRQ; i++) q += g_irq_cnt[i];
+    fprintf(stderr, "prof slice: t=%.2f frame marks %u irqs %lu", now() - g_t0, g_marks - m0, q - q0); m0 = g_marks; q0 = q;
     for (int c = 0; c < 2; c++) {
         uint32_t top[8][2] = {{0}}, tot = 0;
         for (int i = 0; i < 4096; i++) {
@@ -1911,6 +1914,19 @@ static void prof_slice(void) {
         fprintf(stderr, " | core %d %u:", c, tot); for (int k = 0; k < 8 && top[k][1]; k++) fprintf(stderr, " %08x:%u", top[k][0], top[k][1]);
     }
     fputc('\n', stderr);
+}
+static void *slice_thread(void *arg) {
+    (void)arg; pthread_setname_np(pthread_self(), "u2slice");
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    for (;;) {                                         /* absolute deadlines: the slices keep their length however long the print takes */
+        ts.tv_nsec += (long)g_slice_ms * 1000000L; while (ts.tv_nsec >= 1000000000L) { ts.tv_nsec -= 1000000000L; ts.tv_sec++; }
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL); prof_slice();
+    }
+    return NULL;
+}
+static void slice_start(void) {
+    const char *e = getenv("UM2_PROFSLICE"); if (!g_prof_hz || !e || atoi(e) < 50) return;
+    g_slice_ms = atoi(e); pthread_t th; if (pthread_create(&th, NULL, slice_thread, NULL)) g_slice_ms = 0; else pthread_detach(th);
 }
 static void print_summary(int final) {
     uint64_t tot[K_NKINDS] = {0};
@@ -2019,7 +2035,7 @@ static void heartbeat(pid_t child) {
     }
     fputc('\n', stderr);
     um2_clock_sync();
-    prof_slice();
+    if (!g_slice_ms) prof_slice();
 }
 
 static void setup_sched(void) {
@@ -2751,7 +2767,7 @@ static int run_inproc(void) {
     sa.sa_sigaction = on_quiesce; sigaction(SIGUSR2, &sa, NULL);
     sa.sa_sigaction = on_irq; sigaction(SIGURG, &sa, NULL);       /* asynchronous interrupt delivery (SIGUSR2 is the patch quiesce) */
     guest_load_and_map();
-    hstack_set(0); tl_guest = 1; prof_start();
+    hstack_set(0); tl_guest = 1; prof_start(); slice_start();
     g_t0 = now();
     struct itimerval it = { {0, 100000}, {0, 100000} }; setitimer(ITIMER_REAL, &it, NULL);
 #ifdef USE_SECCOMP
