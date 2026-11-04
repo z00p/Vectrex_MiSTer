@@ -28,14 +28,14 @@ module pitrex_reset #(
 ) (
 	input  wire clk,
 	input  wire active,                          // a PiTrex takeover is in force (clk domain)
-	input  wire ptx_mode,                        // PiTrex Mode option (status[36])
+	input  wire ptx_mode,                        // PiTrex Mode option (status[ST_PTX_MODE])
 	input  wire ioctl_download,
 	input  wire rom_download,                    // index 0/1: a real cartridge or BIOS load
 	input  wire pll_unlocked,
 	input  wire fw_reset,                        // RESET from the framework
-	input  wire status0,                         // status[0]
+	input  wire status0,                         // host_status[ST_MAIN_RESET] (status[0])
 	input  wire button_reset,                    // buttons[1]
-	input  wire menu_reset,                      // status[7]
+	input  wire menu_reset,                      // host_status[ST_GAME_RESET] (status[7])
 	input  wire save_hold,
 	input  wire delayed_reset,
 	input  wire bios_reset,

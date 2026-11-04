@@ -162,7 +162,8 @@ wire [BUF_IDX_W-1:0]    buf_display;
 wire [BUF_IDX_W-1:0]    buf_draw;
 wire [BUFFER_COUNT-1:0] buf_draw_hot;
 wire                    arbiter_reset_busy;
-wire                    arbiter_reset_busy_d;
+wire                    fb_reset_d;
+wire                    cache_reset_active;
 
 assign DDRAM_CLK = clk_sys;
 
@@ -226,17 +227,17 @@ always_ff @(posedge clk_sys) begin
 	if (matte_geometry_sync == matte_geometry_sync_d) matte_geometry_stable <= matte_geometry_sync;
 end
 
-// PiTrex client reset (B7): same terms as the arbiter's own reset/drain, registered once.
+// PiTrex client reset (B7; B13 follows the 3 Nov arbiter): like the framebuffer clients, the PiTrex
+// client resets only once the arbiter has let a burst in flight finish (fb_reset_d), registered once.
 logic ptx_client_reset_q = 1'b1;
 always_ff @(posedge clk_sys)
-	ptx_client_reset_q <= client_reset | arbiter_reset_busy_d;
+	ptx_client_reset_q <= fb_reset_d;
 assign ptx_client_reset = ptx_client_reset_q;
 
-// Register the next reset and arbiter-busy values so the client reset
-// changes on the same clock edge.
+// Keep the writer running until DDRAM accepts the last beat.
 (* preserve, maxfan = 64 *) logic fb_client_reset_q = 1'b1;
 always_ff @(posedge clk_sys)
-	fb_client_reset_q <= reset_d | arbiter_reset_busy_d;
+	fb_client_reset_q <= fb_reset_d;
 
 logic filter_reset_q = 1'b1;
 always_ff @(posedge clk_sys)
@@ -245,7 +246,7 @@ always_ff @(posedge clk_sys)
 // Preserve the client-reset edge; isolate the presentation restart locally.
 (* preserve, maxfan = 64 *) logic readout_reset_q = 1'b1;
 always_ff @(posedge clk_sys)
-	readout_reset_q <= reset_d | arbiter_reset_busy_d | video_timing_reset;
+	readout_reset_q <= fb_reset_d | video_timing_reset;
 
 // Store each frame's draw-phase duration in source-clock ticks.
 wire [3:0]           draw_idx;
@@ -356,7 +357,7 @@ wire                      flush_req;
 wire                      clear_req;
 wire [BUF_IDX_W-1:0]      clear_buf_idx;
 wire                      clear_done;
-wire                      has_draw_buf;
+wire                      draw_ready;
 wire                      display_valid;
 wire                      display_is_composed;
 wire [TILEMAP_ADDR_W-1:0] compose_tilemap_addr;
@@ -395,7 +396,7 @@ vfb_buffer_controller #(
 	.display_valid              (display_valid),
 	.display_is_composed        (display_is_composed),
 
-	.has_draw_buf               (has_draw_buf),
+	.draw_ready                 (draw_ready),
 	.buf_draw_hot               (buf_draw_hot),
 	.raw_frame_dropped          (raw_frame_dropped),
 	.raw_frame_dropped_buf      (raw_frame_dropped_buf),
@@ -410,6 +411,7 @@ vfb_tile_cache_manager #(
 ) cache_manager_inst (
 	.clk_sys                            (clk_sys),
 	.reset                              (fb_client_reset_q),
+	.reset_active                       (cache_reset_active),
 
 	.FB_HEIGHT                          (render_height_q),
 
@@ -437,7 +439,7 @@ vfb_tile_cache_manager #(
 	.buf_draw                           (buf_draw),
 	.buf_display                        (buf_display),
 	.display_valid                      (display_valid),
-	.has_draw_buf                       (has_draw_buf),
+	.draw_ready                         (draw_ready),
 	.buf_draw_hot                       (buf_draw_hot),
 
 	// DDRAM arbiter
@@ -539,7 +541,8 @@ vfb_phosphor_compositor #(
 
 vfb_ddr_arbiter ddr_arbiter_inst (
 	.clk_sys                 (clk_sys),
-	.rst_sys                 (client_reset),
+	.rst_sys                 (client_reset || reset_d),
+	.cache_reset_active      (cache_reset_active),
 
 	// DDRAM Avalon-MM
 	.DDRAM_BUSY              (DDRAM_BUSY),
@@ -619,7 +622,7 @@ vfb_ddr_arbiter ddr_arbiter_inst (
 	.ptx_write_be            (ptx_write_be),
 	.ptx_write_advance       (ptx_write_advance),
 	.reset_busy              (arbiter_reset_busy),
-	.reset_busy_d            (arbiter_reset_busy_d)
+	.fb_reset_d              (fb_reset_d)
 );
 
 wire  [7:0]  raw_vga_r;

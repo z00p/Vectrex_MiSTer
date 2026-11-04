@@ -99,11 +99,11 @@ wire        ptx_write_ready, ptx_write_grant, ptx_write_done, ptx_write_advance;
 wire [28:0] ptx_write_addr;
 wire [7:0]  ptx_write_burstcnt, ptx_write_be;
 wire [63:0] ptx_write_data;
-wire        reset_busy, reset_busy_d;
+wire        reset_busy, fb_reset_d;
 import vfb_layout_pkg::*;
 
 vfb_ddr_arbiter arb (
-	.clk_sys(clk), .rst_sys(1'b0),
+	.clk_sys(clk), .rst_sys(1'b0), .cache_reset_active(1'b0),
 	.DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR),
 	.DDRAM_RD(DDRAM_RD), .DDRAM_WE(DDRAM_WE), .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE),
 	.DDRAM_DOUT(DDRAM_DOUT), .DDRAM_DOUT_READY(DDRAM_DOUT_READY),
@@ -132,10 +132,10 @@ vfb_ddr_arbiter arb (
 	.ptx_write_be(ptx_write_be), .ptx_write_advance(ptx_write_advance),
 	.artwork_read_ready(1'b0), .artwork_read_grant(), .artwork_read_addr(29'd0),
 	.artwork_read_burstcnt(8'd0), .artwork_read_data(), .artwork_read_data_valid(),
-	.reset_busy(reset_busy), .reset_busy_d(reset_busy_d)
+	.reset_busy(reset_busy), .fb_reset_d(fb_reset_d)
 );
 logic ptx_rst_q = 1'b1;
-always @(posedge clk) ptx_rst_q <= reset_busy_d;
+always @(posedge clk) ptx_rst_q <= fb_reset_d;
 
 // -------------------------------------------------- reader, FIFO, player
 wire         present;

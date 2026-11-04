@@ -6,7 +6,7 @@
 // PiTrex Mode option is deliberately Off, so a .ptx/.um2 picked from the OSD would just
 // wait for a takeover that can never start. A completed download for the launcher slot
 // (ioctl index 3: the OSD's F3 entry and the MGL launchers' <file index="3">) therefore
-// sets a sticky flag; Vectrex.sv ORs it with status[36] wherever the PiTrex enable is used,
+// sets a sticky flag; Vectrex.sv ORs it with the PiTrex Mode bit (status[ST_PTX_MODE], 117 from B13) wherever the PiTrex enable is used,
 // so it goes through the same entry path as switching the option on (same machine reset,
 // same takeover rules).
 //
