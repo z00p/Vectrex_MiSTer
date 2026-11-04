@@ -33,6 +33,52 @@ set_prio() {
 	[ -z "$PITREXD_RT" ] || return 0
 	if [ "$1" = fast ]; then chrt -r -p 49 $$ > /dev/null 2>&1; else chrt -o -p 0 $$ > /dev/null 2>&1; fi
 }
+# Bluetooth controllers. A game's guest threads run real-time on both CPUs (um2run, SCHED_RR 50; PiTrex programs 49), and
+# the one on CPU0 never yields it. Bluetooth input passes through normal-priority steps that wired input does not: the hci work
+# queue (an unbound kworker), the kernel's hidp thread for the pad (khidpd_<vid><pid>) and, for LE devices, bluetoothd. One that
+# lands on CPU0 waits up to ~950 ms, the kernel's real-time throttle period (measured 4 Nov 2026 during Punch-Out and Pac-Man).
+# While our core is loaded AND a Bluetooth connection exists, bt_tune moves unbound kernel work to CPU1 and gives the hidp threads
+# and bluetoothd SCHED_FIFO 51 (above the guests, below um2run's helpers at 52); without a connection nothing is touched, so wired
+# controllers see no change. The check is a glob (no fork); the tuning is undone when the last connection goes or the core changes.
+# PITREXD_BTSYS, PITREXD_WQMASK, PITREXD_PROC: test hooks. With PITREXD_RT set (the mock) the priority changes are logged, not made.
+BT_SYS=${PITREXD_BTSYS:-/sys/class/bluetooth}
+WQ_MASK=${PITREXD_WQMASK:-/sys/devices/virtual/workqueue/cpumask}
+PROC=${PITREXD_PROC:-/proc}
+bt_on=0; bt_mask=""; bt_pids=" "; bt_n=0
+bt_chrt() {   # bt_chrt <pid> on|off
+	if [ -n "$PITREXD_RT" ]; then echo "$(date +%T) bluetooth: pid $1 $2" >> $LOG; return 0; fi
+	if [ "$2" = on ]; then chrt -f -p 51 "$1" > /dev/null 2>&1; else chrt -o -p 0 "$1" > /dev/null 2>&1; fi
+}
+bt_scan() {   # boost the hidp threads and bluetoothd not boosted yet
+	local p c
+	for p in "$PROC"/[0-9]*; do
+		read -r c 2>/dev/null < "$p/comm" || continue
+		case "$c" in khidpd_*|bluetoothd) ;; *) continue ;; esac
+		case "$bt_pids" in *" ${p##*/} "*) continue ;; esac
+		bt_chrt "${p##*/}" on && bt_pids="$bt_pids${p##*/} "
+	done
+}
+bt_tune() {   # bt_tune on|off: on = our core is loaded (called every poll then)
+	local c want=0 p
+	if [ "$1" = on ]; then for c in "$BT_SYS"/hci*:*; do [ -e "$c" ] && { want=1; break; }; done; fi
+	if [ "$want" = 1 ]; then
+		if [ "$bt_on" = 0 ]; then
+			bt_on=1; bt_n=0
+			read -r bt_mask 2>/dev/null < "$WQ_MASK" && { echo 2 > "$WQ_MASK"; } 2>/dev/null
+			echo "$(date +%T) bluetooth controller connected: unbound kernel work on CPU1 (was ${bt_mask:-?}), hidp threads and bluetoothd at FIFO 51" >> $LOG
+			bt_scan
+		elif [ $(( ++bt_n % 10 )) = 0 ]; then
+			bt_scan    # every 2 s: a pad connected later has a new hidp thread
+		fi
+	elif [ "$bt_on" = 1 ]; then
+		bt_on=0
+		[ -z "$bt_mask" ] || { echo "$bt_mask" > "$WQ_MASK"; } 2>/dev/null
+		for p in $bt_pids; do [ -e "$PROC/$p" ] && bt_chrt "$p" off; done
+		bt_pids=" "
+		echo "$(date +%T) bluetooth tuning undone (unbound kernel work back to ${bt_mask:-?})" >> $LOG
+	fi
+}
+
 # nap <seconds>: read with a timeout on a pipe nobody writes to is a sleep without a fork
 if mkfifo "$T/pitrexd.pipe.$$" 2>/dev/null && exec 3<> "$T/pitrexd.pipe.$$"; then
 	rm -f "$T/pitrexd.pipe.$$"
@@ -75,6 +121,11 @@ cfg_get() {
 	[ -f "$1" ] || return 0
 	tr -d '\r' < "$1" | sed -n "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*//p" | tail -1 | sed 's/[[:space:]]*$//'
 }
+
+# find_art <game> <sidecar>: the overlay art to load again when the core is reloaded for a game (art_lib.sh, next to this script).
+# Without the library there is no art, and the reload is as it was.
+case "$0" in */*) ART_LIB=${0%/*}/art_lib.sh ;; *) ART_LIB=./art_lib.sh ;; esac
+[ -f "$ART_LIB" ] && . "$ART_LIB" || find_art() { return 0; }
 
 # show <text>: a pick that cannot start says why on the Vectrex for 20 s ('|' = new line, 4 lines of 20 characters at most; see um2run --message),
 # as well as in the log. Never over a running program; the next pick or a core change stops it like any other program.
@@ -128,11 +179,20 @@ PYEOF
 
 # Load the newest Vectrex-PiTrex core again (an MGL, exactly like pitrex_launch.sh) and wait until Main reports it in CORENAME.
 # Returns 1 when there is no core to load; waits at most 30 s (um2run waits for the core by itself too).
+#   reload_core [art]: with the path of an .art file, the MGL loads it as the overlay (index 2, as the menu MGLs do), because the reload wipes
+#   the art Main loaded after the pick. A path under games/Vectrex-PiTrex is written relative to it, as in the menu MGLs; any other as it is.
 reload_core() {
-	local core rbf before i
+	local core rbf before i art=$1
 	core=$(newest_core) || return 1
 	rbf=${core#$FAT/}; rbf=${rbf%.rbf}
-	printf '<mistergamedescription>\n  <rbf>%s</rbf>\n  <setname>Vectrex-PiTrex</setname>\n</mistergamedescription>\n' "$rbf" > $T/pitrex_core.mgl
+	[ -n "$art" ] && [ -f "$art" ] || art=""
+	case "$art" in "$FAT/games/Vectrex-PiTrex/"*) art=${art#$FAT/games/Vectrex-PiTrex/} ;; esac
+	art=${art//"&"/"&amp;"}; art=${art//"<"/"&lt;"}; art=${art//'"'/"&quot;"}
+	{
+		printf '<mistergamedescription>\n  <rbf>%s</rbf>\n  <setname>Vectrex-PiTrex</setname>\n' "$rbf"
+		[ -z "$art" ] || printf '  <file delay="1" type="f" index="2" path="%s"/>\n' "$art"
+		printf '</mistergamedescription>\n'
+	} > $T/pitrex_core.mgl
 	before=$(stat -c %y $T/CORENAME 2>/dev/null)
 	echo "load_core $T/pitrex_core.mgl" > $CMD
 	i=0
@@ -147,10 +207,11 @@ reload_core() {
 # Sidecar keys orient= and view= (EXPERIMENTAL): set the core's Orientation / View Area for a game (landscape games such as Star Wars
 # and BattleZone are drawn sideways on the portrait Vectrex screen) and reload the core when the saved setting differs.
 # Only the core's own settings file Vectrex-PiTrex_v2.CFG is touched, never VECTREX_v1.CFG: a core that runs as VECTREX is left alone.
-# An unset key leaves that setting as it is. Sets reloaded=1 when the core was reloaded.
+# An unset key leaves that setting as it is. Sets reloaded=1 when the core was reloaded; the reload loads the game's overlay art again (find_art).
+# set_display <sidecar> <game file>
 reloaded=0
 set_display() {
-	local cfg=$1 o v ob vb c
+	local cfg=$1 o v ob vb c art
 	o=$(cfg_get "$cfg" orient); v=$(cfg_get "$cfg" view)
 	[ -n "$o$v" ] || return 0
 	case "${o,,}" in "") ob=- ;; 0) ob=0 ;; ccw) ob=1 ;; cw) ob=2 ;; *) echo "$(date +%T) $cfg: bad orient '$o' ignored (0, ccw or cw)" >> $LOG; ob=- ;; esac
@@ -163,8 +224,9 @@ set_display() {
 	fi
 	display_apply "$ob" "$vb"
 	case $? in
-		0) echo "$(date +%T) orient=${o:--} view=${v:--}: Vectrex-PiTrex_v2.CFG updated, reloading the core" >> $LOG
-		   if reload_core; then reloaded=1; else echo "$(date +%T) orient/view: no Vectrex-PiTrex core in $FAT/_Console or _Unstable to reload" >> $LOG; fi ;;
+		0) art=$(find_art "$2" "$cfg")
+		   echo "$(date +%T) orient=${o:--} view=${v:--}: Vectrex-PiTrex_v2.CFG updated, reloading the core${art:+ with overlay ${art##*/}}" >> $LOG
+		   if reload_core "$art"; then reloaded=1; else echo "$(date +%T) orient/view: no Vectrex-PiTrex core in $FAT/_Console or _Unstable to reload" >> $LOG; fi ;;
 		2) echo "$(date +%T) orient/view: cannot write $FAT/config/Vectrex-PiTrex_v2.CFG" >> $LOG ;;
 	esac
 	return 0
@@ -179,6 +241,10 @@ set_display() {
 #   settle=8 cpu1_after=10  override the black-screen guard timings (mister_run.sh env SETTLE / CPU1_AFTER)
 #   orient=0|ccw|cw         EXPERIMENTAL: the core's Orientation (normal / 90 degrees counter-clockwise / clockwise); see set_display above
 #   view=standard|open      EXPERIMENTAL: the core's View Area (standard / open matte)
+#   overlay=Star_Castle.art overlay art for a game whose art is not named like it: a path relative to the game's folder, or a bare name looked up
+#                           there, then in games/Vectrex-PiTrex/Overlays and games/Vectrex/Overlays. Without it the art is <game>.art beside the game
+#                           (then in games/Vectrex-PiTrex/Overlays). The core loads it after a pick; a reload for orient/view loads it again.
+#                           make_card.sh copies the art next to the game for that (never over a .art of yours); orient=cw/ccw take the Tate version only.
 # Returns 1 without touching a running program when it refuses (one core, missing files).
 start_um2() {
 	local img=$1 cfg=$1.cfg online fc sd args st c1 n opt=""
@@ -224,7 +290,7 @@ start_um2() {
 		fi
 	fi
 	reloaded=0
-	set_display "$cfg"
+	set_display "$cfg" "$img"
 	cd "$UM2" || return 1
 	# mister_run.sh: cd to its own directory, nohup chrt -r 50 ./um2run --bus --hold ... > /tmp/um2.log &
 	# --secs: um2run --bus stops after 300 s by default (a test bound); a game picked from the OSD runs until stopped.
@@ -275,11 +341,14 @@ core_arrived() {
 # triggers it, so a launcher that starts a program before it loads the core is left alone.
 was_ours=0; core_is_ours && { was_ours=1; set_prio fast; core_arrived; }
 core_is_ours || set_prio idle
+# a stopped daemon (Uninstall, Update) must not leave the Bluetooth tuning behind
+trap 'bt_tune off; exit 0' TERM INT HUP
 
 while :; do
 	if core_is_ours; then
 		nap 0.2
 		if [ "$was_ours" != 1 ]; then was_ours=1; set_prio fast; core_arrived; fi
+		bt_tune on
 	else
 		if [ "$was_ours" = 1 ]; then
 			was_ours=0
@@ -288,6 +357,7 @@ while :; do
 				echo "$(date +%T) core changed away from Vectrex-PiTrex: stopped PiTrex program(s)" >> $LOG
 			fi
 			set_prio idle
+			bt_tune off
 		fi
 		# Nothing to do here but wait. A report written meanwhile (a menu entry loads the core and its file together) is handled once the core is seen.
 		nap 1

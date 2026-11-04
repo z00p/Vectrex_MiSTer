@@ -3,7 +3,10 @@
 # Mock test for scripts/pitrexd.sh on a PC (bash, python3 and GNU coreutils; WSL is fine). Nothing touches a MiSTer:
 # pitrexd runs against a scratch directory (the PITREXD_* test hooks), with a fake Main that writes /tmp/FILESELECT & co,
 # a fake core loader and a fake mister_run.sh that only records how it was called.
-#   tests/pitrexd_mock.sh        expected: every line PASS, exit status 0 (takes about 90 s)
+#   tests/pitrexd_mock.sh        expected: every line PASS, exit status 0 (takes about 2.5 minutes)
+# Overlay art (scripts/art_lib.sh): a reload for orient/view loads the game's art again (an index 2 file line in the MGL, none without art);
+# art lookup order (sidecar overlay=, beside the game, Overlays folder); the copy step that puts the art next to a game (nothing for a game
+# without art, a .art of yours is kept, a rotated game gets the Tate version or none); make_card.sh leaves .art files off the card.
 # Also: a pick that cannot start says so on the Vectrex; our core started without the menu entry is loaded again as Vectrex-PiTrex (the official core is not); Punch-Out needs no sidecar;
 # no forks from one poll to the next.
 # Covers: a fresh .um2 pick starts; a stale "selected" report (Main restart / core load) is ignored; orient= / view= in the
@@ -13,6 +16,8 @@
 D=$(cd "$(dirname "$0")" && pwd)
 PD=$D/../scripts/pitrexd.sh
 [ -f "$PD" ] || PD=$D/../pitrex/scripts/pitrexd.sh
+LIB=${PD%/*}/art_lib.sh
+MC=${PD%/*}/make_card.sh
 W=$(mktemp -d /tmp/pitrexd_mock.XXXXXX)
 fails=0
 pass() { echo "PASS $*"; }
@@ -20,6 +25,9 @@ fail() { echo "FAIL $*"; fails=$((fails+1)); }
 check() { if eval "$2"; then pass "$1"; else fail "$1   [$2]"; fi; }
 
 export PITREXD_RT=1 PITREXD_FAT=$W/fat PITREXD_TMP=$W/tmp PITREXD_CMD=$W/cmd PITREXD_CPUS=$W/cpus PITREXD_MAINCMD=$W/maincmd
+# Bluetooth: a fake sysfs (the adapter, no connection), workqueue cpumask and /proc with bluetoothd; never the PC's own
+export PITREXD_BTSYS=$W/bt PITREXD_WQMASK=$W/wqmask PITREXD_PROC=$W/proc
+mkdir -p "$W/bt/hci0" "$W/proc/1081"; echo 3 > "$W/wqmask"; echo bluetoothd > "$W/proc/1081/comm"
 FAT=$PITREXD_FAT; T=$PITREXD_TMP
 mkdir -p "$FAT/pitrex/um2run" "$FAT/pitrex/uvmc2" "$FAT/config" "$FAT/_Console" "$FAT/_Unstable" "$FAT/games/Vectrex-PiTrex/UVMC2" "$T" "$W/bin"
 echo 0-1 > "$W/cpus"; : > "$W/cmd"
@@ -168,6 +176,21 @@ echo -n MENU > "$T/CORENAME"; sleep 2
 check "another core: same" 'quiet_forks'
 echo -n Vectrex-PiTrex > "$T/CORENAME"; sleep 2
 
+echo "== 7f. Bluetooth: tuned only while a connection exists and our core is loaded (wired: nothing changes)"
+check "no connection: workqueue mask untouched, no priority changed" '[ "$(cat "$W/wqmask")" = 3 ] && ! grep -q bluetooth "$T/pitrexd.log"'
+mkdir -p "$W/bt/hci0:12" "$W/proc/2222"; echo khidpd_2dc80651 > "$W/proc/2222/comm"
+check "a pad connects: unbound work to CPU1" 'waitfor "[ \"\$(cat $W/wqmask)\" = 2 ]" 3'
+check "and the hidp thread and bluetoothd get FIFO 51" 'waitfor "grep -q \"pid 2222 on\" $T/pitrexd.log && grep -q \"pid 1081 on\" $T/pitrexd.log" 3'
+mkdir -p "$W/proc/2223"; echo khidpd_045e02e0 > "$W/proc/2223/comm"
+check "a second pad's hidp thread is found within a few seconds, the first is not boosted twice" 'waitfor "grep -q \"pid 2223 on\" $T/pitrexd.log" 4 && [ $(grep -c "pid 2222 on" "$T/pitrexd.log") = 1 ]'
+check "connected and idle: still no forks between polls (after the scan)" 'sleep 2; quiet_forks'
+echo -n MENU > "$T/CORENAME"
+check "core changes away: mask restored, priorities back" 'waitfor "[ \"\$(cat $W/wqmask)\" = 3 ] && grep -q \"pid 2222 off\" $T/pitrexd.log && grep -q \"pid 1081 off\" $T/pitrexd.log" 4'
+echo -n Vectrex-PiTrex > "$T/CORENAME"
+check "our core again with the pad still connected: tuned again" 'waitfor "[ \"\$(cat $W/wqmask)\" = 2 ]" 3'
+rm -rf "$W/bt/hci0:12" "$W/proc/2222" "$W/proc/2223"
+check "pad disconnects: mask restored" 'waitfor "[ \"\$(cat $W/wqmask)\" = 3 ]" 3 && waitfor "grep -q \"tuning undone\" $T/pitrexd.log" 1'
+
 echo "== 7e. our core started from the cores list runs as VECTREX: loaded again once, the official core is left alone"
 kill "$(cat "$W/game.pid")" 2>/dev/null; sleep 1
 : > "$W/cmds.log"
@@ -227,6 +250,87 @@ sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain
 check "Plain (no .um2) starts Plain.um2" 'waitfor "[ \$(runs) -gt $n ]" 6 && tail -1 "$W/runs.log" | grep -q "Plain.um2"'
 sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Nothing; sleep 2
 check "a name with no matching file is logged, nothing starts" '[ $(runs) -eq $n ] && grep -q "ignored $UD/Nothing: not a .um2 or .ptx file" "$T/pitrexd.log"'
+
+echo "== 14. a reload for orient/view loads the game's art again (MGL file line, index 2)"
+mkdir -p "$FAT/games/Vectrex-PiTrex/Overlays" "$W/elsewhere"
+touch "$UD/Art&A.um2" "$UD/NoArt.um2" "$UD/Ord.um2" "$UD/Abs.um2"
+echo art > "$UD/Art&A.art"; echo art > "$UD/Ord.art"; echo art > "$FAT/games/Vectrex-PiTrex/Overlays/Special.art"; echo art > "$W/elsewhere/Out.art"
+echo "orient=cw" > "$UD/Art&A.um2.cfg"
+echo "orient=ccw" > "$UD/NoArt.um2.cfg"
+printf 'orient=cw\noverlay=Special.art\n' > "$UD/Ord.um2.cfg"
+printf 'orient=ccw\noverlay=%s\n' "$W/elsewhere/Out.art" > "$UD/Abs.um2.cfg"
+sleep 11; n=$(runs); : > "$W/cmds.log"
+pick games/Vectrex-PiTrex/UVMC2 'Art&A.um2'
+check "art beside the game: the MGL loads it, path relative to games/Vectrex-PiTrex, & escaped" 'waitfor "[ \$(runs) -gt $n ]" 12 && grep -qF "<file delay=\"1\" type=\"f\" index=\"2\" path=\"UVMC2/Art&amp;A.art\"/>" "$T/pitrex_core.mgl" && grep -q "<rbf>_Console/Vectrex-PiTrex_20261029</rbf>" "$T/pitrex_core.mgl" && [ "$(tail -1 "$T/pitrex_core.mgl")" = "</mistergamedescription>" ]'
+check "the log says which art" 'grep -q "reloading the core with overlay Art&A.art" "$T/pitrexd.log"'
+sleep 11; n=$(runs); : > "$W/cmds.log"
+pick games/Vectrex-PiTrex/UVMC2 NoArt.um2
+check "no art: the MGL is as before (no file line), the core is still reloaded" 'waitfor "[ \$(runs) -gt $n ]" 12 && grep -q load_core "$W/cmds.log" && ! grep -q "<file" "$T/pitrex_core.mgl" && grep -q "<setname>Vectrex-PiTrex</setname>" "$T/pitrex_core.mgl"'
+sleep 11; n=$(runs); : > "$W/cmds.log"
+pick games/Vectrex-PiTrex/UVMC2 Ord.um2
+check "overlay= in the sidecar beats the art beside the game (bare name: the Overlays folder)" 'waitfor "[ \$(runs) -gt $n ]" 12 && grep -qF "path=\"Overlays/Special.art\"" "$T/pitrex_core.mgl" && ! grep -q "Ord.art" "$T/pitrex_core.mgl"'
+sleep 11; n=$(runs); : > "$W/cmds.log"
+pick games/Vectrex-PiTrex/UVMC2 Abs.um2
+check "art outside games/Vectrex-PiTrex: absolute path" 'waitfor "[ \$(runs) -gt $n ]" 12 && grep -qF "path=\"$W/elsewhere/Out.art\"" "$T/pitrex_core.mgl"'
+
+echo "== 15. art_lib.sh: lookup order and the copy step"
+LF=$W/lib; LG=$LF/games/Vectrex-PiTrex/UVMC2; LO=$LF/games/Vectrex/Overlays; LN=$LF/games/Vectrex-PiTrex/Overlays
+mkdir -p "$LG/art" "$LO/Tate" "$LN/Tate"
+libt() { ( FAT=$LF; . "$LIB"; "$@" ); }
+fa() { libt find_art "$LG/$1.um2" "$LG/$1.um2.cfg"; }
+pl() { libt art_place "$LG/$1.um2"; }
+touch "$LG/Ord.um2"
+check "find_art: no art anywhere finds nothing" '[ -z "$(fa Ord)" ]'
+echo c > "$LN/Ord.art"
+check "find_art: the Overlays folder, last" '[ "$(fa Ord)" = "$LN/Ord.art" ]'
+echo b > "$LG/ORD.ART"
+check "find_art: beside the game beats the Overlays folder (extension in any case)" '[ "$(fa Ord)" = "$LG/ORD.ART" ]'
+echo a > "$LN/Named.art"; echo "overlay=Named.art" > "$LG/Ord.um2.cfg"
+check "find_art: overlay= beats both (bare name: Overlays folder)" '[ "$(fa Ord)" = "$LN/Named.art" ]'
+echo a > "$LG/art/Mine.art"; printf 'overlay=art/Mine.art\r\n' > "$LG/Ord.um2.cfg"
+check "find_art: overlay= with a path is relative to the game's folder (CRLF sidecar)" '[ "$(fa Ord)" = "$LG/art/Mine.art" ]'
+echo "overlay=Gone.art" > "$LG/Ord.um2.cfg"
+check "find_art: overlay= naming a missing file falls back to the art beside the game" '[ "$(fa Ord)" = "$LG/ORD.ART" ]'
+echo a > "$LO/Old.art"; touch "$LG/Old.um2"; echo "overlay=OLD.ART" > "$LG/Old.um2.cfg"
+check "find_art: a bare overlay= name is also found in games/Vectrex/Overlays, in any case" '[ "$(fa Old)" = "$LO/Old.art" ]'
+touch "$LG/Tt.um2"; echo p > "$LN/Tt.art"; echo cw > "$LN/Tate/Tt_90CW.art"; echo ccw > "$LN/Tate/Tt_90CCW.art"
+check "find_art: no orient: the upright art" '[ "$(fa Tt)" = "$LN/Tt.art" ]'
+echo "orient=cw" > "$LG/Tt.um2.cfg"
+check "find_art: orient=cw takes the Tate version from the Overlays folder" '[ "$(fa Tt)" = "$LN/Tate/Tt_90CW.art" ]'
+echo "orient=ccw" > "$LG/Tt.um2.cfg"
+check "find_art: orient=ccw the other one" '[ "$(fa Tt)" = "$LN/Tate/Tt_90CCW.art" ]'
+
+touch "$LG/NoArt.um2"
+check "art_place: a game with no art: nothing printed, nothing copied, no error" 'r=$(pl NoArt); [ -z "$r" ] && [ ! -e "$LG/NoArt.art" ]'
+touch "$LG/Copy.um2"; echo copyme > "$LO/Copy.art"
+check "art_place: copies a same-name file next to the game" 'r=$(pl Copy); [ "$r" = "copied Copy.art" ] && [ "$(cat "$LG/Copy.art")" = copyme ]'
+check "art_place: again: our own copy is there, nothing printed" 'r=$(pl Copy); [ -z "$r" ]'
+touch "$LG/Ci.um2"; echo ci > "$LN/CI.ART"
+check "art_place: the source name matches in any case" 'r=$(pl Ci); [ "$r" = "copied CI.ART" ] && [ "$(cat "$LG/Ci.art")" = ci ]'
+touch "$LG/Kept.um2"; echo ours > "$LO/Kept.art"; echo mine > "$LG/Kept.art"
+check "art_place: a .art of yours is kept, as it is" 'r=$(pl Kept); [ "$r" = "kept yours" ] && [ "$(cat "$LG/Kept.art")" = mine ]'
+touch "$LG/Ov.um2"; echo "overlay=Special.art" > "$LG/Ov.um2.cfg"; echo special > "$LN/Special.art"
+check "art_place: overlay= names the source, the copy is named like the game" 'r=$(pl Ov); [ "$r" = "copied Special.art" ] && [ "$(cat "$LG/Ov.art")" = special ]'
+touch "$LG/Opn.um2"; echo opn > "$LO/Opn.art"; echo opn > "$LN/Opn.art"; printf 'view=Open\noverlay=Special.art\n' > "$LG/Opn.um2.cfg"
+check "view=open: no art (loaded art would select View Area Standard)" 'r=$(pl Opn); [ -z "$r" ] && [ ! -e "$LG/Opn.art" ] && [ -z "$(fa Opn)" ]'
+touch "$LG/Ov2.um2"; echo "overlay=Gone.art" > "$LG/Ov2.um2.cfg"; echo ours > "$LO/Ov2.art"
+check "art_place: overlay= naming a missing file is said, nothing copied" 'r=$(pl Ov2); [ "$r" = "overlay=Gone.art not found" ] && [ ! -e "$LG/Ov2.art" ]'
+touch "$LG/Rot.um2" "$LG/Rot2.um2" "$LG/Rot3.um2" "$LG/Rot4.um2"
+for g in Rot Rot3 Rot4; do echo plain > "$LO/$g.art"; done
+echo cw > "$LO/Tate/Rot_90CW.art"; echo ccw > "$LO/Tate/Rot_90CCW.art"; echo ccw2 > "$LO/Tate/Rot2_90CCW.art"
+echo "orient=cw" > "$LG/Rot.um2.cfg"; echo "orient=ccw" > "$LG/Rot2.um2.cfg"; echo "orient=CW" > "$LG/Rot3.um2.cfg"; echo "orient=0" > "$LG/Rot4.um2.cfg"
+check "art_place: orient=cw copies the 90CW version" 'r=$(pl Rot); [ "$r" = "copied Rot_90CW.art" ] && [ "$(cat "$LG/Rot.art")" = cw ]'
+check "art_place: orient=ccw copies the 90CCW version (a game with only that one)" 'r=$(pl Rot2); [ "$r" = "copied Rot2_90CCW.art" ] && [ "$(cat "$LG/Rot2.art")" = ccw2 ]'
+check "art_place: rotated, upright art only: nothing is copied" 'r=$(pl Rot3); [ -z "$r" ] && [ ! -e "$LG/Rot3.art" ]'
+check "art_place: orient=0 is not rotated: the upright art" 'r=$(pl Rot4); [ "$r" = "copied Rot4.art" ] && [ "$(cat "$LG/Rot4.art")" = plain ]'
+check "art_place: no half-copied files left behind" '[ -z "$(ls -A "$LG" | grep "\.part$")" ]'
+
+echo "== 16. make_card.sh does not put .art files on the card, nor count them as a change"
+CK=$W/ck; mkdir -p "$CK/games/Vectrex-PiTrex/UVMC2" "$CK/pitrex/uvmc2"
+touch "$CK/games/Vectrex-PiTrex/UVMC2/G.um2" "$CK/games/Vectrex-PiTrex/UVMC2/G.art"
+check "only a game and its art: nothing to build a card from" 'PITREX_FAT=$CK bash "$MC" --check; [ $? = 0 ]'
+touch "$CK/games/Vectrex-PiTrex/UVMC2/ROMS.zip"
+check "with a card file: a build would be needed" 'PITREX_FAT=$CK bash "$MC" --check; [ $? = 1 ]'
 
 echo
 if [ $fails -eq 0 ]; then echo "all passed"; else echo "$fails FAILED"; echo "--- pitrexd.log"; cat "$T/pitrexd.log"; echo "--- pitrexd.out"; cat "$W/pitrexd.out"; fi
