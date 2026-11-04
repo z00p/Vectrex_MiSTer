@@ -498,6 +498,7 @@ static double sysclk_hz(void) {
  * cart-audio code then derives the I2S clock divider from the result.  Host time between the reads is meaningless there (a trap costs microseconds on
  * the A9, nanoseconds on a PC), so while the thread polls E edges the counter advances by sysclk/1.5 MHz cycles per polled period instead; without edges it
  * follows host time at sysclk.  UM2_NODWTFIX=1 (or UM2_NOAUDIO=1): the old 150 MHz host-time counter. */
+static int g_spifast;          /* set at start unless UM2_NOSPIFAST=1 or UM2_ISRSTAT is on: the stubs take SPI0 DR / SR straight to um2bus_spi_load / um2bus_spi_dr_store (4 Nov 2026) */
 static int g_dwtfast = 1;        /* UM2_NODWTFAST=1: DWT_CYCCNT reads from the stubs take the generic MMIO path again (shadow lookups, census, loop breaker) and recompute the clock rate each time */
 static __thread uint32_t tl_dwt, tl_dwt_us; static __thread uint64_t tl_dwt_e; static __thread int tl_dwt_init;
 static uint32_t dwt_now(void) {
@@ -1038,6 +1039,7 @@ static void stub_setup(void) {
     g_nospi = getenv("UM2_NOSPIPATCH") != NULL;
     g_nonewblk = getenv("UM2_NONEWBLK") != NULL;
     g_dwtfast = getenv("UM2_NODWTFAST") == NULL;
+    g_spifast = opt.bus && !g_isrstat && getenv("UM2_NOSPIFAST") == NULL;
     g_noreach = getenv("UM2_NOREACH") != NULL;
     g_novrint = getenv("UM2_NOVRINT") != NULL;
     g_noite = getenv("UM2_NOITE") != NULL;
@@ -1224,6 +1226,7 @@ uint32_t um2_mload(uint32_t addr, uint32_t site) {
     VT_PROBE(); if (__builtin_expect(g_hs_on > 0, 0)) sc_note(site, addr, 1);
     if (addr < 0x40000000u) return *(volatile uint32_t *)(uintptr_t)addr;
     if (addr == 0xE0001004u && g_dwtfast && !opt.no_canned) return mmio_dwt_read();
+    if ((addr & 0xFFFFCFFBu) == 0x40080008u && g_spifast) { tl_n_ml++; tl_act++; return um2bus_spi_load(addr); }      /* SPI0 DR / SR: what mmio_load does for them, without the walk */
     return mmio_load(addr, 4, site);
 }
 /* Review finding 2: every direct branch target in the image (B/Bcc/CBZ/CBNZ, B.W/Bcc.W/BL), from one linear sweep at load.  The sweep follows instruction lengths and
@@ -1280,7 +1283,12 @@ static int safe32(uint16_t a, uint16_t b) {
     return 0;
 }
 static int slot_of(int r) { return r <= 3 ? 4 + 4 * r : r == 12 ? 20 : r == 14 ? 24 : -1; }
-void um2_mstore(uint32_t addr, uint32_t val, uint32_t site) { VT_PROBE(); if (__builtin_expect(g_hs_on > 0, 0)) sc_note(site, addr, 0); if (addr < 0x40000000u) *(volatile uint32_t *)(uintptr_t)addr = val; else mmio_store(addr, 4, val); (void)site; }
+void um2_mstore(uint32_t addr, uint32_t val, uint32_t site) {
+    VT_PROBE(); if (__builtin_expect(g_hs_on > 0, 0)) sc_note(site, addr, 0);
+    if (addr < 0x40000000u) *(volatile uint32_t *)(uintptr_t)addr = val;
+    else if (addr == 0x40080008u && g_spifast) { tl_act++; tl_n_ms++; um2bus_spi_dr_store(val); }    /* SPI0 DR: as um2_mload */
+    else mmio_store(addr, 4, val);
+}
 /* Generalised: 32-bit loads/stores of SIO and DMA registers too.  A site is `ldr/str rt,[rn,#imm]` in the 16-bit imm5 form or the 32-bit
  * imm12 form; a 16-bit site takes the following halfword with it, which is relocated into the stub if it is a plain PC-independent ALU
  * instruction, or emulated through the helper as well if it is another 16-bit imm5 ldr/str (the helpers pass non-MMIO addresses straight

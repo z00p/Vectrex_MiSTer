@@ -46,6 +46,9 @@ void um2bus_init(const um2bus_cfg_t *cfg);
 /* return 1 if the model owns the address (the access was performed), else 0 */
 int  um2bus_store(uint32_t addr, int size, uint32_t val, int core);
 int  um2bus_load(uint32_t addr, int size, uint32_t *val, int core);
+/* SPI0 DR / SR words (any alias for loads, alias 0 for the DR store): the same as um2bus_load / um2bus_store, for the stubs' card byte loop */
+uint32_t um2bus_spi_load(uint32_t addr);
+void     um2bus_spi_dr_store(uint32_t val);
 /* level of the interrupt lines the model owns (bit n = NVIC IRQ n): DMA_IRQ_0..3 = IRQ 10..13 */
 uint64_t um2bus_irq_lines(void);
 void um2bus_stats(FILE *f);

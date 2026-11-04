@@ -1141,12 +1141,20 @@ static int spi_store(uint32_t addr, uint32_t val) {
 	if (off == 0x04) { uint32_t c = g_spi0.cr1; g_spi0.cr1 = alias == 0 ? val : alias == 1 ? c ^ val : alias == 2 ? c | val : c & ~val; return 0; }
 	return 0;
 }
+static uint32_t spi_sr(void) { int n = __atomic_load_n(&g_spi0.rxn, __ATOMIC_RELAXED); g_spi_sr++; return 0x03u | (n ? 4u : 0u) | (n >= 8 ? 8u : 0u); }   /* TFE|TNF, RNE, RFF; never BSY */
 static int spi_load(uint32_t addr, uint32_t *v) {
 	uint32_t off = addr & 0xFFF;
-	if (off == 0x08) { uint32_t r = 0; if (g_spi0.rxn) { r = g_spi0.rx[0]; memmove(g_spi0.rx, g_spi0.rx + 1, (size_t)--g_spi0.rxn); } *v = r; g_spi_drr++; g_spi_h = (g_spi_h ^ r) * 0x100000001b3ull; return 1; }
-	if (off == 0x0C) { g_spi_sr++; *v = 0x03u | (g_spi0.rxn ? 4u : 0u) | (g_spi0.rxn >= 8 ? 8u : 0u); return 1; }   /* TFE|TNF, RNE, RFF; never BSY */
+	if (off == 0x08) { uint32_t r = 0; if (g_spi0.rxn) { r = g_spi0.rx[0]; for (int i = 1; i < g_spi0.rxn; i++) g_spi0.rx[i - 1] = g_spi0.rx[i]; g_spi0.rxn--; } *v = r; g_spi_drr++; g_spi_h = (g_spi_h ^ r) * 0x100000001b3ull; return 1; }
+	if (off == 0x0C) { *v = spi_sr(); return 1; }
 	return 0;
 }
+/* The stubs' short cut for the card byte loop (SR poll, DR write, SR poll, DR read for every byte; um2run.c um2_mload / um2_mstore, 4 Nov 2026):
+ * no walk through the generic MMIO path, and SR without the bus lock (it only reads the FIFO level). */
+uint32_t um2bus_spi_load(uint32_t addr) {
+	if (addr & 4) return spi_sr();
+	uint32_t v; BUS_LOCK_T(4); spi_load(addr, &v); BUS_UNLOCK_T(4); return v;
+}
+void um2bus_spi_dr_store(uint32_t val) { BUS_LOCK_T(4); spi_store(0x40080008u, val); BUS_UNLOCK_T(4); }
 
 /* ------------------------------------------------------------------ QMI direct mode with an APS6404L-style PSRAM on CS1
  * The Star Wars image (like other UVMC2 images that stage a romset in PSRAM) resets the PSRAM through QMI direct mode (0x66, 0x99), reads

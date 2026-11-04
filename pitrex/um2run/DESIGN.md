@@ -71,7 +71,11 @@ commands, so the cartridge and the core never need to know about each other.
 
 - **SD card.** SPI0 is a PL022 model; the card is `um2sd.c` over an image file given with
   `--sd`. The image's own FatFs mounts it, so the file must be a FAT image the cartridge
-  understands (see `../UVMC2_GAMES.md`, "Card images").
+  understands (see `../UVMC2_GAMES.md`, "Card images"). Every card byte is four accesses
+  (status poll, data write, status poll, data read), so the stubs take SPI0's data and status
+  words straight to the model (`um2bus_spi_load` / `um2bus_spi_dr_store`), and the status read
+  skips the bus lock. VecDoom, which streams its WAD in play, went from about 47 to 50 fps in
+  attract (its ceiling). `UM2_NOSPIFAST=1` puts them back on the generic path.
 - **PSRAM.** Images that stage a ROM set in PSRAM get 8 MB of RAM at 0x11000000 (and the
   uncached alias at 0x15000000, the same memory). The QMI direct-mode ID handshake that
   proves the PSRAM is present is modelled.
