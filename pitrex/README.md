@@ -7,7 +7,7 @@ ARM processor, and the Vectrex core takes the place of the console. You don't ne
 cartridge.
 
 The same route also runs games written for the **UVMC2** multicart, rebuilt for the ARM: see
-[UVMC2.md](UVMC2.md). And, as an unofficial **beta**, the UVMC2 cartridge images themselves
+[UVMC2.md](UVMC2.md). And, unofficially, the UVMC2 cartridge images themselves
 (`.um2` files, unmodified): start with [ADDING_GAMES.md](ADDING_GAMES.md)
 (where your images and the files from your UVMC2 SD card go), and see [UVMC2_GAMES.md](UVMC2_GAMES.md)
 for the details.
@@ -28,7 +28,7 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
    |---|---|
    | `_Unstable/Vectrex-PiTrex_<YYYYMMDD>.rbf` | the Vectrex core with PiTrex mode; it is called "Vectrex-PiTrex", so its settings live in their own `config/Vectrex-PiTrex_v2.CFG` |
    | `pitrex/` | the programs, the launcher and the UVMC2 card builder |
-   | `pitrex/um2run/` | `um2run`, which runs UVMC2 cartridge images (beta, see [UVMC2_GAMES.md](UVMC2_GAMES.md)) |
+   | `pitrex/um2run/` | `um2run`, which runs UVMC2 cartridge images (see [UVMC2_GAMES.md](UVMC2_GAMES.md)) |
    | `games/Vectrex-PiTrex/UVMC2/` | where the contents of your UVMC2 SD card go (no images are included) |
    | `Scripts/PiTrex_*.sh` | Setup, Update, Stop and Uninstall. PiTrex_Setup adds PiTrex_Make_UVMC2_Card, which builds the UVMC2 card image |
    | `games/Vectrex/Overlays/` | overlays for VecBreak, VecDrive, Tac/Scan and Gong Rider |
@@ -56,7 +56,7 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
   core, the overlay and the program load in one go. Games aren't in the Scripts menu; it
   only holds Setup, Update, Stop, Uninstall and Make_UVMC2_Card (which builds the UVMC2 card image,
   see [ADDING_GAMES.md](ADDING_GAMES.md)).
-- **UVMC2 cartridge images (`.um2`, beta):** load the core from `_Unstable`, then OSD >
+- **UVMC2 cartridge images (`.um2`):** load the core from `_Unstable`, then OSD >
   **Load UVMC2**, or main menu > **PiTrex & UVMC2** > **UVMC2 Games**, which loads the core.
   A standard MGL file can start one game directly. How to add your games and the files from your
   UVMC2 SD card: [ADDING_GAMES.md](ADDING_GAMES.md). Per-game settings and the tested games are in
@@ -172,7 +172,7 @@ seed 5 (set in `Vectrex.qsf`) meets timing at all four corners. After a change, 
 | `games/doom/`, `games/gongrider/` | DOOM (MiSTer entry point and platform layer; see its README) and Roger Boesch's Gong Rider, each with its build line |
 | `games/uvmc2_tacscan/z80shim/`, `third_party/aae_z80/` | the Z80 core (Tim Cottrill's AAE core) and the adapter Tac/Scan is built with |
 | `scripts/` | the launcher, the menu builder, pitrexd and the Scripts-menu tools |
-| `um2run/` | runs UVMC2 cartridge images on the ARM (beta): loader, RP2350 device model, SD card, cart audio, self test; see its README |
+| `um2run/` | runs UVMC2 cartridge images on the ARM: loader, RP2350 device model, SD card, cart audio, self test; see its README |
 | `tools/` | library patcher, build and run scripts, `ptxplay`, seed sweep and timing reports |
 | `../rtl/pitrex/` | the core side: `pitrex_ddr.sv` (ring reader) and `pitrex_player.sv` (bus player) |
 

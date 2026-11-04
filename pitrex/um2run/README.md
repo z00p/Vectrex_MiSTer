@@ -1,4 +1,4 @@
-# um2run (beta)
+# um2run
 
 Runs an unmodified **UVMC2 cartridge image** (`.um2`, an RP2350 firmware image) on the MiSTer's
 ARM processor, with the Vectrex-PiTrex core as the console. It emulates the cartridge's bus

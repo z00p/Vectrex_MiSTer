@@ -1,11 +1,11 @@
-# UVMC2 cartridge images on the MiSTer (beta)
+# UVMC2 cartridge images on the MiSTer
 
 The Vectrex-PiTrex core can run **UVMC2 cartridge images** (`.um2` files, the firmware images of
 the [UVMC2](https://github.com/tullulah/uvmc2-sdk) multicart) unmodified. The MiSTer's ARM processor
 plays the part of the cartridge's RP2350 (the program is called `um2run`, see
 [um2run/README.md](um2run/README.md)) and the core is the console.
 
-This is an **unofficial beta**. It is not made by, or supported by, the UVMC2 team: please do not
+This is **unofficial**. It is not made by, or supported by, the UVMC2 team: please do not
 report MiSTer problems to them, use this fork's
 [Issues](https://github.com/z00p/Vectrex_MiSTer/issues). **No cartridge images, ROM sets or card
 images are included**: bring your own (and your own MAME ROM sets for the games that need them).

@@ -1,4 +1,4 @@
-# Adding UVMC2 games (beta)
+# Adding UVMC2 games
 
 This page is for you if you have a real UVMC2 cartridge and its SD card. It shows where your
 cartridge images (`.um2` files) go, and how to give the games the files they read from the card.
