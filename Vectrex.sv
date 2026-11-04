@@ -75,7 +75,12 @@ localparam CONF_STR = {
 	// B9: UVMC2 first. B11: UVMC2 and PiTrex programs each have an entry, on the same
 	// slot. Index 3 is the launcher index the MGL menu entries already use (pitrex_reset: no reset,
 	// no dropped takeover); the core ignores the file, Main reports the pick and pitrexd runs it.
+	// B14: each pick also loads <name>.art from beside the file, as FS1 does for cartridges. Main sends it on
+	// index 3 as addon 1 (ioctl_index[9:8] = 1), which the art loader already takes from any index; it is not a
+	// rom_download, so it neither resets the machine nor drops a PiTrex takeover.
+	"f1,ART;",
 	"F3,UM2,Load UVMC2;",
+	"f1,ART;",
 	"F3,PTX,Load PiTrex;",
 	"F2,ART,Load Overlay;",
 	"-;",
@@ -199,7 +204,7 @@ localparam CONF_STR = {
 	// takes 117, the spare top bit of Custom 2 (profile_settings_t is 36 of the 38 bits). ST_PTX_MODE below.
 	"P3O[117],PiTrex Mode,Off,On;",
 	// B10: the build line lives here, not in Core Info: Main loops when a page of only non-selectable lines is taller than the OSD
-	"P3-,PiTrex mode: build B13;",
+	"P3-,PiTrex mode: build B14;",
 	"d8P3O[10:9],Speech Level,Normal,Low,High;",
 	"hFP3O[118],Cartridge Autosave,On,Off;",
 	"hFP3R[119],Save Cartridge;",
