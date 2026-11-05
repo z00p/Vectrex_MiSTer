@@ -26,8 +26,9 @@ cartridge images (`.um2` files) go, and how to give the games the files they rea
    folders: `roms`, `PORTDATA`, loose files such as `QBERT2.VSM`, and the `.um2` games.
 3. Build the card: run **Scripts > PiTrex_Setup** again, or **Scripts > PiTrex_Make_UVMC2_Card**.
    It shows how far it has got. The time depends on the card size: about 25 minutes for 3 GiB of
-   files on a DE10-Nano, far less for a card with a few ROM zips. `.uf2` firmware, `ASSETS` folders
-   (menu pictures) and macOS files (`__MACOSX`, `._*`, `.DS_Store`) are left out.
+   files on a DE10-Nano, far less for a card with a few ROM zips. `.uf2` firmware, the menu pictures
+   and videos in `ASSETS` folders (a game's sound kept there does go on the card) and macOS files
+   (`__MACOSX`, `._*`, `.DS_Store`) are left out.
 4. Load the Vectrex-PiTrex core (main menu > Console > Vectrex-PiTrex), then use the OSD: **Load UVMC2** lists your games.
 
 **Or** just put `.um2` files in that folder (subfolders are fine). A game that needs no card

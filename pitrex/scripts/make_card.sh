@@ -55,18 +55,22 @@ esac
 PYHELP=$(cat <<'PYEOF'
 import os, sys, shutil
 
-# Not copied to the card: cart images and firmware, menu previews, macOS and Windows clutter,
+# Not copied to the card: cart images and firmware, menu previews (the pictures and videos in ASSETS folders; other files
+# there, such as a game's sound, do go on the card), macOS and Windows clutter,
 # and the README.txt PiTrex_Setup leaves in the card folder (it carries the marker line below).
 JUNK = {"__macosx", ".ds_store", ".spotlight-v100", ".trashes", ".fseventsd", ".temporaryitems",
         "thumbs.db", "desktop.ini", "system volume information", "$recycle.bin"}
 MARK = "(This file is not copied to the card.)"
+PREVIEW = (".mp4", ".mov", ".avi", ".mkv", ".webm", ".png", ".jpg", ".jpeg", ".gif", ".bmp")
 
 def why_skip(path, name, isdir, top):
     n = name.lower()
     if n in JUNK or n.startswith("._"):
         return "macOS/Windows files"
     if isdir:
-        return "ASSETS folders" if n == "assets" else None
+        return None
+    if n.endswith(PREVIEW) and os.path.basename(os.path.dirname(path)).lower() == "assets":
+        return "menu pictures and videos (ASSETS)"
     if n.endswith((".um2", ".uf2")):
         return ".um2/.uf2 files"
     if n.endswith((".um2.cfg", ".um2.load", ".img", ".img.list", ".img.bak")):

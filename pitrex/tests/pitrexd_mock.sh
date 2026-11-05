@@ -314,6 +314,13 @@ check "only a game and its art: nothing to build a card from" 'PITREX_FAT=$CK ba
 touch "$CK/games/Vectrex-PiTrex/UVMC2/ROMS.zip"
 check "with a card file: a build would be needed" 'PITREX_FAT=$CK bash "$MC" --check; [ $? = 1 ]'
 
+echo "== 17. ASSETS folders: menu pictures and videos stay off the card, a game's sound there goes on it (Vector Tank)"
+CK2=$W/ck2; A=$CK2/games/Vectrex-PiTrex/UVMC2/PORTDATA/vt/ASSETS; mkdir -p "$A" "$CK2/pitrex/uvmc2"
+touch "$A/vt_preview.mp4" "$A/Menu.PNG"
+check "only previews in ASSETS: nothing to build a card from" 'PITREX_FAT=$CK2 bash "$MC" --check; [ $? = 0 ]'
+touch "$A/vt.pcm"
+check "a sound file in ASSETS: a build would be needed" 'PITREX_FAT=$CK2 bash "$MC" --check; [ $? = 1 ]'
+
 echo
 if [ $fails -eq 0 ]; then echo "all passed"; else echo "$fails FAILED"; echo "--- pitrexd.log"; cat "$T/pitrexd.log"; echo "--- pitrexd.out"; cat "$W/pitrexd.out"; fi
 exit $(( fails > 0 ))
