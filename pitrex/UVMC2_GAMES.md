@@ -135,7 +135,7 @@ If a game says it cannot find its ROMs, the usual causes are a wrong folder, a m
 different MAME version (the games check the files' checksums).
 
 ## Tested games
-On a DE10-Nano, 26 October to 2 November 2026 (the B10 core from 29 October), with the images named below. Frame rates are from the attract modes and vary with the scene.
+On a DE10-Nano, 26 October to 2 November 2026 (the B10 core from 29 October; Vector Tank on 5 November with the B14 core), with the images named below. Frame rates are from the attract modes and vary with the scene.
 Other builds of the same games may behave differently. These are the images used for testing. They were shared in UVMC2 community groups; download links will be added once their authors are happy for us to link them.
 
 | Game (image tested) | Card | How it ran |
@@ -145,6 +145,7 @@ Other builds of the same games may behave differently. These are the images used
 | Pac-Man (`pacman-uvmc2-SD-card.um2`) | a card image with the folders, no ROMs | cart audio good; about 32 frames/s, game speed right |
 | Punch-Out (`Punchout.um2`) | your MAME `punchout.zip` | plays well, close to full speed (about 55 of its 60 frames/s); sound comes through the Vectrex PSG; its JACK audio route is untested |
 | Veccy Road 0.10 (`veccy_road_v010.um2`) | none | plays well, with sound, about 50 frames/s |
+| Vector Tank (`vectortank.um2`) | a card image with its `PORTDATA/vectortank` folder | plays, about 50 frames/s; loading takes about 25 s (it reads about 5 MB from the card at start, which um2run does more slowly than the cartridge). Needs um2run from 1.2 |
 
 The sidecar files used for these runs (the card names are up to you):
 ```

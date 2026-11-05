@@ -88,6 +88,7 @@ These are the games tested on the MiSTer (see [UVMC2_GAMES.md](UVMC2_GAMES.md#te
 | Punch-Out | yes | your MAME `punchout.zip` in `PORTDATA/Punchout/BASEROMS/` |
 | Pac-Man | yes, for settings and scores | none: it writes `config/` and `scores/` itself |
 | BattleZone | yes, for settings and scores | none: the game is all in the image |
+| Vector Tank | yes | the game's `PORTDATA/vectortank/` folder from its download, with `ASSETS/` (its music) |
 | Veccy Road, the demos | no | |
 
 - **Star Wars** takes each ROM from whichever zip has it, so the names of the files inside do not

@@ -29,7 +29,7 @@ commands, so the cartridge and the core never need to know about each other.
   `udf` at load (the MiSTer kernel has no seccomp), performs ARMv8-M exception entry (stack frame,
   EXC_RETURN) and runs the image's own SVCall handler; the exception return is caught when the
   handler's return reaches the magic EXC_RETURN address.
-- **M33-only instructions** (SDIV/UDIV, VSEL, LDA/STL/LDAEX/STLEX, `mrs/msr PRIMASK`, TT, ...) fault
+- **M33-only instructions** (SDIV/UDIV, VSEL, VRINT, VMAXNM/VMINNM, LDA/STL/LDAEX/STLEX, `mrs/msr PRIMASK`, TT, ...) fault
   or are UNDEFINED on the A9. The first trap emulates the instruction; the site is then rewritten
   to `b.w stub`, where the stub does the same without a trap (a trap costs about 50 us on the
   A9). A patch is only made with the other core parked, so it can never run half-written.
