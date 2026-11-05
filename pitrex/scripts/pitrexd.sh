@@ -33,52 +33,6 @@ set_prio() {
 	[ -z "$PITREXD_RT" ] || return 0
 	if [ "$1" = fast ]; then chrt -r -p 49 $$ > /dev/null 2>&1; else chrt -o -p 0 $$ > /dev/null 2>&1; fi
 }
-# Bluetooth controllers. A game's guest threads run real-time on both CPUs (um2run, SCHED_RR 50; PiTrex programs 49), and
-# the one on CPU0 never yields it. Bluetooth input passes through normal-priority steps that wired input does not: the hci work
-# queue (an unbound kworker), the kernel's hidp thread for the pad (khidpd_<vid><pid>) and, for LE devices, bluetoothd. One that
-# lands on CPU0 waits up to ~950 ms, the kernel's real-time throttle period (measured 4 Nov 2026 during Punch-Out and Pac-Man).
-# While our core is loaded AND a Bluetooth connection exists, bt_tune moves unbound kernel work to CPU1 and gives the hidp threads
-# and bluetoothd SCHED_FIFO 51 (above the guests, below um2run's helpers at 52); without a connection nothing is touched, so wired
-# controllers see no change. The check is a glob (no fork); the tuning is undone when the last connection goes or the core changes.
-# PITREXD_BTSYS, PITREXD_WQMASK, PITREXD_PROC: test hooks. With PITREXD_RT set (the mock) the priority changes are logged, not made.
-BT_SYS=${PITREXD_BTSYS:-/sys/class/bluetooth}
-WQ_MASK=${PITREXD_WQMASK:-/sys/devices/virtual/workqueue/cpumask}
-PROC=${PITREXD_PROC:-/proc}
-bt_on=0; bt_mask=""; bt_pids=" "; bt_n=0
-bt_chrt() {   # bt_chrt <pid> on|off
-	if [ -n "$PITREXD_RT" ]; then echo "$(date +%T) bluetooth: pid $1 $2" >> $LOG; return 0; fi
-	if [ "$2" = on ]; then chrt -f -p 51 "$1" > /dev/null 2>&1; else chrt -o -p 0 "$1" > /dev/null 2>&1; fi
-}
-bt_scan() {   # boost the hidp threads and bluetoothd not boosted yet
-	local p c
-	for p in "$PROC"/[0-9]*; do
-		read -r c 2>/dev/null < "$p/comm" || continue
-		case "$c" in khidpd_*|bluetoothd) ;; *) continue ;; esac
-		case "$bt_pids" in *" ${p##*/} "*) continue ;; esac
-		bt_chrt "${p##*/}" on && bt_pids="$bt_pids${p##*/} "
-	done
-}
-bt_tune() {   # bt_tune on|off: on = our core is loaded (called every poll then)
-	local c want=0 p
-	if [ "$1" = on ]; then for c in "$BT_SYS"/hci*:*; do [ -e "$c" ] && { want=1; break; }; done; fi
-	if [ "$want" = 1 ]; then
-		if [ "$bt_on" = 0 ]; then
-			bt_on=1; bt_n=0
-			read -r bt_mask 2>/dev/null < "$WQ_MASK" && { echo 2 > "$WQ_MASK"; } 2>/dev/null
-			echo "$(date +%T) bluetooth controller connected: unbound kernel work on CPU1 (was ${bt_mask:-?}), hidp threads and bluetoothd at FIFO 51" >> $LOG
-			bt_scan
-		elif [ $(( ++bt_n % 10 )) = 0 ]; then
-			bt_scan    # every 2 s: a pad connected later has a new hidp thread
-		fi
-	elif [ "$bt_on" = 1 ]; then
-		bt_on=0
-		[ -z "$bt_mask" ] || { echo "$bt_mask" > "$WQ_MASK"; } 2>/dev/null
-		for p in $bt_pids; do [ -e "$PROC/$p" ] && bt_chrt "$p" off; done
-		bt_pids=" "
-		echo "$(date +%T) bluetooth tuning undone (unbound kernel work back to ${bt_mask:-?})" >> $LOG
-	fi
-}
-
 # nap <seconds>: read with a timeout on a pipe nobody writes to is a sleep without a fork
 if mkfifo "$T/pitrexd.pipe.$$" 2>/dev/null && exec 3<> "$T/pitrexd.pipe.$$"; then
 	rm -f "$T/pitrexd.pipe.$$"
@@ -341,14 +295,11 @@ core_arrived() {
 # triggers it, so a launcher that starts a program before it loads the core is left alone.
 was_ours=0; core_is_ours && { was_ours=1; set_prio fast; core_arrived; }
 core_is_ours || set_prio idle
-# a stopped daemon (Uninstall, Update) must not leave the Bluetooth tuning behind
-trap 'bt_tune off; exit 0' TERM INT HUP
 
 while :; do
 	if core_is_ours; then
 		nap 0.2
 		if [ "$was_ours" != 1 ]; then was_ours=1; set_prio fast; core_arrived; fi
-		bt_tune on
 	else
 		if [ "$was_ours" = 1 ]; then
 			was_ours=0
@@ -357,7 +308,6 @@ while :; do
 				echo "$(date +%T) core changed away from Vectrex-PiTrex: stopped PiTrex program(s)" >> $LOG
 			fi
 			set_prio idle
-			bt_tune off
 		fi
 		# Nothing to do here but wait. A report written meanwhile (a menu entry loads the core and its file together) is handled once the core is seen.
 		nap 1

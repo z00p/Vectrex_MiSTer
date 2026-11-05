@@ -25,9 +25,6 @@ fail() { echo "FAIL $*"; fails=$((fails+1)); }
 check() { if eval "$2"; then pass "$1"; else fail "$1   [$2]"; fi; }
 
 export PITREXD_RT=1 PITREXD_FAT=$W/fat PITREXD_TMP=$W/tmp PITREXD_CMD=$W/cmd PITREXD_CPUS=$W/cpus PITREXD_MAINCMD=$W/maincmd
-# Bluetooth: a fake sysfs (the adapter, no connection), workqueue cpumask and /proc with bluetoothd; never the PC's own
-export PITREXD_BTSYS=$W/bt PITREXD_WQMASK=$W/wqmask PITREXD_PROC=$W/proc
-mkdir -p "$W/bt/hci0" "$W/proc/1081"; echo 3 > "$W/wqmask"; echo bluetoothd > "$W/proc/1081/comm"
 FAT=$PITREXD_FAT; T=$PITREXD_TMP
 mkdir -p "$FAT/pitrex/um2run" "$FAT/pitrex/uvmc2" "$FAT/config" "$FAT/_Console" "$FAT/_Unstable" "$FAT/games/Vectrex-PiTrex/UVMC2" "$T" "$W/bin"
 echo 0-1 > "$W/cpus"; : > "$W/cmd"
@@ -175,21 +172,6 @@ check "our core: the daemon itself reaps no children in 3 s of polling" 'quiet_f
 echo -n MENU > "$T/CORENAME"; sleep 2
 check "another core: same" 'quiet_forks'
 echo -n Vectrex-PiTrex > "$T/CORENAME"; sleep 2
-
-echo "== 7f. Bluetooth: tuned only while a connection exists and our core is loaded (wired: nothing changes)"
-check "no connection: workqueue mask untouched, no priority changed" '[ "$(cat "$W/wqmask")" = 3 ] && ! grep -q bluetooth "$T/pitrexd.log"'
-mkdir -p "$W/bt/hci0:12" "$W/proc/2222"; echo khidpd_2dc80651 > "$W/proc/2222/comm"
-check "a pad connects: unbound work to CPU1" 'waitfor "[ \"\$(cat $W/wqmask)\" = 2 ]" 3'
-check "and the hidp thread and bluetoothd get FIFO 51" 'waitfor "grep -q \"pid 2222 on\" $T/pitrexd.log && grep -q \"pid 1081 on\" $T/pitrexd.log" 3'
-mkdir -p "$W/proc/2223"; echo khidpd_045e02e0 > "$W/proc/2223/comm"
-check "a second pad's hidp thread is found within a few seconds, the first is not boosted twice" 'waitfor "grep -q \"pid 2223 on\" $T/pitrexd.log" 4 && [ $(grep -c "pid 2222 on" "$T/pitrexd.log") = 1 ]'
-check "connected and idle: still no forks between polls (after the scan)" 'sleep 2; quiet_forks'
-echo -n MENU > "$T/CORENAME"
-check "core changes away: mask restored, priorities back" 'waitfor "[ \"\$(cat $W/wqmask)\" = 3 ] && grep -q \"pid 2222 off\" $T/pitrexd.log && grep -q \"pid 1081 off\" $T/pitrexd.log" 4'
-echo -n Vectrex-PiTrex > "$T/CORENAME"
-check "our core again with the pad still connected: tuned again" 'waitfor "[ \"\$(cat $W/wqmask)\" = 2 ]" 3'
-rm -rf "$W/bt/hci0:12" "$W/proc/2222" "$W/proc/2223"
-check "pad disconnects: mask restored" 'waitfor "[ \"\$(cat $W/wqmask)\" = 3 ]" 3 && waitfor "grep -q \"tuning undone\" $T/pitrexd.log" 1'
 
 echo "== 7e. our core started from the cores list runs as VECTREX: loaded again once, the official core is left alone"
 kill "$(cat "$W/game.pid")" 2>/dev/null; sleep 1
