@@ -143,7 +143,7 @@ static const char *classify(uint16_t h1, uint16_t h2, int len, char *buf, size_t
         if (vfp) {
             if ((h1 & 0xFFB0) == 0xEEA0 || (h1 & 0xFFB0) == 0xEE90) { snprintf(buf, bs, "VFMA/VFMS/VFNMA/VFNMS (VFPv4; no vfpv4 on A9)"); return buf; }
             if ((h1 & 0xFF80) == 0xFE00 && (h2 & 0x0050) == 0x0000) return "VSEL (ARMv8 FP)";
-            if ((h1 & 0xFFB0) == 0xFE80 && (h2 & 0x0050) == 0x0000) return "VMAXNM/VMINNM (ARMv8 FP)";
+            if ((h1 & 0xFFB0) == 0xFE80 && (h2 & 0x0010) == 0x0000) return (h2 & 0x0040) ? "VMINNM (ARMv8 FP)" : "VMAXNM (ARMv8 FP)";
             if ((h1 & 0xFFBC) == 0xFEB8 && (h2 & 0x0050) == 0x0040) return "VRINTA/N/P/M (ARMv8 FP)";
             if ((h1 & 0xFFBE) == 0xEEB6 && (h2 & 0x0050) == 0x0040) return "VRINTR/X/Z (ARMv8 FP)";
             if ((h1 & 0xFFBC) == 0xFEBC) return "VCVTA/N/P/M (ARMv8 FP)";
@@ -620,6 +620,7 @@ static int g_nospi;      /* UM2_NOSPIPATCH=1: SPI0 stays on the trap path (A/B t
 static int g_nonewblk;   /* UM2_NONEWBLK=1: IO_BANK0, PADS_BANK0 and DWT stay on the trap path (A/B timing, regression) */
 static int g_noreach;    /* UM2_NOREACH=1: the hot-patch reach of 1 Nov 2026 off (IT-block sites, relocated branches, hoisted ALU halfword, 32-bit second op, widened next-instruction set): the 31 Oct behaviour, for A/B counts */
 static int g_novrint;    /* UM2_NOVRINT=1: VRINTA/N/P/M.F32 are skipped as before (A/B) */
+static int g_novmaxnm;   /* UM2_NOVMAXNM=1: VMAXNM/VMINNM.F32 are skipped as before (A/B) */
 static int g_noite;      /* UM2_NOITE=1: two-instruction IT blocks (ITT / ITE of two 16-bit ldr/str) stay on the trap path, as before 2 Nov 2026 (A/B) */
 typedef struct { int ok, load, size, sgn, rt, rt2, rmask, wbreg; uint32_t wbval; } Mi;
 
@@ -1042,6 +1043,7 @@ static void stub_setup(void) {
     g_spifast = opt.bus && !g_isrstat && getenv("UM2_NOSPIFAST") == NULL;
     g_noreach = getenv("UM2_NOREACH") != NULL;
     g_novrint = getenv("UM2_NOVRINT") != NULL;
+    g_novmaxnm = getenv("UM2_NOVMAXNM") != NULL;
     g_noite = getenv("UM2_NOITE") != NULL;
     if (!g_stub_ready) perror("um2run: stub area (division stays on the trap path)");
 }
@@ -1696,6 +1698,63 @@ static int vrint_patch(const Cpu *c, uint32_t site, unsigned rm, unsigned sd, un
     if (opt.bus_verbose) fprintf(stderr, "vrint_patch: %08x vrint%c s%u, s%u -> stub %08x%c", site, "anpm"[rm & 3], sd, sm, base, 10);
     return 1;
 }
+/* VMAXNM/VMINNM.F32 (ARMv8 FP, IEEE 754-2008 maxNum / minNum; UNDEFINED on the A9).  Vector Tank clamps with a vmaxnm + vminnm pair; until 5 Nov 2026 both were
+ * skipped (the destination kept its old value) and each cost a trap: ~2 a frame on the title, then ~26000 a second once the game proper starts, with no frame
+ * ever finished.  Same scheme as VRINT: the first trap emulates on the signal frame's VFP state, then the site becomes `b.w stub`: vmov r0, sn ; vmov r1, sm ;
+ * um2_vmaxnm(r0, r1, op) through the VFP-safe thunk ; vmov sd, r0.  op: 0 = max, 1 = min.  A quiet NaN against a number gives the number; a signalling NaN gives
+ * that NaN quieted (first operand first); +0 is above -0.  UM2_NOVMAXNM=1: the old skip (A/B); UM2_NOVMAXNMPATCH=1: emulate on every trap. */
+uint32_t um2_vmaxnm(uint32_t a, uint32_t b, uint32_t op) {
+    int an = (a & 0x7FFFFFFFu) > 0x7F800000u, bn = (b & 0x7FFFFFFFu) > 0x7F800000u;
+    if (an || bn) {
+        if (an && !(a & 0x00400000u)) return a | 0x00400000u;
+        if (bn && !(b & 0x00400000u)) return b | 0x00400000u;
+        return an ? (bn ? a : b) : a;
+    }
+    float x, y; memcpy(&x, &a, 4); memcpy(&y, &b, 4);
+    if (x == y) return op ? (a | b) : (a & b);                                     /* equal: only +0 / -0 differ in bits */
+    return (op ? x < y : x > y) ? a : b;
+}
+static uint32_t g_nvmaxnm;
+static int vmaxnm_patch(const Cpu *c, uint32_t site, unsigned op, unsigned sd, unsigned sn, unsigned sm) {
+    static int off = -1; if (off < 0) off = getenv("UM2_NOVMAXNMPATCH") != NULL;
+    if (off || !opt.bus || !g_stub_ready || (c->r[16] & ((0x3Fu << 10) | (3u << 25)))) return 0;
+    uint16_t k[40]; int n = 0;
+    struct { int at; uint32_t val; } lits[2]; int nl = 0;
+#define E(x) k[n++] = (uint16_t)(x)
+    E(0xE92D); E(0x500F);                               /* push {r0-r3, r12, lr}     */
+    E(0xF3EF); E(0x8300);                               /* mrs r3, apsr              */
+    E(0xF84D); E(0x3D04);                               /* str r3, [sp, #-4]!        */
+    E(0xEE10 | (sn >> 1)); E(0x0A10 | ((sn & 1) << 7)); /* vmov r0, sn               */
+    E(0xEE10 | (sm >> 1)); E(0x1A10 | ((sm & 1) << 7)); /* vmov r1, sm               */
+    E(0xF240); E(0x0200 | (op & 1));                    /* movw r2, #op              */
+    E(0xF8DF); lits[nl].at = n; lits[nl].val = (uint32_t)(uintptr_t)(g_novfp ? um2_hthunk_lean : um2_hthunk); nl++; E(0xC000);   /* ldr r12, =thunk */
+    E(0xF8DF); lits[nl].at = n; lits[nl].val = (uint32_t)(uintptr_t)um2_vmaxnm; nl++; E(0x3000);                                  /* ldr r3, =um2_vmaxnm */
+    E(0x47E0);                                          /* blx r12                   */
+    E(0xEE00 | (sd >> 1)); E(0x0A10 | ((sd & 1) << 7)); /* vmov sd, r0               */
+    E(0xF85D); E(0x3B04);                               /* ldr r3, [sp], #4          */
+    E(0xF383); E(0x8800);                               /* msr apsr_nzcvq, r3        */
+    E(0xE8BD); E(0x500F);                               /* pop {r0-r3, r12, lr}      */
+    int b_at = n; n += 2;
+    if (n & 1) E(0xBF00);
+    int lit_base = n; n += 2 * nl;
+    uint32_t bytes = (uint32_t)n * 2, base;
+    { int pb = patch_begin(site, 4, bytes, &base); if (pb <= 0) return pb < 0 && pb != -2; }
+    for (int i = 0; i < nl; i++) {
+        uint32_t laddr = base + (uint32_t)(lit_base + 2 * i) * 2;
+        uint32_t ipc = base + (uint32_t)(lits[i].at - 1) * 2 + 4;
+        k[lits[i].at] |= (uint16_t)(laddr - (ipc & ~3u));
+        memcpy(k + lit_base + 2 * i, &lits[i].val, 4);
+    }
+    uint32_t bw = enc_bw(base + (uint32_t)b_at * 2, site + 4);
+    k[b_at] = (uint16_t)(bw & 0xFFFF); k[b_at + 1] = (uint16_t)(bw >> 16);
+    memcpy((void *)(uintptr_t)base, k, (size_t)bytes);
+#undef E
+    __builtin___clear_cache((char *)(uintptr_t)base, (char *)(uintptr_t)(base + bytes));
+    patch_end(site, 4, base);
+    g_nvmaxnm++;
+    if (opt.bus_verbose) fprintf(stderr, "vmaxnm_patch: %08x v%snm s%u, s%u, s%u -> stub %08x%c", site, op ? "min" : "max", sd, sn, sm, base, 10);
+    return 1;
+}
 /* qemu-user hands out its mmap area from 0x40000000 up, and guest_jump has just freed the stack that sat there: later mmaps (thread
  * stacks, ...) would land on top of the RP2350 peripheral addresses and make them plain memory.  Reserve that range before anything
  * else maps.  No-op on a real kernel (nothing is there). */
@@ -1780,6 +1839,16 @@ static int cpu_trap(int sig, Cpu *c, uint32_t fault_addr, int svc_from_syscall, 
             Ev *e = ev_get(K_ILL, pc, 0, &isnew);
             if (e) { e->n++; if (isnew) { e->x = h1; e->y = h2; snprintf(e->note, sizeof e->note, "VRINT%c.F32 [%s%s]", "ANPM"[rm], vf ? "emulated" : "skipped, no VFP frame", st ? ", stub" : "");
                 logf_("[ILL] pc=%08x insn=%04x %04x VRINT%c.F32 %s%s\n", pc, h1, h2, "ANPM"[rm], vf ? "emulated" : "skipped (no VFP state in the signal frame)", st ? ", patched to a stub" : ""); } }
+            skip(c, 4); goto done;
+        }
+        if (sig == SIGILL && len == 4 && !g_novmaxnm && (h1 & 0xFFB0) == 0xFE80 && (h2 & 0x0F10) == 0x0A00) {     /* VMAXNM/VMINNM.F32: emulate, then patch to a stub (see vmaxnm_patch) */
+            unsigned op = (h2 >> 6) & 1, sd = ((h2 >> 12) & 15) * 2 + ((h1 >> 6) & 1), sn = (h1 & 15) * 2 + ((h2 >> 7) & 1), sm = (h2 & 15) * 2 + ((h2 >> 5) & 1);
+            uint32_t *vf = tl_uc ? uc_vfp(tl_uc) : NULL; int isnew;
+            if (vf) vf[sd] = um2_vmaxnm(vf[sn], vf[sm], op);
+            int st = vf ? vmaxnm_patch(c, pc, op, sd, sn, sm) : 0;
+            Ev *e = ev_get(K_ILL, pc, 0, &isnew);
+            if (e) { e->n++; if (isnew) { e->x = h1; e->y = h2; snprintf(e->note, sizeof e->note, "V%sNM.F32 [%s%s]", op ? "MIN" : "MAX", vf ? "emulated" : "skipped, no VFP frame", st ? ", stub" : "");
+                logf_("[ILL] pc=%08x insn=%04x %04x V%sNM.F32 %s%s\n", pc, h1, h2, op ? "MIN" : "MAX", vf ? "emulated" : "skipped (no VFP state in the signal frame)", st ? ", patched to a stub" : ""); } }
             skip(c, 4); goto done;
         }
         uint16_t fh;
@@ -2531,6 +2600,7 @@ static void bus_finish(void) {
     if (opt.bus_verbose) { print_summary(1); fflush(stdout); }
     fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb); %u branch targets known, %lu patch attempts postponed (an exception returns inside)\n", (unsigned long long)g_events, g_nstubs, g_nv8, g_nbtgt, g_patch_frame);
     if (g_nvrint) fprintf(stderr, "um2run: %u VRINT sites became stubs\n", g_nvrint);
+    if (g_nvmaxnm) fprintf(stderr, "um2run: %u VMAXNM/VMINNM sites became stubs\n", g_nvmaxnm);
     if (g_nsvcp) { fprintf(stderr, "um2run: %u SVC veneers became stubs; native SVC entries (call number:count):", g_nsvcp); for (int q = 0; q < 256; q++) if (g_svc_nat[q]) fprintf(stderr, " %d:%lu", q, g_svc_nat[q]); fputc(10, stderr); }
     lb_dump(stderr); um_dump(stderr);
     thr_dump(stderr);
