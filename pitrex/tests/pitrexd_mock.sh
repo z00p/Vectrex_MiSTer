@@ -51,6 +51,7 @@ cat > "$W/bin/ps" <<EOF
 #!/bin/sh
 echo "  PID USER TIME COMMAND"
 [ -f $W/game.pid ] && kill -0 \$(cat $W/game.pid) 2>/dev/null && echo "\$(cat $W/game.pid) root 0:01 ./um2run --bus --hold game.um2"
+[ -f $W/builder.pid ] && kill -0 \$(cat $W/builder.pid) 2>/dev/null && echo "\$(cat $W/builder.pid) root 0:01 bash $W/fat/pitrex/make_card.sh"
 exit 0
 EOF
 # fake chrt: real-time priority needs root, and the tests don't need the priority
@@ -226,6 +227,15 @@ sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain.um2
 check "no notice when the card is current" 'waitfor "[ \$(runs) -gt $n ]" 6 && [ ! -s "$W/msgs.log" ]'
 rm -f "$FAT/pitrex/make_card.sh"; sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain.um2
 check "no notice without the builder" 'waitfor "[ \$(runs) -gt $n ]" 6 && [ ! -s "$W/msgs.log" ]'
+
+echo "== 12b. leaving the core does not stop a card build (8 Nov 2026: it killed one half way)"
+printf '#!/bin/sh\nsleep 20\n' > "$FAT/pitrex/make_card.sh"
+echo -n Vectrex-PiTrex > "$T/CORENAME"; sleep 1.5
+bash "$FAT/pitrex/make_card.sh" & mc=$!; echo $mc > "$W/builder.pid"     # the fake ps lists it as MiSTer's ps would
+sleep 0.5; echo -n MENU > "$T/CORENAME"; sleep 4
+check "make_card.sh still running after the core change" 'kill -0 $mc 2>/dev/null'
+kill $mc 2>/dev/null; wait $mc 2>/dev/null; rm -f "$FAT/pitrex/make_card.sh" "$W/builder.pid"
+echo -n Vectrex-PiTrex > "$T/CORENAME"; sleep 1.5
 
 echo "== 13. B12 OSD pick: one file type per entry, Main reports the name without its extension"
 sleep 11; n=$(runs); pick games/Vectrex-PiTrex/UVMC2 Plain

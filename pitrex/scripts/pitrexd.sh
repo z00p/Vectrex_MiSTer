@@ -51,8 +51,9 @@ last_f=""; last_t=0
 core_is_ours() { local c; read -r c 2>/dev/null < $T/CORENAME; case "$c" in Vectrex-PiTrex|VECTREX) return 0 ;; esac; return 1; }
 
 # PiTrex programs: the generic match used for switching and for the supervisor below.
-# um2run is started by mister_run.sh as "./um2run --bus ...", which the path patterns miss.
-ptx_pids() { ps | grep -v grep | grep -E "$PITREX/[^ ]+( |$)|$RUN/|um2run --bus" | grep -v -E "pitrex_launch|pitrexd" | awk '{print $1}'; }
+# um2run is started by mister_run.sh as "./um2run --bus ...", which the path patterns miss. The card and menu builders
+# are not programs: leaving the core used to kill a card build half way (8 Nov 2026).
+ptx_pids() { ps | grep -v grep | grep -E "$PITREX/[^ ]+( |$)|$RUN/|um2run --bus" | grep -v -E "pitrex_launch|pitrexd\.sh|make_card|make_menu" | awk '{print $1}'; }
 
 # SIGTERM every PiTrex program and wait for it to exit (SIGKILL after ~2 s).
 stop_programs() {
@@ -81,7 +82,7 @@ cfg_get() {
 case "$0" in */*) ART_LIB=${0%/*}/art_lib.sh ;; *) ART_LIB=./art_lib.sh ;; esac
 [ -f "$ART_LIB" ] && . "$ART_LIB" || find_art() { return 0; }
 
-# show <text>: a pick that cannot start says why on the Vectrex for 20 s ('|' = new line, 4 lines of 20 characters at most; see um2run --message),
+# show <text>: a pick that cannot start says why on the Vectrex for 20 s ('|' = new line, 4 lines of 16 characters at most: 17 and up run off the screen's sides, John's photo 8 Nov 2026),
 # as well as in the log. Never over a running program; the next pick or a core change stops it like any other program.
 show() {
 	[ -x "$UM2/um2run" ] || return 0
@@ -206,12 +207,12 @@ start_um2() {
 	if [ "$online" != "0-1" ]; then
 		# BigMig leaves Linux on maxcpus=1 until a normal reboot: um2run would starve Main (OSD, controls)
 		echo "$(date +%T) REFUSED $(basename "$img"): Linux has CPUs '$online' online, um2run needs 0-1 (reboot out of BigMig)" >> $LOG
-		show "LINUX IS ON ONE CPU|REBOOT THE MISTER|THEN PICK AGAIN"
+		show "LINUX ON ONE CPU|REBOOT MISTER|THEN PICK AGAIN"
 		return 1
 	fi
 	if [ ! -f "$UM2/um2run" ] || [ ! -f "$UM2/mister_run.sh" ]; then
 		echo "$(date +%T) REFUSED $(basename "$img"): $UM2/um2run or mister_run.sh missing" >> $LOG
-		show "UM2RUN IS MISSING|RUN PITREX UPDATE"
+		show "UM2RUN MISSING|RUN PITREX|UPDATE"
 		return 1
 	fi
 	fc=$(cfg_get "$cfg" frame_cycles)
@@ -238,7 +239,7 @@ start_um2() {
 		bash "$PITREX/make_card.sh" --check > /dev/null 2>&1
 		if [ $? = 1 ]; then
 			echo "$(date +%T) card out of date: starting on the current card" >> $LOG
-			show "CARD OUT OF DATE|RUN MAKE UVMC2 CARD|IN THE SCRIPTS MENU"
+			show "CARD OUT OF DATE|RUN PITREX MAKE|UVMC2 CARD|FROM SCRIPTS"
 			sleep 3
 			stop_programs
 		fi
@@ -259,7 +260,7 @@ start_ptx() {
 	name=$(basename "$f"); name=${name%.*}; name=${name// /_}
 	if ! { mkdir -p "$RUN" && cp "$f" "$RUN/$name" && chmod +x "$RUN/$name"; }; then
 		echo "$(date +%T) REFUSED $f: cannot copy it to $RUN" >> $LOG
-		show "CANNOT START PROGRAM"
+		show "CANNOT START|PROGRAM"
 		return 1
 	fi
 	cd "$PITREX" 2>/dev/null || cd $T
@@ -342,7 +343,7 @@ while :; do
 	case "${f,,}" in *.ptx) kind=ptx ;; *.um2) kind=um2 ;; *) echo "$(date +%T) ignored $f: not a .um2 or .ptx file" >> $LOG; continue ;; esac
 	if [ ! -f "$f" ]; then
 		echo "$(date +%T) REFUSED $f: no such file" >> $LOG
-		show "GAME FILE NOT FOUND"
+		show "GAME FILE|NOT FOUND"
 		continue
 	fi
 	# Main can report one MGL file load twice: leave a program just started from the same file alone
