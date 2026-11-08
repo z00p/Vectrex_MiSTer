@@ -2134,6 +2134,20 @@ static void guest_load_and_map(void) {
         if (p != (void *)PSRAM_BASE) p = mmap((void *)PSRAM_BASE, PSRAM_SIZE, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (p != (void *)PSRAM_BASE) { perror("mmap psram (continuing without)"); }
     }
+    /* XIP cache maintenance window (RP2350 0x18000000: CS0 flash, +16 MB CS1 PSRAM; the low 3 address bits pick the operation).
+       We model no XIP cache, so a maintenance write has nothing to do; unmapped, each one trapped (Nigel Harrison's Dragon's Lair:
+       a byte store at 0x19000002 + 8n per cache line, 980 traps a frame, 99% of all, 8 Nov 2026). Map it as a sink: 32 views of
+       one 1 MB scratch file, so a long sweep costs 1 MB at most. Not fixed: if anything already lives there, the traps stay. */
+    if (!getenv("UM2_NOXIPMAINT")) {
+        int fd = (int)syscall(SYS_memfd_create, "um2xipmaint", 0); unsigned ok = 0;
+        if (fd >= 0 && ftruncate(fd, 1u << 20) == 0)
+            for (uint32_t a = 0x18000000u; a < 0x1A000000u; a += 1u << 20) {
+                void *q = mmap((void *)(uintptr_t)a, 1u << 20, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+                if (q == (void *)(uintptr_t)a) ok++; else if (q != MAP_FAILED) munmap(q, 1u << 20);
+            }
+        if (fd >= 0) close(fd);
+        if (ok != 32) fprintf(stderr, "um2run: XIP maintenance window: %u of 32 MB mapped (the rest trap as before)\n", ok);
+    }
     uint32_t words; memcpy(&words, g_file + 16, 4);
     memcpy((void *)IMG_BASE, g_file + 20, (size_t)words * 4);
     if (opt.bus && !getenv("UM2_NODIVPATCH")) stub_setup();
@@ -2233,7 +2247,12 @@ static void on_alarm(int sig, siginfo_t *si, void *vuc) {
     if (ptx_core_stalled) g_last_frame_t = now();     /* the core is not fetching (paused?): nothing the image did, so wait for it, however long */
     if (opt.bus && g_frame_timeout > 0 && g_ptx_up && g_last_frame_t && now() - g_last_frame_t > g_frame_timeout) {
         if (!exit_claim(5)) return;
-        fprintf(stderr, "um2run: no frame for %.0f s, exiting\n", g_frame_timeout); bus_finish(); _exit(5); }
+        fprintf(stderr, "um2run: no frame for %.0f s, exiting\n", g_frame_timeout);
+        {   /* where it hung (8 Nov 2026, a rare M.A.C.H. 3 start-up hang): the thread the tick interrupted, and the other guest core, parked for its pc */
+            const mcontext_t *m = &uc->uc_mcontext; uint32_t opc = quiesce_other(0, 0) ? g_q_pc : 0;
+            fprintf(stderr, "um2run: hang: tid %ld (core %d) pc %08lx lr %08lx sp %08lx r0-r3 %08lx %08lx %08lx %08lx; other core pc %08x\n",
+                    (long)syscall(SYS_gettid), tl_core, m->arm_pc, m->arm_lr, m->arm_sp, m->arm_r0, m->arm_r1, m->arm_r2, m->arm_r3, opc); }
+        bus_finish(); _exit(5); }
 }
 
 /* ---- --bus glue: ptx sink, guest memory, core-1 thread */
