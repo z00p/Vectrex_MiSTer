@@ -34,6 +34,12 @@ case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3
 	case $rc in 0|137|143) exit 0 ;; esac
 	sleep 3                                       # um2run sees a core change before Main names the new core
 	[ "$(cat /tmp/CORENAME 2>/dev/null)" = "Vectrex-PiTrex" ] || exit 0
+	# A reset the player asked for is not a crash (8 Nov 2026: a Vectrex cart picked in the OSD over a UVMC2 game showed GAME STOPPED / EXIT STATUS 3
+	# on top of the cart). The core's drop cause (pitrex_reset.sv) bit 2 = OSD reset, bit 3 = a file loaded into the core, bit 6 = a BIOS loaded.
+	c=$(sed -n 's/.*core was reset.*cause 0x\([0-9a-f][0-9a-f]\)).*/\1/p' /tmp/um2.log | tail -1)
+	if [ -n "$c" ] && [ $(( 0x$c & 0x4C )) -ne 0 ]; then
+		echo "$(date +%T) um2run $(basename "$img") stopped: the core was reset from the OSD (cause 0x$c)" >> /tmp/pitrexd.log; exit 0
+	fi
 	echo "$(date +%T) um2run $(basename "$img") ended by itself, exit status $rc, see /tmp/um2.log" >> /tmp/pitrexd.log
 	PTX_BACKEND=mister exec nohup chrt -r 49 "$PWD/um2run" --message "GAME STOPPED|EXIT STATUS $rc" > /tmp/um2msg.log 2>&1
 ) > /dev/null 2>&1 &
