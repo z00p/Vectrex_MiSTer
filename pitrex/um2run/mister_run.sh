@@ -28,8 +28,11 @@ case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3
 # The last game's log is kept as /tmp/um2.prev.log. A game that dies by itself is said on the Vectrex and in pitrexd's log, with its exit status: a SIGUSR1 death left
 # nothing anywhere until 31 Oct. Stopped on purpose (the backend's signal handler exits 0, or killed) and core changes stay quiet.
 [ -f /tmp/um2.log ] && mv -f /tmp/um2.log /tmp/um2.prev.log
+# Bluetooth test (9 Nov 2026): with a file FAIR_TEST beside this script the game runs at normal priority instead of SCHED_RR 50, so the
+# kernel's USB / Bluetooth work on CPU0 is not held back by the real-time throttle (950 ms of every second for RT work).
+sched="chrt -r 50"; [ -f FAIR_TEST ] && { sched=""; echo "$(date +%T) FAIR_TEST: um2run at normal priority" >> /tmp/pitrexd.log; }
 (
-	PTX_LEAD=${PTX_LEAD:-1} PTX_BACKEND=mister PTX_WAIT_CORE=60 nohup chrt -r 50 ./um2run --bus $hold $args "$img" > /tmp/um2.log 2>&1
+	PTX_LEAD=${PTX_LEAD:-1} PTX_BACKEND=mister PTX_WAIT_CORE=60 nohup $sched ./um2run --bus $hold $args "$img" > /tmp/um2.log 2>&1
 	rc=$?
 	case $rc in 0|137|143) exit 0 ;; esac
 	sleep 3                                       # um2run sees a core change before Main names the new core
