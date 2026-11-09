@@ -77,12 +77,13 @@ The other `UM2_*` variables are developer diagnostics and A/B switches; `grep ge
 ## Limits
 - Speed: the A9 is much slower than the cartridge's RP2350, so the picture is drawn at a lower frame rate than on a real cartridge. Measured in attract modes on a DE10-Nano (2 Nov 2026): Pac-Man about 32 frames/s (game speed right), BattleZone about 40, Star Wars about 45, Veccy Road about 50, Punch-Out about 55 of the 60 frames/s it wants. VecDoom and Out Run still slow down in heavy scenes.
 - Controls: a game reacts a little later than on a real cartridge, because um2run draws up to one
-  frame ahead of the core. A wired (USB) controller is needed. Bluetooth controllers are fine in the
-  normal Vectrex core but lag badly while a UVMC2 game runs: in tests on a DE10-Nano (3 Nov 2026) a
-  third of the Bluetooth pad's reports arrived late and in bunches, and a third of the moves never
-  reached the game. The same pad on a USB cable was unaffected, and so was the Bluetooth pad in a
-  PiTrex program (Gyrocks), so it comes with um2run's load. The cause is not known yet; raising
-  the priority of the Linux Bluetooth threads did not cure it.
+  frame ahead of the core. Wired (USB) and Bluetooth controllers both work. Up to 1.3, Bluetooth
+  controllers lagged badly while a UVMC2 game ran: the USB interrupt (the Bluetooth adapter's too)
+  was handled on CPU0 under the game's real-time core 0, and core 1 left the MiSTer's own program
+  (which reads the controllers) only about 3 ms in every 17 on CPU1. Since 1.4, `mister_run.sh` moves the USB
+  interrupt to CPU1 while a game runs (and puts it back after), core 1 leaves the MiSTer program
+  about 10 ms in every 24, and um2run skips its nice -20. In tests on a DE10-Nano (9 Nov 2026) this cost
+  no measurable speed on Dragon's Lair, Pac-Man, Star Wars and VecDrive.
 - Start-up: about 1 to 2 seconds of static at the start (cart audio while both guest cores still
   share one CPU), and a LOADING screen for 10 to 20 seconds on the big images.
 - Picture: occasional jitter; the left edge is clipped in the cartridge menus; landscape games are cropped on the portrait screen.

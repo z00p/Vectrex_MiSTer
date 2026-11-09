@@ -29,9 +29,9 @@ case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3
 # nothing anywhere until 31 Oct. Stopped on purpose (the backend's signal handler exits 0, or killed) and core changes stay quiet.
 [ -f /tmp/um2.log ] && mv -f /tmp/um2.log /tmp/um2.prev.log
 # Bluetooth pads (9 Nov 2026). The pad's input reached Main late: the USB interrupt (dwc2) was handled on CPU0, under the game's real-time
-# core 0, and Main on CPU1 got only 3 ms in every ~16 from core 1. So while a game runs:
+# core 0, and Main on CPU1 got only about 3 ms in every 17 from core 1. So while a game runs:
 #   irq1   the USB interrupt goes to CPU1 (its old mask is kept in /tmp/ft_irq_saved and put back when the game ends, or at the next start if killed)
-#   share  core 1 gives Main 10 ms in every ~16 on CPU1 instead of 3
+#   share  core 1 gives Main about 10 ms in every 24 on CPU1 (--donate 10000: 7 yielding 2 ms ticks, then a 10 ms sleep)
 #   nonice um2run skips its nice -20
 #   rt     um2run stays SCHED_RR 50; without it, normal priority (felt as good with the pad, but cost up to 28 percent fps on heavy games)
 # A/B on the MiSTer 9 Nov 09:24-09:49: irq1 and share cost no measurable speed (Dragon's Lair, Pac-Man, VecDrive, Star Wars); John's pad test 11:34: works well.
