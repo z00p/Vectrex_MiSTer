@@ -14,14 +14,19 @@
 # Older installs: .um2 games in the card folder are not put on the card: they are copied (subfolders kept) to
 # games/Vectrex-PiTrex/UVMC2. Nothing there is overwritten: a different file of the same name is left alone and reported.
 # BattleZone's own card is older installs only: in the one-folder layout it shares sd.img, as it shares a real card.
+# Scale cards: a game that wants the console calibration's `scale` changed (its sidecar says scale=N, or a built-in one by name, see
+# game_scale) gets sd_scale<N>.img: a copy of sd.img with config/uvm2.cfg saying `scale N` (any other fields in that file kept), and
+# its own saves. It has to be a card of its own: nearly every UVMC2 image reads config/uvm2.cfg, so on sd.img it would resize them all.
+# pitrexd.sh starts such a game on it. A sidecar with sd= (a card named by hand) or scale=0 gets none.
 #   make_card.sh               build now
 #   make_card.sh --if-needed   build only if sd.img is missing, the card folder changed since the last build, or
 #                              BattleZone has no card of its own yet (PiTrex_Setup uses this); quiet when there is
-#                              nothing to do. The .um2 games are copied either way.
-#   make_card.sh --check       only say: exit status 1 if a build would change the card, 0 if not. Changes nothing.
+#                              nothing to do. A scale card that is missing or older than sd.img's build is made
+#                              on its own, without rebuilding sd.img. The .um2 games are copied either way.
+#   make_card.sh --check       only say: exit status 1 if a build would change the card (or a scale card), 0 if not. Changes nothing.
 # Overlay art: for each .um2 game the art is copied next to it as <game>.art, where the core's OSD pick finds it (see art_lib.sh), unless a
 # .art is there already (yours is never replaced). .art files are not put on the card.
-# Needs: bash, mkfs.vfat, losetup, mount, python3 (3.9). No mtools. Undo: delete sd.img (and bz_sd.img).
+# Needs: bash, mkfs.vfat, losetup, mount, python3 (3.9). No mtools. Undo: delete sd.img (and bz_sd.img, sd_scale*.img).
 # PITREX_FAT and PITREX_TMP are test hooks (the PC test points them at a scratch tree); on the MiSTer leave them unset.
 FAT=${PITREX_FAT:-/media/fat}
 T=${PITREX_TMP:-/tmp}
@@ -335,9 +340,30 @@ def cmd_um2(src, dst):
                 print("E %s: %s" % (rel, e.strerror or e))
     sys.stdout.flush()
 
+def cmd_scalecfg(mnt, n):
+    """config/uvm2.cfg on a mounted card says `scale n`: the other lines of an existing file are kept (a calibration made
+    with a game's wizard, say), any scale line is replaced. Padded to 512 bytes: the SDK's writer only overwrites a file of
+    one sector or more, so the wizard can still save to it. Folder and file matched ignoring case, as the games' FAT does."""
+    d = os.path.join(mnt, find_ci(mnt, "config"))
+    if not os.path.isdir(d):
+        os.mkdir(d)
+    p = os.path.join(d, find_ci(d, "uvm2.cfg"))
+    keep = []
+    if os.path.isfile(p):
+        with open(p, "rb") as f:
+            for line in f.read().decode("latin-1").split("\n"):
+                line = line.rstrip("\r")
+                if line.strip() and line.split()[0] != "scale":
+                    keep.append(line.rstrip())
+    text = "\n".join(["scale %d" % int(n)] + keep) + "\n"
+    if len(text) < 512:
+        text += " " * (511 - len(text)) + "\n"
+    with open(p, "wb") as f:
+        f.write(text.encode("latin-1"))
+
 cmds = {"scan": cmd_scan, "size": cmd_size, "list": cmd_list, "copy": cmd_copy, "saves_out": cmd_saves_out,
         "saves_in": cmd_saves_in, "mkimg": cmd_mkimg, "free": cmd_free, "dev": cmd_dev, "cfg": cmd_cfg,
-        "um2": cmd_um2}
+        "um2": cmd_um2, "scalecfg": cmd_scalecfg}
 cmds[sys.argv[1]](*sys.argv[2:])
 PYEOF
 )
@@ -414,14 +440,50 @@ blank_card() {
 	say "made a blank card, $OUT, so that games can save. Games that need ROMs want a real one: see ADDING_GAMES.md."
 }
 
-# --check: nothing to build, or the card matches the folder: 0. A card made by hand (no .list) is left alone: 0.
+# Scale cards (see the header). cfg_get is pitrexd.sh's, so both read a sidecar alike (and no python per game: --check runs at every start).
+cfg_get() {
+	[ -f "$1" ] || return 0
+	tr -d '\r' < "$1" | sed -n "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*//p" | tail -1 | sed 's/[[:space:]]*$//'
+}
+# game_scale <.um2>: the scale a game's card should carry, empty for none. The same rule as start_um2 in pitrexd.sh.
+# Built in: Vector Pinball draws its table about 1.35 times too tall for the core at the SDK's default scale (160): the flippers
+# fell below the screen. 118 = 160 / 1.35 makes it fit like the console in a video of the game (measured on a MiSTer, 9 Nov 2026).
+game_scale() {
+	local g=$1 s n
+	[ -n "$(cfg_get "$g.cfg" sd)" ] && return 0
+	s=$(cfg_get "$g.cfg" scale)
+	if [ -z "$s" ]; then n=${g##*/}; case "${n,,}" in *vector*pinball*) s=118 ;; esac; fi
+	case "$s" in [1-9]|[1-9][0-9]|[1-9][0-9][0-9]) echo "$s" ;; esac
+}
+SC_SCALES=""
+while IFS= read -r g; do
+	[ -n "$g" ] || continue
+	s=$(game_scale "$g")
+	[ -n "$s" ] || continue
+	case " $SC_SCALES " in *" $s "*) ;; *) SC_SCALES="$SC_SCALES $s" ;; esac
+done <<EOF
+$(find "$GAMES" -type f -iname '*.um2' ! -name '._*' 2>/dev/null | sort)
+EOF
+# scale_cards_ok: every scale card exists and was made from sd.img's current build (same .list; the games' saves do not count)
+scale_cards_ok() {
+	local n t
+	for n in $SC_SCALES; do
+		t=$UV/sd_scale$n.img
+		[ -f "$t" ] || return 1
+		[ "$(cat "$t.list" 2>/dev/null)" = "$(cat "$OUT.list" 2>/dev/null)" ] || return 1
+	done
+	return 0
+}
+
+# --check: nothing to build, or the card (and the scale cards) match the folder: 0. A card made by hand (no .list) is left alone: 0.
 if [ "$CHECK" = 1 ]; then
 	command -v python3 > /dev/null || exit 0
 	[ -n "$(py list "$CARD" 2>/dev/null)" ] || exit 0
 	[ -f "$OUT" ] || exit 1
 	[ -f "$OUT.list" ] || exit 0
-	[ "$(py list "$CARD")" = "$(cat "$OUT.list")" ] && exit 0
-	exit 1
+	[ "$(py list "$CARD")" = "$(cat "$OUT.list")" ] || exit 1
+	scale_cards_ok || exit 1
+	exit 0
 fi
 
 # ---------------------------------------------------------------------------------------------
@@ -511,25 +573,34 @@ EOF
 fi
 
 LIST=$(py list "$CARD") || die "cannot read $CARD"
+SC_ONLY=0
 if [ "$IF_NEEDED" = 1 ] && [ -f "$OUT" ]; then
 	BZ_MISSING=0
 	for t in $BZ_TARGETS; do [ -f "$t" ] || BZ_MISSING=1; done
 	if [ "$BZ_MISSING" = 1 ]; then
 		say "BattleZone has no card of its own yet: building the cards"
 	else
+		uptodate=0
 		if [ -f "$OUT.list" ]; then
 			# built by this script: rebuild if the folder's file list (names, sizes, times) changed
-			[ "$LIST" = "$(cat "$OUT.list")" ] && exit 0
+			[ "$LIST" = "$(cat "$OUT.list")" ] && uptodate=1
 		else
 			# a card made some other way: rebuild only if the folder has a file newer than it
-			[ -z "$(find "$CARD" -type f ! -iname '*.um2' ! -iname '*.art' -newer "$OUT" 2>/dev/null | head -1)" ] && exit 0
+			[ -z "$(find "$CARD" -type f ! -iname '*.um2' ! -iname '*.art' -newer "$OUT" 2>/dev/null | head -1)" ] && uptodate=1
 		fi
-		say "the card folder has changed since sd.img was made: building it again"
+		if [ "$uptodate" = 1 ]; then
+			# sd.img is fine: only the scale cards, if one is missing or was made from an older sd.img
+			scale_cards_ok && exit 0
+			say "a game's card with its own scale is missing or older than sd.img: making it"
+			SC_ONLY=1
+		else
+			say "the card folder has changed since sd.img was made: building it again"
+		fi
 	fi
 fi
 
-say "card folder: $NFILES files, $DATA (skipped: $SKIPS)"
-if [ "$MIB" -gt "$MAX_MIB" ]; then
+[ "$SC_ONLY" = 1 ] || say "card folder: $NFILES files, $DATA (skipped: $SKIPS)"
+if [ "$SC_ONLY" = 0 ] && [ "$MIB" -gt "$MAX_MIB" ]; then
 	say "the card would be $MIB MiB, more than the $MAX_MIB MiB this script makes."
 	say "Remove files the games do not need from $CARD (for example ROM sets of games you do not have as .um2), then run this again."
 	exit 1
@@ -568,6 +639,61 @@ saves_from() {
 	elif [ -f "$img.list" ]; then say "kept the saves of the old ${img##*/} ($n file(s) the games wrote)"
 	else say "kept $n file(s) of the old ${img##*/} that are not in the card folder (it was not made by this script)"; fi
 }
+# Free space: the new card and every BattleZone copy exist next to the old ones until the end.
+need_on() { # <folder> <MiB> : enough free space there?
+	local free
+	free=$(py free "$1") || die "cannot check the free space in $1"
+	if [ "$free" -lt $(( $2 + 4 )) ]; then
+		say "not enough free space in $1: $2 MiB needed, $free MiB free. Nothing was changed."
+		exit 1
+	fi
+}
+# put_saves <card> <saves folder>
+put_saves() {
+	local n
+	[ -n "$(ls -A "$2" 2>/dev/null)" ] || return 0
+	attach "$1" "$WORK/mnt_new" || die "cannot mount ${1##*/}"
+	n=$(py saves_in "$2" "$WORK/mnt_new") || exit 1
+	detach "$WORK/mnt_new"
+	[ "$n" = 0 ] || say "put the $n saved file(s) back into ${1%.new}"
+}
+# 5. (used below) Swap in: old card to .bak (one backup, replaced each time), new card to its name
+swap() { # <card>
+	local c=$1
+	if [ -f "$c" ]; then
+		rm -f "$c.bak"
+		mv "$c" "$c.bak" || die "cannot rename ${c##*/} to ${c##*/}.bak"
+	fi
+	mv "$c.new" "$c" || { mv "$c.bak" "$c" 2>/dev/null; die "cannot rename ${c##*/}.new to ${c##*/}"; }
+}
+# 7. (used below) Scale cards, made from the finished sd.img: its files and saves, then the card's own saves (they win), then
+# config/uvm2.cfg with the scale. Defined here so that --if-needed can make them on their own without rebuilding sd.img.
+scale_cards() {
+	local n t b mib
+	for n in $SC_SCALES; do
+		t=$UV/sd_scale$n.img
+		mib=$(( ( $(wc -c < "$OUT") + 1048575 ) / 1048576 ))
+		need_on "$UV" "$mib"
+		saves_from "$t" "$SAVES/scale$n"
+		rm -f "$t.new"; TMPFILES="$t.new"
+		cp "$OUT" "$t.new" || die "cannot write $t.new"
+		put_saves "$t.new" "$SAVES/scale$n"
+		attach "$t.new" "$WORK/mnt_new" || die "cannot mount ${t##*/}.new"
+		py scalecfg "$WORK/mnt_new" "$n" || die "cannot write config/uvm2.cfg on ${t##*/}"
+		detach "$WORK/mnt_new"
+		if command -v fsck.vfat > /dev/null; then
+			fsck.vfat -n "$t.new" > "$WORK/fsck.log" 2>&1 || { cat "$WORK/fsck.log"; die "the new card ${t##*/} has errors (fsck.vfat)"; }
+		fi
+		b=0; [ -f "$t" ] && b=1
+		swap "$t"
+		TMPFILES=""
+		if [ -f "$OUT.list" ]; then cp "$OUT.list" "$t.list.new" && mv "$t.list.new" "$t.list"; else rm -f "$t.list"; fi
+		if [ "$b" = 1 ]; then say "done: $t, the card for games with scale $n (the old one is ${t##*/}.bak)"
+		else say "done: $t, the card for games with scale $n"; fi
+	done
+	sync
+}
+if [ "$SC_ONLY" = 1 ]; then scale_cards; exit 0; fi
 saves_from "$OUT" "$SAVES/main"
 i=0
 for t in $BZ_TARGETS; do i=$((i + 1)); saves_from "$t" "$SAVES/bz$i"; done
@@ -580,15 +706,7 @@ if [ "$MIB" -gt "$MAX_MIB" ]; then
 	exit 1
 fi
 
-# Free space: the new card and every BattleZone copy exist next to the old ones until the end.
-need_on() { # <folder> <MiB> : enough free space there?
-	local free
-	free=$(py free "$1") || die "cannot check the free space in $1"
-	if [ "$free" -lt $(( $2 + 4 )) ]; then
-		say "not enough free space in $1: $2 MiB needed, $free MiB free. Nothing was changed."
-		exit 1
-	fi
-}
+# Free space (need_on above): the new card and every BattleZone copy exist next to the old ones until the end.
 dev_uv=$(py dev "$UV")
 need=$MIB
 for t in $BZ_TARGETS; do
@@ -626,15 +744,6 @@ for t in $BZ_TARGETS; do
 	fi
 done
 
-# put_saves <card> <saves folder>
-put_saves() {
-	local n
-	[ -n "$(ls -A "$2" 2>/dev/null)" ] || return 0
-	attach "$1" "$WORK/mnt_new" || die "cannot mount ${1##*/}"
-	n=$(py saves_in "$2" "$WORK/mnt_new") || exit 1
-	detach "$WORK/mnt_new"
-	[ "$n" = 0 ] || say "put the $n saved file(s) back into ${1%.new}"
-}
 put_saves "$NEW" "$SAVES/main"
 
 i=0
@@ -655,15 +764,7 @@ if command -v fsck.vfat > /dev/null; then
 	say "checked (fsck.vfat): no errors"
 fi
 
-# 5. Swap in: old card to .bak (one backup, replaced each time), new card to its name
-swap() { # <card>
-	local c=$1
-	if [ -f "$c" ]; then
-		rm -f "$c.bak"
-		mv "$c" "$c.bak" || die "cannot rename ${c##*/} to ${c##*/}.bak"
-	fi
-	mv "$c.new" "$c" || { mv "$c.bak" "$c" 2>/dev/null; die "cannot rename ${c##*/}.new to ${c##*/}"; }
-}
+# 5. Swap in (swap above): old card to .bak (one backup, replaced each time), new card to its name
 had_old=0; [ -f "$OUT" ] && had_old=1
 swap "$OUT"
 TMPFILES=""
@@ -678,6 +779,7 @@ for t in $BZ_TARGETS; do
 	if [ "$b" = 1 ]; then say "done: $t, BattleZone's own card (the old one is ${t##*/}.bak)"; else say "done: $t, BattleZone's own card"; fi
 done
 sync
+scale_cards
 
 # 6. BattleZone sidecars: write one only where there is none; never change an existing one
 if [ -n "$BZ_IMGS" ]; then

@@ -59,6 +59,7 @@ Nothing in it is ever executed. Unknown keys are ignored; bad values are ignored
 |---|---|---|
 | `frame_cycles=25000` | Length of one stream frame in Vectrex E cycles. 30000 is 50 Hz, 25000 is 60 Hz. Images with "punch" in the name get 25000 without a sidecar. | 30000 (Punch-Out 25000) |
 | `sd=name.img` | Card image the cartridge sees. A name without a folder is looked up next to the `.um2`, then in `/media/fat/pitrex/uvmc2/`, then in `/media/fat/pitrex/um2run/`. No spaces in the path. | `pitrex/uvmc2/sd.img` if it exists, else no card |
+| `scale=118` | The UVMC2 calibration's picture size (the game's whole picture grows with it; the cartridge software's default is 160). Without an `sd=` key the game runs on `pitrex/uvmc2/sd_scale118.img`, a copy of `sd.img` whose `config/uvm2.cfg` says `scale 118`, which PiTrex_Make_UVMC2_Card makes (nearly every UVMC2 game reads that file, so it cannot go on the shared card). Images with "vector" and "pinball" in the name get 118 without a sidecar; `scale=0` turns that off. | none (Vector Pinball 118) |
 | `args=--secs 600` | Extra `um2run` arguments, appended last (see um2run/README.md). | none |
 | `settle=8` | Seconds to wait before starting (lets the MiSTer finish setting the video mode). | 8 after a core load, 1 if the core has been up 15 s |
 | `cpu1_after=10` | Seconds the game's second core stays on CPU0 before moving to CPU1. | 10 after a core load, 2 if the core has been up 15 s |
@@ -93,7 +94,9 @@ files instead.
 (or just your ROM zips) to `/media/fat/games/Vectrex-PiTrex/UVMC2/` and run
 **Scripts > PiTrex_Make_UVMC2_Card**. That builds
 `/media/fat/pitrex/uvmc2/sd.img` on the MiSTer and keeps the saves of the old card.
-ADDING_GAMES.md also lists which files each tested game needs.
+ADDING_GAMES.md also lists which files each tested game needs. A game that wants its own picture
+size (`scale=`, Vector Pinball by default) gets a copy, `sd_scale<N>.img`, made at the same time
+with its own saves.
 
 **Folders the images expect** (all lower or upper case, the card is case-insensitive):
 ```
@@ -147,6 +150,7 @@ Other builds of the same games may behave differently. These are the images used
 | Vector Tank (`vectortank.um2`) | a card image with its `PORTDATA/vectortank` folder | plays, about 50 frames/s; loading takes about 25 s (it reads about 5 MB from the card at start, which um2run does more slowly than the cartridge). Needs um2run from 1.2 |
 | Dragon's Lair (`dragons_lair.um2`) | a card image with its `PORTDATA/dlair` folder | runs, about 41 frames/s in the attract mode. Needs um2run from 1.3 (about 3 frames/s before) |
 | M.A.C.H. 3 (`mach3.um2`) | a card image with its `PORTDATA/mach3` folder | starts every time, about 35-42 frames/s. Needs um2run from 1.3 (before, it never reached its first frame and stopped with exit status 5) |
+| Vector Pinball by Endprodukt (`Vector Pinball.um2`) | a card image with its `pinball` folder (music) | plays well, music good; about 40 frames/s over a game. Needs um2run from 1.4.2 (before, about 9 frames/s and no sound) and its own card with `scale 118` (made by PiTrex_Make_UVMC2_Card; without it the flippers are below the screen) |
 
 The sidecar files used for these runs (the card names are up to you):
 ```
@@ -234,7 +238,7 @@ their `.bak` backups, sidecars, and anything of yours in `pitrex/um2run/`.
 | Black screen for a long time | Wait for the LOADING screen to finish. If the screen stays black or the MiSTer's menu stops responding: Scripts > PiTrex_Stop, or SSH `killall um2run`. |
 | Static at the start | Expected for the first second or two. Up to about 10 seconds when the pick had to switch View Area (the core reloads first, see `/tmp/pitrexd.log`); the next pick starts clean. |
 | The picture is cropped at the sides | Landscape game on a portrait screen. OSD > View Area = Open Matte shows it all (the default, unless you changed it), or put `view=open` in the sidecar. |
-| A message on the Vectrex instead of the game | CARD OUT OF DATE: the game still starts, on the current card; run Scripts > PiTrex_Make_UVMC2_Card when you have time. LINUX ON ONE CPU: reboot the MiSTer. UM2RUN MISSING: run Scripts > PiTrex_Update. GAME FILE NOT FOUND: the file went away between the pick and the start. GAME STOPPED: the game ended by itself; `/tmp/um2.log` has why and `/tmp/pitrexd.log` the exit status. |
+| A message on the Vectrex instead of the game | CARD OUT OF DATE: the game still starts, on the current card; run Scripts > PiTrex_Make_UVMC2_Card when you have time. NO CARD FOR THIS GAME: the game wants a card with its own scale (see `scale=` in [Sidecar settings](#sidecar-settings)) and it has not been made yet; the game starts on `sd.img`, with its picture at the default size, until you run Scripts > PiTrex_Make_UVMC2_Card. LINUX ON ONE CPU: reboot the MiSTer. UM2RUN MISSING: run Scripts > PiTrex_Update. GAME FILE NOT FOUND: the file went away between the pick and the start. GAME STOPPED: the game ended by itself; `/tmp/um2.log` has why and `/tmp/pitrexd.log` the exit status. |
 | The game froze | Check the core's Pause button first (a mapped controller button, or Pause when OSD open): a paused core stops taking the picture and the game waits for it. `/tmp/um2.log` then says `core not fetching`, and `core fetching again` when it carries on. |
 | An old overlay is on top of the game | The game has no art of its own (see [Overlays](#overlays)): OSD > Video Overlay & Geometry > Overlay = Off. |
 | A controller button does something different from the normal Vectrex core (e.g. View) | The MiSTer keeps controller mappings per core name, so "Vectrex-PiTrex" has its own mapping, separate from VECTREX's. Set it up once in the OSD (Define joystick buttons). |

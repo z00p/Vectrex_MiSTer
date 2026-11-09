@@ -192,6 +192,9 @@ set_display() {
 #   frame_cycles=25000      stream frame length in E cycles (default 30000 = 50 Hz; Punch-Out wants 25000 = 60 Hz)
 #   sd=bz_sd.img            card image; a relative name is looked up next to the .um2 file, then in $UM2SD_DIR, then in $UM2 (BattleZone WRITES to its card: own copy).
 #                           Default $UM2SD_DIR/sd.img if it exists, else no card. No spaces in the path.
+#   scale=118               without sd=: the game runs on $UM2SD_DIR/sd_scale118.img, a copy of sd.img whose config/uvm2.cfg says `scale 118`
+#                           (the UVMC2 SDK's calibration: the picture's size grows with it; the SDK's default is 160). make_card.sh makes the card.
+#                           Vector Pinball gets 118 without a sidecar; scale=0 turns that off.
 #   args=--secs 600         extra um2run arguments, appended last
 #   settle=8 cpu1_after=10  override the black-screen guard timings (mister_run.sh env SETTLE / CPU1_AFTER)
 #   orient=0|ccw|cw         EXPERIMENTAL: the core's Orientation (normal / 90 degrees counter-clockwise / clockwise); see set_display above
@@ -202,7 +205,7 @@ set_display() {
 #                           make_card.sh copies the art next to the game for that (never over a .art of yours); orient=cw/ccw take the Tate version only.
 # Returns 1 without touching a running program when it refuses (one core, missing files).
 start_um2() {
-	local img=$1 cfg=$1.cfg online fc sd args st c1 n opt=""
+	local img=$1 cfg=$1.cfg online fc sd sc="" args st c1 n opt=""
 	read -r online < $CPUS
 	if [ "$online" != "0-1" ]; then
 		# BigMig leaves Linux on maxcpus=1 until a normal reboot: um2run would starve Main (OSD, controls)
@@ -226,6 +229,20 @@ start_um2() {
 		if [ -n "$sd" ] && [ ! -f "$sd" ]; then echo "$(date +%T) $cfg: card $sd not found, no card" >> $LOG; sd=""; fi
 	elif [ -f "$UM2SD_DIR/sd.img" ]; then
 		sd=$UM2SD_DIR/sd.img
+		# a game that wants its own calibration scale runs on the copy of sd.img that make_card.sh makes for it (the same rule as its game_scale)
+		sc=$(cfg_get "$cfg" scale)
+		if [ -z "$sc" ]; then n=${img##*/}; case "${n,,}" in *vector*pinball*) sc=118 ;; esac; fi
+		case "$sc" in
+			[1-9]|[1-9][0-9]|[1-9][0-9][0-9])
+				if [ -f "$UM2SD_DIR/sd_scale$sc.img" ]; then sd=$UM2SD_DIR/sd_scale$sc.img
+				else
+					echo "$(date +%T) $(basename "$img"): no card with scale $sc yet (make_card.sh makes it): starting on sd.img" >> $LOG
+					show "NO CARD FOR THIS GAME|RUN PITREX MAKE|UVMC2 CARD|FROM SCRIPTS"
+					sleep 3
+				fi ;;
+			""|0) ;;
+			*) echo "$(date +%T) $cfg: bad scale '$sc' ignored" >> $LOG ;;
+		esac
 	fi
 	args=$(cfg_get "$cfg" args)
 	st=$(cfg_get "$cfg" settle); c1=$(cfg_get "$cfg" cpu1_after)
@@ -235,7 +252,7 @@ start_um2() {
 
 	stop_programs
 	# a game runs on the card as it is; say so for a moment if the folder has moved on
-	if [ "$sd" = "$UM2SD_DIR/sd.img" ]; then
+	if [ "$sd" = "$UM2SD_DIR/sd.img" ] || [ "$sd" = "$UM2SD_DIR/sd_scale$sc.img" ]; then
 		bash "$PITREX/make_card.sh" --check > /dev/null 2>&1
 		if [ $? = 1 ]; then
 			echo "$(date +%T) card out of date: starting on the current card" >> $LOG

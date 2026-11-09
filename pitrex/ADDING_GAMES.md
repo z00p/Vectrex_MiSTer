@@ -89,6 +89,7 @@ These are the games tested on the MiSTer (see [UVMC2_GAMES.md](UVMC2_GAMES.md#te
 | Pac-Man | yes, for settings and scores | none: it writes `config/` and `scores/` itself |
 | BattleZone | yes, for settings and scores | none: the game is all in the image |
 | Vector Tank | yes | the game's `PORTDATA/vectortank/` folder from its download, with `ASSETS/` (its music) |
+| Vector Pinball | yes | the game's `pinball/` folder from its download (its music) |
 | Veccy Road, the demos | no | |
 
 - **Star Wars** takes each ROM from whichever zip has it, so the names of the files inside do not
@@ -97,6 +98,10 @@ These are the games tested on the MiSTer (see [UVMC2_GAMES.md](UVMC2_GAMES.md#te
   without a settings file (see [Sidecar settings](UVMC2_GAMES.md#sidecar-settings)).
 - **BattleZone** writes to its card and shares `sd.img` with the other games, as it shares a real
   card. A `bz_sd.img` from an older release keeps working while its settings file names it.
+- **Vector Pinball** draws its table too tall for the core at the cartridge's default picture size: it
+  runs on a copy of the card, `sd_scale118.img`, that PiTrex_Make_UVMC2_Card makes for it (its calibration
+  file says `scale 118`). Any image with "vector" and "pinball" in its name gets that without a settings
+  file (see `scale=` in [Sidecar settings](UVMC2_GAMES.md#sidecar-settings)).
 - **Other games:** if a game says ROMS NOT FOUND, ROMS NO or MISSING, it wants files from your
   card. Copy the whole card to the UVMC2 folder and build it again.
 
