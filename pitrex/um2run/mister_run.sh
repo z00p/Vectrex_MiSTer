@@ -31,10 +31,11 @@ case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3
 # Bluetooth pads (9 Nov 2026). The pad's input reached Main late: the USB interrupt (dwc2) was handled on CPU0, under the game's real-time
 # core 0, and Main on CPU1 got only about 3 ms in every 17 from core 1. So while a game runs:
 #   irq1   the USB interrupt goes to CPU1 (its old mask is kept in /tmp/ft_irq_saved and put back when the game ends, or at the next start if killed)
-#   share  core 1 gives Main about 10 ms in every 24 on CPU1 (--donate 10000: 7 yielding 2 ms ticks, then a 10 ms sleep)
+#   share  core 1 gives Main about 6 ms in every 20 on CPU1 (--donate 6000: 7 yielding 2 ms ticks, then a 6 ms sleep)
 #   nonice um2run skips its nice -20
 #   rt     um2run stays SCHED_RR 50; without it, normal priority (felt as good with the pad, but cost up to 28 percent fps on heavy games)
-# A/B on the MiSTer 9 Nov 09:24-09:49: irq1 and share cost no measurable speed (Dragon's Lair, Pac-Man, VecDrive, Star Wars); a Bluetooth pad played well with it.
+# A/B on the MiSTer 9 Nov, each game on its own card, two rounds: irq1 and share (6000) cost no measurable speed (Star Wars 44.4, Punch-Out 54.3,
+# Pac-Man 33.7 frames/s, as without them); 1.4's --donate 10000 cost 2-4 percent (42.6, 53.3, 32.6). A Bluetooth pad played well with both.
 # A file FAIR_TEST beside this script replaces the words (to compare): "rt" alone = 1.3 behaviour, "nonice irq1" = normal priority.
 ft_restore() { [ -f /tmp/ft_irq_saved ] && { read -r n m < /tmp/ft_irq_saved; echo "$m" > /proc/irq/$n/smp_affinity 2>/dev/null; rm -f /tmp/ft_irq_saved; }; }
 ft_restore
@@ -44,7 +45,7 @@ ft="rt nonice irq1 share"
 sched="chrt -o 0"
 case " $ft " in *" rt "*) sched="chrt -r 50" ;; esac
 case " $ft " in *" nonice "*) args="$args --no-nice" ;; esac
-case " $ft " in *" share "*) args=$(echo "$args" | sed 's/--donate 3000/--donate 10000/') ;; esac
+case " $ft " in *" share "*) args=$(echo "$args" | sed 's/--donate 3000/--donate 6000/') ;; esac
 case " $ft " in *" irq1 "*)
 	n=$(awk -F: '/dwc2/ { gsub(/ /, "", $1); print $1; exit }' /proc/interrupts)
 	[ -n "$n" ] && { echo "$n $(cat /proc/irq/$n/smp_affinity)" > /tmp/ft_irq_saved; echo 2 > /proc/irq/$n/smp_affinity; } ;;

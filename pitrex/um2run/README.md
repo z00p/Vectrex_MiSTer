@@ -82,8 +82,9 @@ The other `UM2_*` variables are developer diagnostics and A/B switches; `grep ge
   was handled on CPU0 under the game's real-time core 0, and core 1 left the MiSTer's own program
   (which reads the controllers) only about 3 ms in every 17 on CPU1. Since 1.4, `mister_run.sh` moves the USB
   interrupt to CPU1 while a game runs (and puts it back after), core 1 leaves the MiSTer program
-  about 10 ms in every 24, and um2run skips its nice -20. In tests on a DE10-Nano (9 Nov 2026) this cost
-  no measurable speed on Dragon's Lair, Pac-Man, Star Wars and VecDrive.
+  more time on CPU1, and um2run skips its nice -20. In 1.4 that share was about 10 ms in every 24, which cost
+  2 to 4 percent of the frame rate on Star Wars, Punch-Out and Pac-Man; since 1.4.1 it is about 6 ms in every 20,
+  which in tests on a DE10-Nano (9 Nov 2026) cost no measurable speed, with the same Bluetooth response.
 - Start-up: about 1 to 2 seconds of static at the start (cart audio while both guest cores still
   share one CPU), and a LOADING screen for 10 to 20 seconds on the big images.
 - Picture: occasional jitter; the left edge is clipped in the cartridge menus; landscape games are cropped on the portrait screen.
