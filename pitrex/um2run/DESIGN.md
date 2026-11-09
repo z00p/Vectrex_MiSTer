@@ -36,6 +36,12 @@ commands, so the cartridge and the core never need to know about each other.
   `selftest/` has synthetic guests for each of these paths.
 - **Peripheral access** (loads and stores to 0x4xxxxxxx / 0xdxxxxxxx) faults the same way and is
   handed to the device model; hot sites are patched to a short stub too.
+- **XIP cache maintenance.** Some images flush the RP2350's flash cache one line at a time with
+  byte stores into its maintenance window (0x18000000-0x19ffffff; the low address bits pick the
+  operation). um2run has no flash cache to keep in step, so the 32 MB window is mapped as plain
+  memory that nobody reads, and those stores cost nothing. Before 1.3 each one trapped: Dragon's
+  Lair ran at about 3 frames/s and M.A.C.H. 3 never reached its first frame. `UM2_NOXIPMAINT=1`
+  turns the mapping off (the stores trap again).
 - **Core 1** is a thread. The two guest cores are placed on the A9's two CPUs; the Main program
   of the MiSTer (OSD, controllers) lives on CPU1 as well, so the guest is deliberately
   throttled where it only spins (timer polls, E-clock polls).
