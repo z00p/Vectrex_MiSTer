@@ -50,7 +50,7 @@ UVMC2 game images (`.um2`) run in UVMC2 mode too. None are included: you bring y
 </tr>
 <tr>
 <td align="center"><img src="pitrex/docs/shots/mach3.png" width="150" alt="M.A.C.H. 3"><br><b>M.A.C.H. 3</b><br>Nigel Harrison</td>
-<td align="center"><img src="pitrex/docs/shots/vecdoom.png" width="150" alt="VecDoom"><br><b>VecDoom</b><br>UVMC2 conversion</td>
+<td align="center"><img src="pitrex/docs/shots/vecdoom.png" width="150" alt="VecDoom"><br><b>VecDoom</b><br>Jason Kopp</td>
 <td align="center"><img src="pitrex/docs/shots/veccy_road.png" width="150" alt="Veccy Road"><br><b>Veccy Road</b><br>PlayVectrex</td>
 <td align="center"><img src="pitrex/docs/shots/vector_tank.png" width="150" alt="Vector Tank"><br><b>Vector Tank</b><br>Iyashikei (original game)</td>
 <td align="center"><img src="pitrex/docs/shots/vecdrive.png" width="150" alt="VecDrive"><br><b>VecDrive</b><br>z00p (also a PiTrex program above)</td>
