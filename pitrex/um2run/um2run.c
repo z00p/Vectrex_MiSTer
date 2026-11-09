@@ -2163,6 +2163,16 @@ static void guest_load_and_map(void) {
             }
             g_patched[i >> 3] |= 1 << (i & 7); g_patch_orig_n[i] = h[i] & 0xFF; h[i] = 0xDE00 | (h[i] & 0xFF); cnt++;
         }
+        /* A wrapper a little apart from the cluster: "svc #n; bx lr" within 64 bytes of a patched site (9 Nov 2026: Vector Pinball's
+         * svc #5, 54 bytes past its neighbour, ran as a real Linux system call with the guest's r7 as the number, and the kernel's
+         * SIGILL for the bad number landed on the bx lr after it, which was then skipped). */
+        if (opt.bus) for (size_t i = 0; i + 1 < n; i++) if ((o[i] & 0xFF00) == 0xDF00 && (o[i] & 0xFF) <= 31 && o[i + 1] == 0x4770 && !(g_patched[i >> 3] >> (i & 7) & 1)) {
+            int near = 0; size_t lo = i > 32 ? i - 32 : 0;
+            for (size_t j = lo; j < n && j <= i + 32; j++) if (j != i && (g_patched[j >> 3] >> (j & 7) & 1)) near++;
+            if (!near) continue;
+            g_patched[i >> 3] |= 1 << (i & 7); g_patch_orig_n[i] = o[i] & 0xFF; h[i] = 0xDE00 | (o[i] & 0xFF); cnt++;
+            fprintf(stderr, "svc #%u at %08x: a wrapper apart from its cluster, patched too\n", o[i] & 0xFF, IMG_BASE + (unsigned)i * 2);
+        }
         fprintf(stderr, "patched %zu svc halfwords to udf\n", cnt);
     }
     __builtin___clear_cache((char *)IMG_BASE, (char *)IMG_TOP);
