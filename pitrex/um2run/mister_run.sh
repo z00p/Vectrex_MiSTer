@@ -30,7 +30,7 @@ case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3
 [ -f /tmp/um2.log ] && mv -f /tmp/um2.log /tmp/um2.prev.log
 # Bluetooth test (9 Nov 2026): with a file FAIR_TEST beside this script the game runs at normal priority instead of SCHED_RR 50, so the
 # kernel's USB / Bluetooth work on CPU0 is not held back by the real-time throttle (950 ms of every second for RT work).
-# Words in the file add more: "rt" = keep SCHED_RR 50 (to compare); "nonice" = um2run also skips its nice -20; "irq1" = the USB interrupt (dwc2) goes to CPU1 while the game runs.
+# Words in the file add more: "rt" = keep SCHED_RR 50 (to compare); "share" = a bigger slice of CPU1 for Main; "nonice" = um2run also skips its nice -20; "irq1" = the USB interrupt (dwc2) goes to CPU1 while the game runs.
 # The interrupt's old CPU mask is kept in /tmp/ft_irq_saved and put back when the game ends (and at the next start, in case it was killed).
 ft_restore() { [ -f /tmp/ft_irq_saved ] && { read -r n m < /tmp/ft_irq_saved; echo "$m" > /proc/irq/$n/smp_affinity 2>/dev/null; rm -f /tmp/ft_irq_saved; }; }
 ft_restore
@@ -40,6 +40,8 @@ if [ -f FAIR_TEST ]; then
 	sched="chrt -o 0"; ft=$(cat FAIR_TEST 2>/dev/null)
 	case " $ft " in *" rt "*) sched="chrt -r 50" ;; esac
 	case " $ft " in *" nonice "*) args="$args --no-nice" ;; esac
+	# "share" = core 1 gives Main 10 ms in every ~16 ms on CPU1 instead of 3 (A/B of 9 Nov 09:38: no speed lost on four heavy games)
+	case " $ft " in *" share "*) args=$(echo "$args" | sed 's/--donate 3000/--donate 10000/') ;; esac
 	case " $ft " in *" irq1 "*)
 		n=$(awk -F: '/dwc2/ { gsub(/ /, "", $1); print $1; exit }' /proc/interrupts)
 		[ -n "$n" ] && { echo "$n $(cat /proc/irq/$n/smp_affinity)" > /tmp/ft_irq_saved; echo 2 > /proc/irq/$n/smp_affinity; } ;;
