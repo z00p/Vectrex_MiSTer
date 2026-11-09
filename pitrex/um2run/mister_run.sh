@@ -28,26 +28,27 @@ case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3
 # The last game's log is kept as /tmp/um2.prev.log. A game that dies by itself is said on the Vectrex and in pitrexd's log, with its exit status: a SIGUSR1 death left
 # nothing anywhere until 31 Oct. Stopped on purpose (the backend's signal handler exits 0, or killed) and core changes stay quiet.
 [ -f /tmp/um2.log ] && mv -f /tmp/um2.log /tmp/um2.prev.log
-# Bluetooth test (9 Nov 2026): with a file FAIR_TEST beside this script the game runs at normal priority instead of SCHED_RR 50, so the
-# kernel's USB / Bluetooth work on CPU0 is not held back by the real-time throttle (950 ms of every second for RT work).
-# Words in the file add more: "rt" = keep SCHED_RR 50 (to compare); "share" = a bigger slice of CPU1 for Main; "nonice" = um2run also skips its nice -20; "irq1" = the USB interrupt (dwc2) goes to CPU1 while the game runs.
-# The interrupt's old CPU mask is kept in /tmp/ft_irq_saved and put back when the game ends (and at the next start, in case it was killed).
+# Bluetooth pads (9 Nov 2026). The pad's input reached Main late: the USB interrupt (dwc2) was handled on CPU0, under the game's real-time
+# core 0, and Main on CPU1 got only 3 ms in every ~16 from core 1. So while a game runs:
+#   irq1   the USB interrupt goes to CPU1 (its old mask is kept in /tmp/ft_irq_saved and put back when the game ends, or at the next start if killed)
+#   share  core 1 gives Main 10 ms in every ~16 on CPU1 instead of 3
+#   nonice um2run skips its nice -20
+#   rt     um2run stays SCHED_RR 50; without it, normal priority (felt as good with the pad, but cost up to 28 percent fps on heavy games)
+# A/B on the MiSTer 9 Nov 09:24-09:49: irq1 and share cost no measurable speed (Dragon's Lair, Pac-Man, VecDrive, Star Wars); John's pad test 11:34: works well.
+# A file FAIR_TEST beside this script replaces the words (to compare): "rt" alone = 1.3 behaviour, "nonice irq1" = normal priority.
 ft_restore() { [ -f /tmp/ft_irq_saved ] && { read -r n m < /tmp/ft_irq_saved; echo "$m" > /proc/irq/$n/smp_affinity 2>/dev/null; rm -f /tmp/ft_irq_saved; }; }
 ft_restore
-sched="chrt -r 50"
-if [ -f FAIR_TEST ]; then
-	# chrt -o 0 explicitly: pitrexd runs at SCHED_RR 49 while the core is loaded and um2run would inherit that (seen 9 Nov 09:17)
-	sched="chrt -o 0"; ft=$(cat FAIR_TEST 2>/dev/null)
-	case " $ft " in *" rt "*) sched="chrt -r 50" ;; esac
-	case " $ft " in *" nonice "*) args="$args --no-nice" ;; esac
-	# "share" = core 1 gives Main 10 ms in every ~16 ms on CPU1 instead of 3 (A/B of 9 Nov 09:38: no speed lost on four heavy games)
-	case " $ft " in *" share "*) args=$(echo "$args" | sed 's/--donate 3000/--donate 10000/') ;; esac
-	case " $ft " in *" irq1 "*)
-		n=$(awk -F: '/dwc2/ { gsub(/ /, "", $1); print $1; exit }' /proc/interrupts)
-		[ -n "$n" ] && { echo "$n $(cat /proc/irq/$n/smp_affinity)" > /tmp/ft_irq_saved; echo 2 > /proc/irq/$n/smp_affinity; } ;;
-	esac
-	echo "$(date +%T) FAIR_TEST: um2run with ${sched} [${ft:-plain}]" >> /tmp/pitrexd.log
-fi
+ft="rt nonice irq1 share"
+[ -f FAIR_TEST ] && { ft=$(cat FAIR_TEST 2>/dev/null); echo "$(date +%T) FAIR_TEST: [${ft:-plain}]" >> /tmp/pitrexd.log; }
+# chrt -o 0 explicitly: pitrexd runs at SCHED_RR 49 while the core is loaded and um2run would inherit that (seen 9 Nov 09:17)
+sched="chrt -o 0"
+case " $ft " in *" rt "*) sched="chrt -r 50" ;; esac
+case " $ft " in *" nonice "*) args="$args --no-nice" ;; esac
+case " $ft " in *" share "*) args=$(echo "$args" | sed 's/--donate 3000/--donate 10000/') ;; esac
+case " $ft " in *" irq1 "*)
+	n=$(awk -F: '/dwc2/ { gsub(/ /, "", $1); print $1; exit }' /proc/interrupts)
+	[ -n "$n" ] && { echo "$n $(cat /proc/irq/$n/smp_affinity)" > /tmp/ft_irq_saved; echo 2 > /proc/irq/$n/smp_affinity; } ;;
+esac
 (
 	PTX_LEAD=${PTX_LEAD:-1} PTX_BACKEND=mister PTX_WAIT_CORE=60 nohup $sched ./um2run --bus $hold $args "$img" > /tmp/um2.log 2>&1
 	rc=$?
