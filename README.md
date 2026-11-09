@@ -7,7 +7,7 @@ The same route also runs games for the [UVMC2](https://github.com/tullulah/uvmc2
 With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everything below the line is his README and applies to this fork as well.
 
 ## Quick start
-1. Download `PiTrex_MiSTer_UVMC2_<version>_<date>.zip` (currently 1.0) from [Releases](https://github.com/z00p/Vectrex_MiSTer/releases) and unzip it onto the root of your MiSTer's SD card (`/media/fat`). It contains:
+1. Download `PiTrex_MiSTer_UVMC2_<version>_<date>.zip` (currently 1.4.1) from [Releases](https://github.com/z00p/Vectrex_MiSTer/releases) and unzip it onto the root of your MiSTer's SD card (`/media/fat`). It contains:
    - `_Console/Vectrex-PiTrex_<YYYYMMDD>.rbf`: the core with PiTrex mode (it runs as "Vectrex-PiTrex", with its own settings file `config/Vectrex-PiTrex_v2.CFG`, so it never touches the official core's settings), including (from B6) a 32 kHz PCM sound channel that programs can mix in next to the Vectrex's own sound;
    - `pitrex/`: the PiTrex and UVMC2 programs, the launcher and the menu helper;
    - `Scripts/PiTrex_*.sh`: Setup, Update, Stop and Uninstall;
@@ -36,6 +36,28 @@ With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everyt
 | UVMC2 Playroom | The UVMC2 team's showcase: a wireframe figure with a 13-bone skeleton walks a hub with four doors, and each room is a small game built on part of their SDK. |
 | UVMC2 FX demo | The UVMC2 team's effects demo: shoot a wireframe shape and it comes apart from where it was hit. |
 | Tac/Scan | The UVMC2 team's port of Sega's 1982 arcade game, included pre-built. It reads your MAME romset from `/media/fat/games/mame/tacscan.zip` (or `/media/fat/pitrex/uvmc2/tacscan/tacscan.zip`). For sound, drop MAME's `tacscan` samples zip ([Arcade@Home](https://www.arcadeathome.com/mamewav.phtml)) into `/media/fat/games/mame/samples/` as downloaded: it is converted automatically and plays at full quality through the PCM channel. Without it the game is silent. |
+
+## UVMC2 games
+UVMC2 game images (`.um2`) run in UVMC2 mode too. None are included: you bring your own, and the [UVMC2 games guide](pitrex/UVMC2_GAMES.md) explains how to set them up. These have been tested on a DE10-Nano:
+
+<table>
+<tr>
+<td align="center"><img src="pitrex/docs/shots/star_wars.png" width="150" alt="Star Wars"><br><b>Star Wars</b><br>Daniel Ferrer</td>
+<td align="center"><img src="pitrex/docs/shots/battlezone.png" width="150" alt="BattleZone"><br><b>BattleZone</b><br>Ralf Kornmann</td>
+<td align="center"><img src="pitrex/docs/shots/pac-man.png" width="150" alt="Pac-Man"><br><b>Pac-Man</b><br>UVMC2 conversion</td>
+<td align="center"><img src="pitrex/docs/shots/punch-out.png" width="150" alt="Punch-Out!!"><br><b>Punch-Out!!</b><br>UVMC2 conversion</td>
+<td align="center"><img src="pitrex/docs/shots/dragons_lair.png" width="150" alt="Dragon's Lair"><br><b>Dragon's Lair</b><br>Nigel Harrison</td>
+</tr>
+<tr>
+<td align="center"><img src="pitrex/docs/shots/mach3.png" width="150" alt="M.A.C.H. 3"><br><b>M.A.C.H. 3</b><br>Nigel Harrison</td>
+<td align="center"><img src="pitrex/docs/shots/vecdoom.png" width="150" alt="VecDoom"><br><b>VecDoom</b><br>UVMC2 conversion</td>
+<td align="center"><img src="pitrex/docs/shots/veccy_road.png" width="150" alt="Veccy Road"><br><b>Veccy Road</b><br>PlayVectrex</td>
+<td align="center"><img src="pitrex/docs/shots/vector_tank.png" width="150" alt="Vector Tank"><br><b>Vector Tank</b><br>Iyashikei (original game)</td>
+<td align="center"><img src="pitrex/docs/shots/vecdrive.png" width="150" alt="VecDrive"><br><b>VecDrive</b><br>z00p (also a PiTrex program above)</td>
+</tr>
+</table>
+
+The pictures are screenshots from the core, taken on a MiSTer while each game ran (VecDrive's has its overlay laid over it). The arcade titles are their owners' trademarks, and each conversion belongs to its author.
 
 ## More
 - How it works, building and the stream format: [pitrex/README.md](pitrex/README.md) and [pitrex/PROTOCOL.md](pitrex/PROTOCOL.md).
