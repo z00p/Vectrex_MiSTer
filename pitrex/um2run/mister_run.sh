@@ -34,7 +34,7 @@ case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3
 #   share  core 1 gives Main about 10 ms in every 24 on CPU1 (--donate 10000: 7 yielding 2 ms ticks, then a 10 ms sleep)
 #   nonice um2run skips its nice -20
 #   rt     um2run stays SCHED_RR 50; without it, normal priority (felt as good with the pad, but cost up to 28 percent fps on heavy games)
-# A/B on the MiSTer 9 Nov 09:24-09:49: irq1 and share cost no measurable speed (Dragon's Lair, Pac-Man, VecDrive, Star Wars); John's pad test 11:34: works well.
+# A/B on the MiSTer 9 Nov 09:24-09:49: irq1 and share cost no measurable speed (Dragon's Lair, Pac-Man, VecDrive, Star Wars); a Bluetooth pad played well with it.
 # A file FAIR_TEST beside this script replaces the words (to compare): "rt" alone = 1.3 behaviour, "nonice irq1" = normal priority.
 ft_restore() { [ -f /tmp/ft_irq_saved ] && { read -r n m < /tmp/ft_irq_saved; echo "$m" > /proc/irq/$n/smp_affinity 2>/dev/null; rm -f /tmp/ft_irq_saved; }; }
 ft_restore
