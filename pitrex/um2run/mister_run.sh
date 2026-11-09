@@ -30,19 +30,21 @@ case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3
 [ -f /tmp/um2.log ] && mv -f /tmp/um2.log /tmp/um2.prev.log
 # Bluetooth test (9 Nov 2026): with a file FAIR_TEST beside this script the game runs at normal priority instead of SCHED_RR 50, so the
 # kernel's USB / Bluetooth work on CPU0 is not held back by the real-time throttle (950 ms of every second for RT work).
-# Words in the file add more: "nonice" = um2run also skips its nice -20; "irq1" = the USB interrupt (dwc2) goes to CPU1 while the game runs.
+# Words in the file add more: "rt" = keep SCHED_RR 50 (to compare); "nonice" = um2run also skips its nice -20; "irq1" = the USB interrupt (dwc2) goes to CPU1 while the game runs.
 # The interrupt's old CPU mask is kept in /tmp/ft_irq_saved and put back when the game ends (and at the next start, in case it was killed).
 ft_restore() { [ -f /tmp/ft_irq_saved ] && { read -r n m < /tmp/ft_irq_saved; echo "$m" > /proc/irq/$n/smp_affinity 2>/dev/null; rm -f /tmp/ft_irq_saved; }; }
 ft_restore
 sched="chrt -r 50"
 if [ -f FAIR_TEST ]; then
-	sched=""; ft=$(cat FAIR_TEST 2>/dev/null)
+	# chrt -o 0 explicitly: pitrexd runs at SCHED_RR 49 while the core is loaded and um2run would inherit that (seen 9 Nov 09:17)
+	sched="chrt -o 0"; ft=$(cat FAIR_TEST 2>/dev/null)
+	case " $ft " in *" rt "*) sched="chrt -r 50" ;; esac
 	case " $ft " in *" nonice "*) args="$args --no-nice" ;; esac
 	case " $ft " in *" irq1 "*)
 		n=$(awk -F: '/dwc2/ { gsub(/ /, "", $1); print $1; exit }' /proc/interrupts)
 		[ -n "$n" ] && { echo "$n $(cat /proc/irq/$n/smp_affinity)" > /tmp/ft_irq_saved; echo 2 > /proc/irq/$n/smp_affinity; } ;;
 	esac
-	echo "$(date +%T) FAIR_TEST: um2run at normal priority [${ft:-plain}]" >> /tmp/pitrexd.log
+	echo "$(date +%T) FAIR_TEST: um2run with ${sched} [${ft:-plain}]" >> /tmp/pitrexd.log
 fi
 (
 	PTX_LEAD=${PTX_LEAD:-1} PTX_BACKEND=mister PTX_WAIT_CORE=60 nohup $sched ./um2run --bus $hold $args "$img" > /tmp/um2.log 2>&1
