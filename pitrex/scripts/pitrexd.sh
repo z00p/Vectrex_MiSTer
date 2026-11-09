@@ -82,7 +82,7 @@ cfg_get() {
 case "$0" in */*) ART_LIB=${0%/*}/art_lib.sh ;; *) ART_LIB=./art_lib.sh ;; esac
 [ -f "$ART_LIB" ] && . "$ART_LIB" || find_art() { return 0; }
 
-# show <text>: a pick that cannot start says why on the Vectrex for 20 s ('|' = new line, 4 lines of 16 characters at most: 17 and up run off the screen's sides, John's photo 8 Nov 2026),
+# show <text>: a pick that cannot start says why on the Vectrex for 20 s ('|' = new line, 4 lines of 16 characters at most: 17 and up run off the screen's sides, seen 8 Nov 2026),
 # as well as in the log. Never over a running program; the next pick or a core change stops it like any other program.
 show() {
 	[ -x "$UM2/um2run" ] || return 0
