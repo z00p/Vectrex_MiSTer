@@ -2,7 +2,7 @@
 /*
  * VecDrive - a pseudo-3D sunset racer for the PiTrex library.
  * Written for PiTrex on MiSTer (2026). An original game in the spirit of the
- * 80s arcade racers. v3: a four-phase race on an OutRun-style lattice of
+ * 80s arcade racers. v3: a four-phase race on a branching lattice of
  * nine themes (SEA, DESERT, FOREST, CANYON, CITY, ALPINE, LAKESIDE, VOLCANO,
  * NEON NIGHT). Every phase is time-bound (the next allowance is added on
  * arrival), ends in a fork where the lateral position picks the next theme,
@@ -1690,7 +1690,7 @@ static void reset_race(void)
 }
 
 /* the fork is over: pick the branch under the car, build the next phase and
-   add its allowance (OutRun style) */
+   add its allowance */
 static void advance_phase(void)
 {
 	int dir = player_x >= 0;
