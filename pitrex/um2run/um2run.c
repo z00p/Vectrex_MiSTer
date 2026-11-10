@@ -500,6 +500,7 @@ static double sysclk_hz(void) {
  * follows host time at sysclk.  UM2_NODWTFIX=1 (or UM2_NOAUDIO=1): the old 150 MHz host-time counter. */
 static int g_spifast;          /* set at start unless UM2_NOSPIFAST=1 or UM2_ISRSTAT is on: the stubs take SPI0 DR / SR straight to um2bus_spi_load / um2bus_spi_dr_store (4 Nov 2026) */
 static int g_spilean;          /* with g_spifast: stubs of SPI0 sites go through um2_hthunk_spild / _spist, no VFP save for DR / SR (10 Nov 2026; UM2_NOSPILEAN=1: um2_hthunk as before) */
+static int g_srfast;           /* with g_spilean: SR loads skip the thunk entirely (um2_hthunk_spisr; off by default, UM2_SRFAST=1: on -- no gain measured beyond the noise) */
 static __thread uint32_t tl_patch_addr;   /* the address of the access that asked for the patch now being built */
 static int g_dwtfast = 1;        /* UM2_NODWTFAST=1: DWT_CYCCNT reads from the stubs take the generic MMIO path again (shadow lookups, census, loop breaker) and recompute the clock rate each time */
 static __thread uint32_t tl_dwt, tl_dwt_us; static __thread uint64_t tl_dwt_e; static __thread int tl_dwt_init;
@@ -1045,6 +1046,7 @@ static void stub_setup(void) {
     g_dwtfast = getenv("UM2_NODWTFAST") == NULL;
     g_spifast = opt.bus && !g_isrstat && getenv("UM2_NOSPIFAST") == NULL;
     g_spilean = g_spifast && getenv("UM2_NOSPILEAN") == NULL && getenv("UM2_SITES") == NULL && um2sd_lean_ok() && um2bus_spi_lean_ok();   /* UM2_SITES counts in the helper; -v -v -v logs card commands */
+    g_srfast = g_spilean && getenv("UM2_SRFAST") != NULL;
 #ifdef UM2_VFPTEST
     g_spilean = 0;
 #endif
@@ -1223,8 +1225,14 @@ __asm__(".pushsection .text.um2_hthunk,\"ax\",%progbits\n\t.arm\n\t.arch armv7-a
         ".global um2_hthunk_spist\n.type um2_hthunk_spist, %function\n"
         "um2_hthunk_spist:\n\tldr r12, 4f\n\tcmp r0, r12\n\tbne um2_hthunk\n\tmov r0, r1\n\tldr r3, 6f\n\tb um2_hthunk_lean\n"
         "3:\t.word 0xFFFFCFFB\n4:\t.word 0x40080008\n5:\t.word um2_spild_lean\n6:\t.word um2_spist_lean\n"
-        ".size um2_hthunk_spist, .-um2_hthunk_spist\n.popsection\n");
-void um2_hthunk_spild(void), um2_hthunk_spist(void);
+        ".size um2_hthunk_spist, .-um2_hthunk_spist\n"
+        /* um2_hthunk_spisr: as um2_hthunk_spild, but SPI0 SR (any alias) goes straight to um2_srfast, a leaf that uses no stack and no VFP
+         * register (checked in the disassembly), without the thunk's stack switch: half the card's accesses are SR polls. */
+        ".global um2_hthunk_spisr\n.type um2_hthunk_spisr, %function\n"
+        "um2_hthunk_spisr:\n\tldr r12, 7f\n\tand r12, r0, r12\n\tldr r2, 8f\n\tcmp r12, r2\n\tldreq r12, 9f\n\tbxeq r12\n\tb um2_hthunk_spild\n"
+        "7:\t.word 0xFFFFCFFF\n8:\t.word 0x4008000C\n9:\t.word um2_srfast\n"
+        ".size um2_hthunk_spisr, .-um2_hthunk_spisr\n.popsection\n");
+void um2_hthunk_spild(void), um2_hthunk_spist(void), um2_hthunk_spisr(void);
 /* ---- hot GPIO_IN load acceleration (--bus): `ldr rt, [rn, #imm]` (16-bit) that faults on SIO GPIO_IN again and again (the SDK's E-clock polling loops)
  * is rewritten together with the following 16-bit ALU/compare instruction into `b.w stub`.  The stub saves r0-r3/r12/lr/flags, calls
  * um2_mload() (the same model the trap path uses), stores the result into rt, restores, runs the relocated instruction and returns.
@@ -1313,6 +1321,7 @@ void um2_mstore(uint32_t addr, uint32_t val, uint32_t site) {
 /* what um2_mload / um2_mstore do for SPI0 DR / SR, from um2_hthunk_spild / _spist (only installed when g_spifast holds and nothing per site is counted) */
 uint32_t um2_spild_lean(uint32_t addr) { tl_n_ml++; tl_act++; return um2bus_spi_load(addr); }
 void um2_spist_lean(uint32_t val) { tl_act++; tl_n_ms++; um2bus_spi_dr_store(val); }
+uint32_t um2_srfast(void) { tl_n_ml++; tl_act++; return um2bus_spi_sr(); }   /* from um2_hthunk_spisr, on the guest's stack: must stay a frameless leaf */
 /* Generalised: 32-bit loads/stores of SIO and DMA registers too.  A site is `ldr/str rt,[rn,#imm]` in the 16-bit imm5 form or the 32-bit
  * imm12 form; a 16-bit site takes the following halfword with it, which is relocated into the stub if it is a plain PC-independent ALU
  * instruction, or emulated through the helper as well if it is another 16-bit imm5 ldr/str (the helpers pass non-MMIO addresses straight
@@ -1462,7 +1471,7 @@ static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int 
             E(0xEB00); E((uint16_t)(((rmsh & 3) << 6) | 1));
         }
         if (!o->load) { if (slot_of(o->rt) >= 0) { E(0xF8DD); E(0x1000 | slot_of(o->rt)); } else E(0x4600 | (o->rt << 3) | 1); }   /* r1 = rt */
-        { void (*th)(void) = g_novfp ? um2_hthunk_lean : (g_spilean && (tl_patch_addr & 0xFFFFC000u) == 0x40080000u) ? (o->load ? um2_hthunk_spild : um2_hthunk_spist) : um2_hthunk;
+        { void (*th)(void) = g_novfp ? um2_hthunk_lean : (g_spilean && (tl_patch_addr & 0xFFFFC000u) == 0x40080000u) ? (o->load ? (g_srfast ? um2_hthunk_spisr : um2_hthunk_spild) : um2_hthunk_spist) : um2_hthunk;
         E(0xF8DF); lits[nl].at = n; lits[nl].which = 0; lits[nl].val = (uint32_t)(uintptr_t)th; nl++; E(0xC000); }   /* ldr r12, =thunk */
         E(0xF8DF); lits[nl].at = n; lits[nl].which = 0; lits[nl].val = (uint32_t)(uintptr_t)(o->load ? (void *)um2_mload : (void *)um2_mstore); nl++; E(0x3000);   /* ldr r3, =fn */
         E(0xF8DF); lits[nl].at = n; lits[nl].which = 0; lits[nl].val = site + (pre ? 0u : 2u * (uint32_t)i); nl++; E(o->load ? 0x1000 : 0x2000);          /* ldr r1|r2, =site */
@@ -2567,6 +2576,7 @@ static void ld_take(void) {
     ld_stop();
     ld_restore(1);
     unsigned long n = um2sd_present() ? um2sd_reads() : 0;
+    if (opt.bus) um2bus_ring_mark();
     if (g_ld_frames || opt.bus_verbose) fprintf(stderr, "loading: image took the ring at %.1f s after %u indicator frames, %lu sector reads (known total %u)\n", now() - g_t0, g_ld_frames, n, g_ld_total);
     if (n >= LD_MINSEC && n != g_ld_total && opt.file) {                                         /* remember the total; unwritable path: silently skipped */
         char p[1100]; snprintf(p, sizeof p, "%s.load", opt.file); FILE *f = fopen(p, "w");

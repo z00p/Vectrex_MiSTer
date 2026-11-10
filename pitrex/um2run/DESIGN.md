@@ -88,7 +88,11 @@ commands, so the cartridge and the core never need to know about each other.
   `um2sd.c`) uses no VFP register and no libc call but the mutex and `pread` / `pwrite`
   (table CRC16, plain copy loops), so the stubs of SPI0 sites call it through a thunk that
   saves no VFP state; any other address in such a stub still goes through the full thunk
-  (`UM2_NOSPILEAN=1`: the full thunk for all).
+  (`UM2_NOSPILEAN=1`: the full thunk for all). The card lock is a spin lock that falls back
+  to 20 us sleeps after about 2000 spins, so a holder preempted on the same CPU cannot
+  deadlock it (`UM2_SPIMUTEX=1`: a pthread mutex). `UM2_SRFAST=1` (experimental, off by
+  default: no gain measured beyond the noise) sends SR loads at SPI0 sites straight to a
+  frameless leaf (`um2_srfast`) without the thunk's stack switch.
 - **PSRAM.** Images that stage a ROM set in PSRAM get 8 MB of RAM at 0x11000000 (and the
   uncached alias at 0x15000000, the same memory). The QMI direct-mode ID handshake that
   proves the PSRAM is present is modelled.

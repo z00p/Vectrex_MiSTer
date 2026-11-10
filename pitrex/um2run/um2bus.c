@@ -34,11 +34,17 @@ static pthread_mutex_t g_misc = PTHREAD_MUTEX_INITIALIZER;  /* SIO FIFO */
 /* The SD card (SPI0 + um2sd) has a lock of its own (10 Nov 2026): the card byte loop on core 0 no longer queues behind core 1's PIO pushes
  * and DMA runs.  Order: g_bus before g_spim.  The stubs' short cut takes only g_spim; the generic MMIO path, SPI DMA and the bit-banged card
  * (SIO, under g_bus) take g_spim inside g_bus.  UM2_SPIBUSLOCK=1: the old way (the short cut under g_bus, g_spim unused). */
-static pthread_mutex_t g_spim = PTHREAD_MUTEX_INITIALIZER; static int g_spi_buslock;
-#define SPIM_LOCK()   do { if (!g_spi_buslock) pthread_mutex_lock(&g_spim); } while (0)
-#define SPIM_UNLOCK() do { if (!g_spi_buslock) pthread_mutex_unlock(&g_spim); } while (0)
-#define SPI_LOCK_T()   do { if (g_spi_buslock) BUS_LOCK_T(4); else if (g_busstat) { uint64_t a_ = bl_ns(); pthread_mutex_lock(&g_spim); tl_bl_t0 = bl_ns(); g_bst[4].wait += tl_bl_t0 - a_; if (tl_bl_t0 - a_ > 100000) g_bst[4].bigw++; } else pthread_mutex_lock(&g_spim); } while (0)
-#define SPI_UNLOCK_T() do { if (g_spi_buslock) BUS_UNLOCK_T(4); else { if (g_busstat) { uint64_t h_ = bl_ns() - tl_bl_t0; g_bst[4].n++; g_bst[4].hold += h_; if (h_ > g_bst[4].max) g_bst[4].max = h_; if (h_ > 100000) g_bst[4].big++; } pthread_mutex_unlock(&g_spim); } } while (0)
+static pthread_mutex_t g_spim = PTHREAD_MUTEX_INITIALIZER; static int g_spi_buslock, g_spi_mutex;
+/* g_spim is a spin lock (10 Nov 2026): only core 0's card loop takes it in practice, and a pthread mutex costs two calls and two barriers per
+ * card access.  A holder that does not let go within ~2000 spins (preempted on the same CPU) is waited for with 20 us sleeps.  UM2_SPIMUTEX=1: the mutex. */
+static volatile int g_spim_sl;
+static void spim_wait(void) { for (unsigned n = 0;; n++) { if (!__atomic_load_n(&g_spim_sl, __ATOMIC_RELAXED) && !__atomic_exchange_n(&g_spim_sl, 1, __ATOMIC_ACQUIRE)) return; if (n >= 2000) { struct timespec ts = { 0, 20000 }; nanosleep(&ts, NULL); } } }
+static inline void spim_take(void) { if (g_spi_mutex) pthread_mutex_lock(&g_spim); else if (__atomic_exchange_n(&g_spim_sl, 1, __ATOMIC_ACQUIRE)) spim_wait(); }
+static inline void spim_give(void) { if (g_spi_mutex) pthread_mutex_unlock(&g_spim); else __atomic_store_n(&g_spim_sl, 0, __ATOMIC_RELEASE); }
+#define SPIM_LOCK()   do { if (!g_spi_buslock) spim_take(); } while (0)
+#define SPIM_UNLOCK() do { if (!g_spi_buslock) spim_give(); } while (0)
+#define SPI_LOCK_T()   do { if (g_spi_buslock) BUS_LOCK_T(4); else if (g_busstat) { uint64_t a_ = bl_ns(); spim_take(); tl_bl_t0 = bl_ns(); g_bst[4].wait += tl_bl_t0 - a_; if (tl_bl_t0 - a_ > 100000) g_bst[4].bigw++; } else spim_take(); } while (0)
+#define SPI_UNLOCK_T() do { if (g_spi_buslock) BUS_UNLOCK_T(4); else { if (g_busstat) { uint64_t h_ = bl_ns() - tl_bl_t0; g_bst[4].n++; g_bst[4].hold += h_; if (h_ > g_bst[4].max) g_bst[4].max = h_; if (h_ > 100000) g_bst[4].big++; } spim_give(); } } while (0)
 #else
 #define SPIM_LOCK()
 #define SPIM_UNLOCK()
@@ -85,6 +91,7 @@ static int      g_fstarted;
 static void frame_mark(int forced);
 
 __attribute__((weak)) uint64_t g_trap_ns, g_trap_n;   /* the loader owns them */
+static double g_wallr; static uint64_t g_framesr; static int g_ringmark;   /* frames from the moment the image took the ring after a loading indicator (um2bus_ring_mark) */
 static double g_tw, g_tf, g_wall0, g_wall1; static uint64_t g_frames0;      /* seconds spent in sink writes / ptx_frame (profiling, um2bus_stats) */
 static double cpu_s(clockid_t id) { struct timespec t; clock_gettime(id, &t); return t.tv_sec + t.tv_nsec * 1e-9; }
 static inline double tnow(void) { return (double)um2_clock_ns() * 1e-9; }
@@ -1177,6 +1184,8 @@ uint32_t um2bus_spi_load(uint32_t addr) {
 }
 void um2bus_spi_dr_store(uint32_t val) { SPI_LOCK_T(); spi_store(0x40080008u, val); SPI_UNLOCK_T(); }
 int um2bus_spi_lean_ok(void) { return !g_busstat; }
+uint32_t um2bus_spi_sr(void) { return spi_sr(); }
+void um2bus_ring_mark(void) { g_framesr = S.frames; g_wallr = tnow(); g_ringmark = 1; }   /* diagnostics: the fps line for the part after a loading indicator */   /* SPI0 SR alone: a leaf without a stack frame (um2run.c um2_srfast) */
 
 /* ------------------------------------------------------------------ QMI direct mode with an APS6404L-style PSRAM on CS1
  * The Star Wars image (like other UVMC2 images that stage a romset in PSRAM) resets the PSRAM through QMI direct mode (0x66, 0x99), reads
@@ -1255,7 +1264,7 @@ void um2bus_init(const um2bus_cfg_t *cfg) {
 	{ const char *e = getenv("UM2_BUSYUS"); if (e) { long u = atol(e); g_busy_ns = u <= 0 ? 0 : u > 5000 ? 5000000 : u * 1000; } }
 	g_nofast = getenv("UM2BUS_NOFAST") != NULL; g_aud_pred = getenv("UM2_NOAUDPRED") == NULL; g_busstat = getenv("UM2_BUSSTAT") != NULL;
 #ifndef UM2BUS_NO_THREADS
-	g_spi_buslock = getenv("UM2_SPIBUSLOCK") != NULL;
+	g_spi_buslock = getenv("UM2_SPIBUSLOCK") != NULL; g_spi_mutex = getenv("UM2_SPIMUTEX") != NULL;
 #endif
 	if (C.dma_mirror) { g_mir = C.dma_mirror; pthread_t th; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setstacksize(&at, 1 << 16); if (!pthread_create(&th, &at, busy_thread, NULL)) pthread_detach(th); else g_mir = NULL; }
 	if (getenv("UM2BUS_NOEDGE")) g_edge_time = 0;
@@ -1322,6 +1331,7 @@ void um2bus_stats(FILE *f) {
 	if (g_busstat) for (int i = 0; i < 12; i++) if (g_bst[i].n) fprintf(f, "um2bus: BUSSTAT %-10s n %llu, wait avg %.1f us (>100us: %llu), hold avg %.1f us, max %.0f us, holds >100us %llu\n", g_bst_name[i], (unsigned long long)g_bst[i].n, g_bst[i].wait / (double)g_bst[i].n / 1e3, (unsigned long long)g_bst[i].bigw, g_bst[i].hold / (double)g_bst[i].n / 1e3, g_bst[i].max / 1e3, (unsigned long long)g_bst[i].big);
 	if (g_v2_words) fprintf(f, "um2bus: v2 engine: %llu words (%llu reads), %llu E cycles\n", g_v2_words, g_v2_reads, g_v2_cycles);
 	if (g_wall1 > g_wall0) fprintf(f, "um2bus: %llu frames in %.1f s = %.1f fps (%.1f ms per frame), measured from the first frame mark\n", (unsigned long long)(S.frames - g_frames0), g_wall1 - g_wall0, (S.frames - g_frames0) / (g_wall1 - g_wall0), (g_wall1 - g_wall0) * 1e3 / (double)(S.frames - g_frames0));
+	if (g_ringmark && g_wall1 > g_wallr && S.frames > g_framesr) fprintf(f, "um2bus: %llu frames in %.1f s = %.1f fps after the image took the ring (the loading indicator left out)\n", (unsigned long long)(S.frames - g_framesr), g_wall1 - g_wallr, (S.frames - g_framesr) / (g_wall1 - g_wallr));
 	if (g_cap) fflush(g_cap);
 	um2aud_finish();                            /* the .wav header (the time-limit exit does not run atexit handlers) */
 #ifndef UM2BUS_NO_THREADS
