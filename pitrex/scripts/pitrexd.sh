@@ -311,10 +311,25 @@ core_arrived() {
 # SIGTERM is delivered) in which it could still write. This kill makes that window as short
 # as the daemon can; the program's own check usually wins. Only the ours -> other transition
 # triggers it, so a launcher that starts a program before it loads the core is left alone.
-was_ours=0; core_is_ours && { was_ours=1; set_prio fast; core_arrived; }
+# main-pitrex (a Main of its own, loaded with main= for our core only) starts the games itself and writes /tmp/pitrex_main
+# ("<pid> <its program path>") while it runs. Then we stand aside completely: no picks, no core-change kill, idle priority.
+# Main execs the next Main in the same process, so the pid alone is not enough: the program must still be main-pitrex.
+main_pitrex() {
+	local p e
+	read -r p e 2>/dev/null < $T/pitrex_main || return 1
+	[ -n "$p" ] && [ "$(readlink /proc/$p/exe 2>/dev/null)" = "$e" ]
+}
+aside=0
+was_ours=0; main_pitrex || { core_is_ours && { was_ours=1; set_prio fast; core_arrived; }; }
 core_is_ours || set_prio idle
 
 while :; do
+	if main_pitrex; then
+		[ "$aside" = 1 ] || { aside=1; was_ours=0; set_prio idle; echo "$(date +%T) main-pitrex runs: standing aside" >> $LOG; }
+		nap 1
+		continue
+	fi
+	if [ "$aside" = 1 ]; then aside=0; seen_now; echo "$(date +%T) main-pitrex gone: back on duty" >> $LOG; fi
 	if core_is_ours; then
 		nap 0.2
 		if [ "$was_ours" != 1 ]; then was_ours=1; set_prio fast; core_arrived; fi
