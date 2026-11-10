@@ -313,7 +313,7 @@ core_arrived() {
 # triggers it, so a launcher that starts a program before it loads the core is left alone.
 # main-pitrex (a Main of its own, loaded with main= for our core only) starts the games itself and writes /tmp/pitrex_main
 # ("<pid> <its program path>") while it runs. Then we stand aside completely: no picks, no core-change kill, idle priority.
-# Main execs the next Main in the same process, so the pid alone is not enough: the program must still be main-pitrex.
+# Every core load restarts Main as a new process and pids are reused, so the pid alone is not enough: the program must still be main-pitrex.
 main_pitrex() {
 	local p e
 	read -r p e 2>/dev/null < $T/pitrex_main || return 1
