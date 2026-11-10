@@ -2805,13 +2805,23 @@ static void install_sigstack(void) {
     static char stacks[4][1 << 16] __attribute__((aligned(64))); static int nst; size_t sz = 1 << 16; void *m = stacks[nst++ & 3];
     stack_t ss = { m, 0, sz }; sigaltstack(&ss, NULL);
 }
+/* --cpu1-normal (10 Nov 2026): once core 1 has its own CPU, it leaves real-time scheduling for SCHED_OTHER at nice -20, so that Linux on
+ * that CPU (the USB/Bluetooth softirq work, MiSTer Main) gets it whenever it needs it, without a fixed donation; core 0, which plays the
+ * cart's sound, stays real-time.  Never before the move: on one shared CPU a priority gap starves a guest thread (see um2_rt_boost). */
+static int g_c1_normal;
+static void c1_go_normal(pid_t tid) {
+    struct sched_param sp = { 0 };
+    if (sched_setscheduler(tid, SCHED_OTHER, &sp)) { perror("core1 SCHED_OTHER"); return; }
+    if (setpriority(PRIO_PROCESS, (id_t)tid, -20)) perror("core1 nice");
+    fprintf(stderr, "core 1: normal scheduling, nice -20\n");
+}
 static void *core1_thread(void *arg) {
     (void)arg;
     sigset_t e; sigemptyset(&e); pthread_sigmask(SIG_SETMASK, &e, NULL);
     install_sigstack();
     tl_core = 1; tl_guest = 1; hstack_set(1); pthread_setname_np(pthread_self(), "u2core1");
     g_c1_tid = (pid_t)syscall(SYS_gettid);
-    if (g_cpu1 >= 0 && g_cpu1_after <= 0) { cpu_set_t cs; CPU_ZERO(&cs); CPU_SET(g_cpu1, &cs); if (sched_setaffinity(0, sizeof cs, &cs)) perror("core1 affinity"); else g_c1_own_cpu = 1; }
+    if (g_cpu1 >= 0 && g_cpu1_after <= 0) { cpu_set_t cs; CPU_ZERO(&cs); CPU_SET(g_cpu1, &cs); if (sched_setaffinity(0, sizeof cs, &cs)) perror("core1 affinity"); else { g_c1_own_cpu = 1; if (g_c1_normal) c1_go_normal(0); } }
     g_th_core1 = pthread_self(); __atomic_store_n(&g_have_core1, 1, __ATOMIC_RELEASE);      /* published after the thread id (review item 7) */
     uint32_t sp = g_c1_sp, ent = g_c1_entry | 1;
     fprintf(stderr, "core 1: sp=%08x entry=%08x\n", sp, ent);
@@ -2827,7 +2837,7 @@ static void *c1_mover(void *arg) {
     struct timespec ts = { (time_t)g_cpu1_after, (long)((g_cpu1_after - (time_t)g_cpu1_after) * 1e9) }; nanosleep(&ts, NULL);
     while (!g_c1_tid) usleep(10000);
     cpu_set_t cs; CPU_ZERO(&cs); CPU_SET(g_cpu1, &cs);
-    if (sched_setaffinity(g_c1_tid, sizeof cs, &cs)) perror("core1 move"); else { g_c1_own_cpu = 1; fprintf(stderr, "core 1 moved to CPU %d after %.1f s\n", g_cpu1, g_cpu1_after); }
+    if (sched_setaffinity(g_c1_tid, sizeof cs, &cs)) perror("core1 move"); else { g_c1_own_cpu = 1; fprintf(stderr, "core 1 moved to CPU %d after %.1f s\n", g_cpu1, g_cpu1_after); if (g_c1_normal) c1_go_normal(g_c1_tid); }
     return NULL;
 }
 static void k_launch_core1(uint32_t vtor, uint32_t sp, uint32_t entry) {
@@ -3134,6 +3144,7 @@ static void usage(void) {
         "  --live             flush every log line (default: buffered, flushed every 2 s and at exit)\n"
         "  --rt N             run as SCHED_RR priority N (1..99); --cpu N pin to core N; --no-nice skip nice -20\n"
         "  --cpu1 N [--cpu1-after S]  pin core 1 to CPU N (after S s on the process CPU: black-screen guard)\n"
+        "  --cpu1-normal      core 1 leaves real-time scheduling (SCHED_OTHER, nice -20) once on its own CPU\n"
         "  --settle S         sleep S s before starting (let Main finish its video setup)\n"
         "  --no-canned        reads return only what was written (else 0)\n"
         "  --bus              run the image for real: svc dispatch, RP2350 PIO/DMA/SIO device model, core 1 as a thread,\n"
@@ -3183,6 +3194,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--cpu1") && i + 1 < argc) g_cpu1 = atoi(argv[++i]);
         else if (!strcmp(a, "--settle") && i + 1 < argc) g_settle = atof(argv[++i]);
         else if (!strcmp(a, "--cpu1-after") && i + 1 < argc) g_cpu1_after = atof(argv[++i]);
+        else if (!strcmp(a, "--cpu1-normal")) g_c1_normal = 1;
         else if (!strcmp(a, "--donate") && i + 1 < argc) g_donate_us = (unsigned)atoi(argv[++i]);
         else if (!strcmp(a, "--capture") && i + 1 < argc) opt.capture = argv[++i];
         else if (!strcmp(a, "--frame-cycles") && i + 1 < argc) opt.frame_cycles = (unsigned)strtoul(argv[++i], 0, 0);
