@@ -70,7 +70,7 @@ experimental `orient` and `view`. They are described in [../UVMC2_GAMES.md](../U
 | `UM2_AUDPRE=<ms>` | cart audio jitter buffer, default 60, at most about 90 |
 | `UM2_AUDHOLD=<ms>` | how long the cart audio waits for a game that is late refilling its ring before it plays the old lap again, default 30, 0 = off |
 | `SETTLE=<s>`, `CPU1_AFTER=<s>` | `mister_run.sh`: black-screen guard timings (sidecar keys `settle`, `cpu1_after`) |
-| `UM2_NOVFP=1`, `UM2_NOSPIPATCH=1`, `UM2_NOXIPMAINT=1` | switch off an optimisation, to find out whether it is to blame for a problem |
+| `UM2_NOVFP=1`, `UM2_NOSPIPATCH=1`, `UM2_NOXIPMAINT=1`, `UM2_SPIBUSLOCK=1`, `UM2_NOSPILEAN=1` | switch off an optimisation, to find out whether it is to blame for a problem |
 
 The other `UM2_*` variables are developer diagnostics and A/B switches; `grep getenv um2run.c um2bus.c um2aud.c`.
 

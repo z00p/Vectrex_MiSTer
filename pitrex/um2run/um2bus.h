@@ -49,6 +49,7 @@ int  um2bus_load(uint32_t addr, int size, uint32_t *val, int core);
 /* SPI0 DR / SR words (any alias for loads, alias 0 for the DR store): the same as um2bus_load / um2bus_store, for the stubs' card byte loop */
 uint32_t um2bus_spi_load(uint32_t addr);
 void     um2bus_spi_dr_store(uint32_t val);
+int      um2bus_spi_lean_ok(void);   /* the two above run without VFP use (no UM2_BUSSTAT timing): the card stubs may skip the VFP save */
 /* level of the interrupt lines the model owns (bit n = NVIC IRQ n): DMA_IRQ_0..3 = IRQ 10..13 */
 uint64_t um2bus_irq_lines(void);
 void um2bus_stats(FILE *f);

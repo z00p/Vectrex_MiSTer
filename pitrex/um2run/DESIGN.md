@@ -82,6 +82,13 @@ commands, so the cartridge and the core never need to know about each other.
   words straight to the model (`um2bus_spi_load` / `um2bus_spi_dr_store`), and the status read
   skips the bus lock. VecDoom, which streams its WAD in play, went from about 47 to 50 fps in
   attract (its ceiling). `UM2_NOSPIFAST=1` puts them back on the generic path.
+  The card has a lock of its own (`g_spim`, taken inside the bus lock where both are
+  needed), so core 0's byte loop no longer waits behind core 1's PIO and DMA work for the
+  bus lock (`UM2_SPIBUSLOCK=1`: the old single lock). The byte path (`um2bus_spi_*`,
+  `um2sd.c`) uses no VFP register and no libc call but the mutex and `pread` / `pwrite`
+  (table CRC16, plain copy loops), so the stubs of SPI0 sites call it through a thunk that
+  saves no VFP state; any other address in such a stub still goes through the full thunk
+  (`UM2_NOSPILEAN=1`: the full thunk for all).
 - **PSRAM.** Images that stage a ROM set in PSRAM get 8 MB of RAM at 0x11000000 (and the
   uncached alias at 0x15000000, the same memory). The QMI direct-mode ID handshake that
   proves the PSRAM is present is modelled.

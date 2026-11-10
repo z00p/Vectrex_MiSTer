@@ -499,6 +499,8 @@ static double sysclk_hz(void) {
  * the A9, nanoseconds on a PC), so while the thread polls E edges the counter advances by sysclk/1.5 MHz cycles per polled period instead; without edges it
  * follows host time at sysclk.  UM2_NODWTFIX=1 (or UM2_NOAUDIO=1): the old 150 MHz host-time counter. */
 static int g_spifast;          /* set at start unless UM2_NOSPIFAST=1 or UM2_ISRSTAT is on: the stubs take SPI0 DR / SR straight to um2bus_spi_load / um2bus_spi_dr_store (4 Nov 2026) */
+static int g_spilean;          /* with g_spifast: stubs of SPI0 sites go through um2_hthunk_spild / _spist, no VFP save for DR / SR (10 Nov 2026; UM2_NOSPILEAN=1: um2_hthunk as before) */
+static __thread uint32_t tl_patch_addr;   /* the address of the access that asked for the patch now being built */
 static int g_dwtfast = 1;        /* UM2_NODWTFAST=1: DWT_CYCCNT reads from the stubs take the generic MMIO path again (shadow lookups, census, loop breaker) and recompute the clock rate each time */
 static __thread uint32_t tl_dwt, tl_dwt_us; static __thread uint64_t tl_dwt_e; static __thread int tl_dwt_init;
 static uint32_t dwt_now(void) {
@@ -746,6 +748,7 @@ static int cpu_fault_mem(int sig, Cpu *c, uint32_t addr, uint16_t h1, uint16_t h
                /* SIO, DMA, SPI0 (SD card: ~4 traps per byte otherwise; UM2_NOSPIPATCH=1 = old behaviour) */
         if (opt.bus && (e->n == 6 || (e->n > 6 && e->n < 520 && ((e->n - 6) & 7) == 0)) && m.size == 4 && nreg == 1 && m.wbreg < 0 && elig) {
             tried = 1;
+            tl_patch_addr = addr;
             if (hot_patch(c, pc, h1, h2, len, m.load)) { hs_note(pc, addr, m.load, m.size, 0, 1); return ACT_CONT; }   /* patched: run the site again (resuming at pc+2 would land inside the b.w); the constant-load variant returns 0 and lets this access finish through the emulation below */
             why = tl_why;
         } else if (!elig) why = HW_ADDR; else if (m.size != 4) why = HW_SIZE; else if (nreg != 1 || m.wbreg >= 0) why = HW_MULTI;
@@ -1041,6 +1044,10 @@ static void stub_setup(void) {
     g_nonewblk = getenv("UM2_NONEWBLK") != NULL;
     g_dwtfast = getenv("UM2_NODWTFAST") == NULL;
     g_spifast = opt.bus && !g_isrstat && getenv("UM2_NOSPIFAST") == NULL;
+    g_spilean = g_spifast && getenv("UM2_NOSPILEAN") == NULL && getenv("UM2_SITES") == NULL && um2sd_lean_ok() && um2bus_spi_lean_ok();   /* UM2_SITES counts in the helper; -v -v -v logs card commands */
+#ifdef UM2_VFPTEST
+    g_spilean = 0;
+#endif
     g_noreach = getenv("UM2_NOREACH") != NULL;
     g_novrint = getenv("UM2_NOVRINT") != NULL;
     g_novmaxnm = getenv("UM2_NOVMAXNM") != NULL;
@@ -1205,7 +1212,19 @@ __asm__(".pushsection .text.um2_hthunk,\"ax\",%progbits\n\t.arm\n\t.arch armv7-a
         ".global um2_hthunk_lean\n.type um2_hthunk_lean, %function\n"
         "um2_hthunk_lean:\n\tpush {r4-r6, lr}\n\tmov r6, sp\n\tmrc p15, 0, r4, c13, c0, 3\n\tldr r5, 1b\n\tldr r5, [r4, r5]\n\tcmp r5, #0\n\tmovne sp, r5\n\tbic sp, sp, #7\n"
         "\tblx r3\n\tmov sp, r6\n\tpop {r4-r6, lr}\n\tbx lr\n"
-        ".size um2_hthunk_lean, .-um2_hthunk_lean\n.popsection\n");
+        ".size um2_hthunk_lean, .-um2_hthunk_lean\n"
+        /* SD card byte loop (10 Nov 2026): stubs of SPI0 sites call these instead of um2_hthunk.  SPI0 DR / SR (the address in r0, checked here at run
+         * time) goes to um2_spild_lean / um2_spist_lean through the lean thunk: that path (um2bus_spi_*, um2sd) uses no VFP register and no libc
+         * but pthread_mutex and pread/pwrite (checked in the disassembly).  Any other address goes to um2_hthunk with r3 = um2_mload / um2_mstore,
+         * as before.  r2 and r12 are free here (the stub saved r0-r3, r12, lr and the flags). */
+        ".global um2_hthunk_spild\n.type um2_hthunk_spild, %function\n"
+        "um2_hthunk_spild:\n\tldr r12, 3f\n\tand r12, r0, r12\n\tldr r2, 4f\n\tcmp r12, r2\n\tbne um2_hthunk\n\tldr r3, 5f\n\tb um2_hthunk_lean\n"
+        ".size um2_hthunk_spild, .-um2_hthunk_spild\n"
+        ".global um2_hthunk_spist\n.type um2_hthunk_spist, %function\n"
+        "um2_hthunk_spist:\n\tldr r12, 4f\n\tcmp r0, r12\n\tbne um2_hthunk\n\tmov r0, r1\n\tldr r3, 6f\n\tb um2_hthunk_lean\n"
+        "3:\t.word 0xFFFFCFFB\n4:\t.word 0x40080008\n5:\t.word um2_spild_lean\n6:\t.word um2_spist_lean\n"
+        ".size um2_hthunk_spist, .-um2_hthunk_spist\n.popsection\n");
+void um2_hthunk_spild(void), um2_hthunk_spist(void);
 /* ---- hot GPIO_IN load acceleration (--bus): `ldr rt, [rn, #imm]` (16-bit) that faults on SIO GPIO_IN again and again (the SDK's E-clock polling loops)
  * is rewritten together with the following 16-bit ALU/compare instruction into `b.w stub`.  The stub saves r0-r3/r12/lr/flags, calls
  * um2_mload() (the same model the trap path uses), stores the result into rt, restores, runs the relocated instruction and returns.
@@ -1291,6 +1310,9 @@ void um2_mstore(uint32_t addr, uint32_t val, uint32_t site) {
     else if (addr == 0x40080008u && g_spifast) { tl_act++; tl_n_ms++; um2bus_spi_dr_store(val); }    /* SPI0 DR: as um2_mload */
     else mmio_store(addr, 4, val);
 }
+/* what um2_mload / um2_mstore do for SPI0 DR / SR, from um2_hthunk_spild / _spist (only installed when g_spifast holds and nothing per site is counted) */
+uint32_t um2_spild_lean(uint32_t addr) { tl_n_ml++; tl_act++; return um2bus_spi_load(addr); }
+void um2_spist_lean(uint32_t val) { tl_act++; tl_n_ms++; um2bus_spi_dr_store(val); }
 /* Generalised: 32-bit loads/stores of SIO and DMA registers too.  A site is `ldr/str rt,[rn,#imm]` in the 16-bit imm5 form or the 32-bit
  * imm12 form; a 16-bit site takes the following halfword with it, which is relocated into the stub if it is a plain PC-independent ALU
  * instruction, or emulated through the helper as well if it is another 16-bit imm5 ldr/str (the helpers pass non-MMIO addresses straight
@@ -1440,7 +1462,8 @@ static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int 
             E(0xEB00); E((uint16_t)(((rmsh & 3) << 6) | 1));
         }
         if (!o->load) { if (slot_of(o->rt) >= 0) { E(0xF8DD); E(0x1000 | slot_of(o->rt)); } else E(0x4600 | (o->rt << 3) | 1); }   /* r1 = rt */
-        E(0xF8DF); lits[nl].at = n; lits[nl].which = 0; lits[nl].val = (uint32_t)(uintptr_t)(g_novfp ? um2_hthunk_lean : um2_hthunk); nl++; E(0xC000);   /* ldr r12, =thunk */
+        { void (*th)(void) = g_novfp ? um2_hthunk_lean : (g_spilean && (tl_patch_addr & 0xFFFFC000u) == 0x40080000u) ? (o->load ? um2_hthunk_spild : um2_hthunk_spist) : um2_hthunk;
+        E(0xF8DF); lits[nl].at = n; lits[nl].which = 0; lits[nl].val = (uint32_t)(uintptr_t)th; nl++; E(0xC000); }   /* ldr r12, =thunk */
         E(0xF8DF); lits[nl].at = n; lits[nl].which = 0; lits[nl].val = (uint32_t)(uintptr_t)(o->load ? (void *)um2_mload : (void *)um2_mstore); nl++; E(0x3000);   /* ldr r3, =fn */
         E(0xF8DF); lits[nl].at = n; lits[nl].which = 0; lits[nl].val = site + (pre ? 0u : 2u * (uint32_t)i); nl++; E(o->load ? 0x1000 : 0x2000);          /* ldr r1|r2, =site */
         E(0x47E0);                                      /* blx r12: thunk = save d0-d7/FPSCR, host stack, call r3 */
@@ -1961,7 +1984,8 @@ static void prof_dump(void) {
         printf("-- profile %s: %llu samples (%d Hz): image %llu, stubs %llu, loader/libc %llu\n", nm[c], (unsigned long long)tot, g_prof_hz, (unsigned long long)img, (unsigned long long)stub, (unsigned long long)host);
         static uint32_t l[4096][2]; int n = 0; for (int i = 0; i < 4096; i++) if (g_prof[c][i].n) { l[n][0] = g_prof[c][i].pc; l[n][1] = g_prof[c][i].n; n++; }
         qsort(l, (size_t)n, sizeof l[0], cmp_prof);
-        for (int i = 0; i < n && i < 28; i++) printf("   %6u  %08x\n", l[i][1], l[i][0]);
+        int lim = getenv("UM2_PROFALL") ? n : 28;      /* UM2_PROFALL=1: every pc, for a per-function sum against the symbol table */
+        for (int i = 0; i < n && i < lim; i++) printf("   %6u  %08x\n", l[i][1], l[i][0]);
         printf("-- syscalls %s (number:samples):", nm[c]); for (int i = 0; i < 512; i++) if (g_prof_sys[c][i]) printf(" %d:%u", i, g_prof_sys[c][i]); putchar('\n');
     }
 }

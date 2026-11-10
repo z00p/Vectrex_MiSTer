@@ -31,7 +31,19 @@ static pthread_mutex_t g_misc = PTHREAD_MUTEX_INITIALIZER;  /* SIO FIFO */
 #define BUS_UNLOCK_T(tag) do { if (g_busstat) { uint64_t h_ = bl_ns() - tl_bl_t0; g_bst[tag].n++; g_bst[tag].hold += h_; if (h_ > g_bst[tag].max) g_bst[tag].max = h_; if (h_ > 100000) g_bst[tag].big++; } pthread_mutex_unlock(&g_bus); } while (0)
 #define MISC_LOCK()  pthread_mutex_lock(&g_misc)
 #define MISC_UNLOCK() pthread_mutex_unlock(&g_misc)
+/* The SD card (SPI0 + um2sd) has a lock of its own (10 Nov 2026): the card byte loop on core 0 no longer queues behind core 1's PIO pushes
+ * and DMA runs.  Order: g_bus before g_spim.  The stubs' short cut takes only g_spim; the generic MMIO path, SPI DMA and the bit-banged card
+ * (SIO, under g_bus) take g_spim inside g_bus.  UM2_SPIBUSLOCK=1: the old way (the short cut under g_bus, g_spim unused). */
+static pthread_mutex_t g_spim = PTHREAD_MUTEX_INITIALIZER; static int g_spi_buslock;
+#define SPIM_LOCK()   do { if (!g_spi_buslock) pthread_mutex_lock(&g_spim); } while (0)
+#define SPIM_UNLOCK() do { if (!g_spi_buslock) pthread_mutex_unlock(&g_spim); } while (0)
+#define SPI_LOCK_T()   do { if (g_spi_buslock) BUS_LOCK_T(4); else if (g_busstat) { uint64_t a_ = bl_ns(); pthread_mutex_lock(&g_spim); tl_bl_t0 = bl_ns(); g_bst[4].wait += tl_bl_t0 - a_; if (tl_bl_t0 - a_ > 100000) g_bst[4].bigw++; } else pthread_mutex_lock(&g_spim); } while (0)
+#define SPI_UNLOCK_T() do { if (g_spi_buslock) BUS_UNLOCK_T(4); else { if (g_busstat) { uint64_t h_ = bl_ns() - tl_bl_t0; g_bst[4].n++; g_bst[4].hold += h_; if (h_ > g_bst[4].max) g_bst[4].max = h_; if (h_ > 100000) g_bst[4].big++; } pthread_mutex_unlock(&g_spim); } } while (0)
 #else
+#define SPIM_LOCK()
+#define SPIM_UNLOCK()
+#define SPI_LOCK_T()
+#define SPI_UNLOCK_T()
 #define BUS_LOCK()
 #define BUS_UNLOCK()
 #define BUS_LOCK_T(tag)
@@ -578,6 +590,7 @@ static struct { uint32_t cr1; uint8_t rx[8]; int rxn; } g_spi0;
 static uint8_t g_spidq[1 << 16]; static unsigned g_spidn;
 static uint8_t spi_xfer_byte(uint8_t b) { return ((g_spi0.cr1 & 2) && um2sd_present()) ? um2sd_xfer(b) : 0xFF; }
 static void spi_dma_run(Dch *d, unsigned treq, uint32_t n, int ir, int iw) {
+	SPIM_LOCK();
 	for (uint32_t i = 0; i < n; i++) {
 		if (treq == 24) {
 			uint32_t v; guest_read(d->read, 1, &v);
@@ -591,6 +604,7 @@ static void spi_dma_run(Dch *d, unsigned treq, uint32_t n, int ir, int iw) {
 			if (iw) d->write++;
 		}
 	}
+	SPIM_UNLOCK();
 }
 /* ---- cart audio ---------------------------------------------------------------------------------------------------------------------------
  * The jack output of a UVMC2 image is a PIO2 state machine running a 16-bit I2S program (data GPIO27, LRCLK GPIO28, BCLK GPIO29: out pins,1 with a
@@ -995,14 +1009,20 @@ static uint32_t g_hi_out;       /* GPIO32..47 output latch: the SD card's CS is 
 static struct { int sck, n; uint8_t out, in; volatile int miso; unsigned long bytes; } g_bb = { 0, 0, 0, 0xFF, 1, 0 };
 static void hi_set(uint32_t nv) {
 	uint32_t old = g_hi_out; g_hi_out = nv;
-	um2sd_select(!(nv & 0x80));
-	if ((old ^ nv) & 0x80) { g_bb.n = 0; g_bb.miso = 1; }
 	int sck = (nv >> 2) & 1;
-	if (sck && !g_bb.sck && !(g_spi0.cr1 & 2)) {
-		if (!g_bb.n) g_bb.in = um2sd_peek();
-		g_bb.out = (uint8_t)(g_bb.out << 1 | ((nv >> 3) & 1));
-		g_bb.miso = (g_bb.in >> (7 - g_bb.n)) & 1;
-		if (++g_bb.n == 8) { g_bb.n = 0; (void)um2sd_xfer(g_bb.out); g_bb.bytes++; }
+	/* the card is touched only on the first call, a CS change or a rising SCK with SPI0 off (um2sd_select of an unchanged CS only marks CS as driven, already done) */
+	static int hi_seen; int touch = !hi_seen || ((old ^ nv) & 0x80) || (sck && !g_bb.sck && !(g_spi0.cr1 & 2)); hi_seen = 1;
+	if (touch) {
+		SPIM_LOCK();
+		um2sd_select(!(nv & 0x80));
+		if ((old ^ nv) & 0x80) { g_bb.n = 0; g_bb.miso = 1; }
+		if (sck && !g_bb.sck && !(g_spi0.cr1 & 2)) {
+			if (!g_bb.n) g_bb.in = um2sd_peek();
+			g_bb.out = (uint8_t)(g_bb.out << 1 | ((nv >> 3) & 1));
+			g_bb.miso = (g_bb.in >> (7 - g_bb.n)) & 1;
+			if (++g_bb.n == 8) { g_bb.n = 0; (void)um2sd_xfer(g_bb.out); g_bb.bytes++; }
+		}
+		SPIM_UNLOCK();
 	}
 	g_bb.sck = sck;
 }
@@ -1142,7 +1162,8 @@ static int spi_store(uint32_t addr, uint32_t val) {
 	return 0;
 }
 static uint32_t spi_sr(void) { int n = __atomic_load_n(&g_spi0.rxn, __ATOMIC_RELAXED); g_spi_sr++; return 0x03u | (n ? 4u : 0u) | (n >= 8 ? 8u : 0u); }   /* TFE|TNF, RNE, RFF; never BSY */
-static int spi_load(uint32_t addr, uint32_t *v) {
+/* spi_load: the FIFO shift must stay a loop, not a memmove call (libc may pick a NEON one; the card stubs save no VFP state) */
+__attribute__((optimize("no-tree-loop-distribute-patterns"))) static int spi_load(uint32_t addr, uint32_t *v) {
 	uint32_t off = addr & 0xFFF;
 	if (off == 0x08) { uint32_t r = 0; if (g_spi0.rxn) { r = g_spi0.rx[0]; for (int i = 1; i < g_spi0.rxn; i++) g_spi0.rx[i - 1] = g_spi0.rx[i]; g_spi0.rxn--; } *v = r; g_spi_drr++; g_spi_h = (g_spi_h ^ r) * 0x100000001b3ull; return 1; }
 	if (off == 0x0C) { *v = spi_sr(); return 1; }
@@ -1152,9 +1173,10 @@ static int spi_load(uint32_t addr, uint32_t *v) {
  * no walk through the generic MMIO path, and SR without the bus lock (it only reads the FIFO level). */
 uint32_t um2bus_spi_load(uint32_t addr) {
 	if (addr & 4) return spi_sr();
-	uint32_t v; BUS_LOCK_T(4); spi_load(addr, &v); BUS_UNLOCK_T(4); return v;
+	uint32_t v; SPI_LOCK_T(); spi_load(addr, &v); SPI_UNLOCK_T(); return v;
 }
-void um2bus_spi_dr_store(uint32_t val) { BUS_LOCK_T(4); spi_store(0x40080008u, val); BUS_UNLOCK_T(4); }
+void um2bus_spi_dr_store(uint32_t val) { SPI_LOCK_T(); spi_store(0x40080008u, val); SPI_UNLOCK_T(); }
+int um2bus_spi_lean_ok(void) { return !g_busstat; }
 
 /* ------------------------------------------------------------------ QMI direct mode with an APS6404L-style PSRAM on CS1
  * The Star Wars image (like other UVMC2 images that stage a romset in PSRAM) resets the PSRAM through QMI direct mode (0x66, 0x99), reads
@@ -1196,7 +1218,7 @@ int um2bus_store(uint32_t addr, int size, uint32_t val, int core) {
 	}
 	if ((addr & 0xFFFF0000u) == 0x50000000u) { BUS_LOCK_T(2); int r = dma_store(addr & 0xFFFF, size, val); BUS_UNLOCK_T(2); return r; }
 	(void)base;
-	if ((addr & 0xFFFFC000u) == 0x40080000u) { BUS_LOCK_T(4); int r = spi_store(addr, val); BUS_UNLOCK_T(4); return r; }
+	if ((addr & 0xFFFFC000u) == 0x40080000u) { BUS_LOCK_T(4); SPIM_LOCK(); int r = spi_store(addr, val); SPIM_UNLOCK(); BUS_UNLOCK_T(4); return r; }
 	if ((addr & 0xFFFFC000u) == 0x400D0000u) { BUS_LOCK_T(5); int r = qmi_store(addr, val); BUS_UNLOCK_T(5); return r; }
 	if ((addr & 0xFFFFC000u) == 0x40020000u) { resets_store(addr, val); return 0; }   /* RESETS: the shadow still sees it */
 	if (addr == 0x4001B004u && (val & (1u << 24))) {      /* PSM FRCE_OFF cleared for PROC1: the bootrom on core 1 posts a 0 to core 0 */
@@ -1209,7 +1231,7 @@ int um2bus_store(uint32_t addr, int size, uint32_t val, int core) {
 }
 
 int um2bus_load(uint32_t addr, int size, uint32_t *val, int core) {
-	if ((addr & 0xFFFFC000u) == 0x40080000u) { BUS_LOCK_T(4); int r = spi_load(addr, val); BUS_UNLOCK_T(4); return r; }
+	if ((addr & 0xFFFFC000u) == 0x40080000u) { BUS_LOCK_T(4); SPIM_LOCK(); int r = spi_load(addr, val); SPIM_UNLOCK(); BUS_UNLOCK_T(4); return r; }
 	if ((addr & 0xFFFFC000u) == 0x400D0000u) { BUS_LOCK_T(5); int r = qmi_load(addr, val); BUS_UNLOCK_T(5); return r; }
 	if (addr >= 0xD0000000u && addr < 0xD0000200u) {
 		uint32_t off = addr - 0xD0000000u;
@@ -1232,6 +1254,9 @@ void um2bus_init(const um2bus_cfg_t *cfg) {
 	if (C.capture_path) g_cap = fopen(C.capture_path, "wb");
 	{ const char *e = getenv("UM2_BUSYUS"); if (e) { long u = atol(e); g_busy_ns = u <= 0 ? 0 : u > 5000 ? 5000000 : u * 1000; } }
 	g_nofast = getenv("UM2BUS_NOFAST") != NULL; g_aud_pred = getenv("UM2_NOAUDPRED") == NULL; g_busstat = getenv("UM2_BUSSTAT") != NULL;
+#ifndef UM2BUS_NO_THREADS
+	g_spi_buslock = getenv("UM2_SPIBUSLOCK") != NULL;
+#endif
 	if (C.dma_mirror) { g_mir = C.dma_mirror; pthread_t th; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setstacksize(&at, 1 << 16); if (!pthread_create(&th, &at, busy_thread, NULL)) pthread_detach(th); else g_mir = NULL; }
 	if (getenv("UM2BUS_NOEDGE")) g_edge_time = 0;
 	{ const char *e = getenv("UM2_AUDDUMP"); if (e) g_dbg_dump = (uint32_t)atoi(e); }
