@@ -33,6 +33,7 @@ images are included**: bring your own (and your own MAME ROM sets for the games 
 | PiTrex programs (`.ptx`) | `/media/fat/games/Vectrex-PiTrex/PiTrex/` (PiTrex_Setup copies them there) |
 | Sidecar settings `Game.um2.cfg` | next to the image, same name plus `.cfg` |
 | Card images (`.img`) | next to the image, or in `/media/fat/pitrex/uvmc2/` (a file called `sd.img` there is the default card for every game without an `sd=` key). The OSD lists do not show them. PiTrex_Uninstall leaves your files in both places alone, and anything of yours in `/media/fat/pitrex/um2run/` (the third place `sd=` names are looked up). |
+| RP2350 boot ROM (optional) | `/media/fat/pitrex/um2run/rp2350_bootrom.bin`: `bootrom-combined.bin` (32 KB) from the [RP2350 boot ROM releases](https://github.com/raspberrypi/pico-bootrom-rp2350/releases) (A4 was used for testing), renamed. Not included in this release. A few images read the cartridge chip's boot ROM as data (Centipede 0.3a builds its noise effects from it); without the file they read zeros there. The other tested games do not need it. |
 
 The core is called "Vectrex-PiTrex", however you load it: its file browser opens
 `games/Vectrex-PiTrex` and its settings are in `config/Vectrex-PiTrex_v2.CFG`.
@@ -151,6 +152,7 @@ Other builds of the same games may behave differently. These are the images used
 | Dragon's Lair (`dragons_lair.um2`) | a card image with its `PORTDATA/dlair` folder | runs, about 41 frames/s in the attract mode. Needs um2run from 1.3 (about 3 frames/s before) |
 | M.A.C.H. 3 (`mach3.um2`) | a card image with its `PORTDATA/mach3` folder | starts every time, about 35-42 frames/s. Needs um2run from 1.3 (before, it never reached its first frame and stopped with exit status 5) |
 | Vector Pinball by Endprodukt (`Vector Pinball.um2`) | a card image with its `pinball` folder (music) | plays well, music good; about 40 frames/s over a game. Needs um2run from 1.4.2 (before, about 9 frames/s and no sound) and its own card with `scale 118` (made by PiTrex_Make_UVMC2_Card; without it the flippers are below the screen) |
+| Centipede 0.3a (`Centipede_0_3a.um2`) | the default `sd.img` | runs, about 50 frames/s in the attract mode, loads in about 5 s (tested 11 November). Needs um2run after 1.4.2 (before, 1-5 frames/s and a 24 s load). Its noise effects come from the RP2350 boot ROM file, see [Where files go](#where-files-go) |
 
 The sidecar files used for these runs (the card names are up to you):
 ```
