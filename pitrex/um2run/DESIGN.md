@@ -47,7 +47,11 @@ commands, so the cartridge and the core never need to know about each other.
   0x2000, so the area cannot simply be mapped: a read-only copy (zero, plus the canned header
   words) sits at 0x80000000, and a hot `ldrb rt,[rn,rm]` site that reads the boot ROM area becomes
   `b.w stub`, where addresses below 0x8000 are moved onto the copy. Centipede went from 1-5 to
-  50 frames/s; nothing else reads there. `UM2_NOROMPATCH=1` turns it off.
+  50 frames/s; nothing else reads there. `UM2_NOROMPATCH=1` turns it off. The area reads as zero
+  unless `--bootrom FILE` gives the real boot ROM (`bootrom-combined.bin` from
+  github.com/raspberrypi/pico-bootrom-rp2350, not shipped here); then the copy and the trapped
+  reads both return its bytes (the header words stay the canned ones), and Centipede's noise
+  sounds. `mister_run.sh` passes `rp2350_bootrom.bin` from beside itself when it is there.
 - **Core 1** is a thread. The two guest cores are placed on the A9's two CPUs; the Main program
   of the MiSTer (OSD, controllers) lives on CPU1 as well, so the guest is deliberately
   throttled where it only spins (timer polls, E-clock polls).
