@@ -42,6 +42,12 @@ commands, so the cartridge and the core never need to know about each other.
   memory that nobody reads, and those stores cost nothing. Before 1.3 each one trapped: Dragon's
   Lair ran at about 3 frames/s and M.A.C.H. 3 never reached its first frame. `UM2_NOXIPMAINT=1`
   turns the mapping off (the stores trap again).
+- **Boot ROM reads.** Centipede 0.3a reads its noise table through a pointer it never sets, so from
+  the first 16 KB of the boot ROM (readable on the real chip). ARM Linux maps nothing below
+  0x2000, so the area cannot simply be mapped: a read-only copy (zero, plus the canned header
+  words) sits at 0x80000000, and a hot `ldrb rt,[rn,rm]` site that reads the boot ROM area becomes
+  `b.w stub`, where addresses below 0x8000 are moved onto the copy. Centipede went from 1-5 to
+  50 frames/s; nothing else reads there. `UM2_NOROMPATCH=1` turns it off.
 - **Core 1** is a thread. The two guest cores are placed on the A9's two CPUs; the Main program
   of the MiSTer (OSD, controllers) lives on CPU1 as well, so the guest is deliberately
   throttled where it only spins (timer polls, E-clock polls).
