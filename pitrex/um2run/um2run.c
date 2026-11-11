@@ -618,6 +618,7 @@ static void it_advance(uint32_t *cpsr) {
 static void skip(Cpu *c, int len) { c->r[15] += len; it_advance(&c->r[16]); }
 
 static int hot_patch(const Cpu *c, uint32_t site, uint16_t h1, uint16_t h2, int len, int is_load);
+static int rom_patch(const Cpu *c, uint32_t site, uint16_t h1);
 static uint32_t g_nhot;
 static int g_nospi;      /* UM2_NOSPIPATCH=1: SPI0 stays on the trap path (A/B timing, regression) */
 static int g_nonewblk;   /* UM2_NONEWBLK=1: IO_BANK0, PADS_BANK0 and DWT stay on the trap path (A/B timing, regression) */
@@ -740,6 +741,8 @@ static int cpu_fault_mem(int sig, Cpu *c, uint32_t addr, uint16_t h1, uint16_t h
     int isnew; Ev *e = ev_get(sig == SIGBUS ? K_BUS : K_SEGV, pc, 0, &isnew);
     if (e) {
         e->n++;
+        if (addr < 0x8000 && m.load && m.size == 1 && len == 2 && (h1 & 0xFE00) == 0x5C00 && (e->n == 6 || (e->n > 6 && e->n < 520 && ((e->n - 6) & 7) == 0))
+            && rom_patch(c, pc, h1)) return ACT_CONT;      /* boot ROM byte table (Centipede 0.3a): run the site again, now a b.w to the stub */
         int why = 0, tried = 0;
         int elig = (addr >= 0xD0000000u && addr < 0xD0000200u && !(addr >= 0xD0000100u)) || (addr >= 0x50000000u && addr < 0x50010000u) || ((addr & 0xFFFFC000u) == 0x40080000u && !g_nospi)
             || (addr >= 0x50200000u && addr < 0x50500000u)     /* PIO0..2: the UVM2 v2 bus engine polls FSTAT and pushes TXF0 word by word */
@@ -1169,6 +1172,66 @@ E(0x466B); E(0xF023); E(0x0307); E(0xF1A3); E(0x0308); E(0x46EE); E(0xF8C3); E(0
 #undef E
     __builtin___clear_cache((char *)(uintptr_t)base, (char *)(uintptr_t)(base + bytes));
     patch_end(site, 4, base);
+    return 1;
+}
+/* Byte loads from the boot ROM area (0x00000000-0x00007FFF; readable on the RP2350). Centipede 0.3a reads its 17-bit noise table
+ * through a pointer it never sets, i.e. from the first 16 KB of the boot ROM, with `ldrb rt,[rn,rm]`: about 40,000 traps a second
+ * (11 Nov 2026). The area cannot be mapped where it is (ARM Linux refuses anything below 0x2000), so a read-only copy with what
+ * mmio_load_base returns there (zero, plus the canned header words) sits at ROMCOPY_BASE, and a hot site of that form becomes
+ * `b.w stub`: the stub adds ROMCOPY_BASE to addresses below 0x8000 and loads; any other address is loaded as it is. The instruction
+ * after the site moves into the stub (only plain data processing, no pc, no memory access). No flags touched; one low register is
+ * saved on the stack. Only sites that trap on the boot ROM area again and again are patched. UM2_NOROMPATCH=1: trap every time. */
+#define ROMCOPY_BASE 0x80000000u
+static int g_romcopy;
+static int target_hits(uint32_t site, uint32_t want);
+static void romcopy_setup(void) {
+    if (getenv("UM2_NOROMPATCH")) return;
+    void *q = mmap((void *)ROMCOPY_BASE, 0x8000, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (q != (void *)ROMCOPY_BASE) { perror("um2run: boot ROM copy (its reads trap as before)"); return; }
+    uint32_t *w = (uint32_t *)q;
+    w[0x10 / 4] = 0x01754Du; w[0x14 / 4] = ROM_FUNCTAB | ((uint32_t)ROM_LOOKUP << 16);       /* as mmio_load_base */
+    mprotect(q, 0x8000, PROT_READ);
+    g_romcopy = 1;
+}
+static int movable_insn(int a, int b) {     /* may run in the stub as it is: plain data processing that neither reads nor writes pc nor touches memory */
+    if (a < 0) return 0;
+    if (a < 0xE800) return a < 0x4400;                                                   /* 16-bit: shifts, add/sub, mov/cmp imm8, ALU register */
+    if (b < 0 || (b & 0x8000)) return 0;
+    int rd = (b >> 8) & 15, s = (a >> 4) & 1;
+    if ((a & 0xFA00) == 0xF000) return rd != 15 || s;                                    /* data processing, modified immediate */
+    if ((a & 0xFE00) == 0xEA00) return (b & 15) != 15 && (rd != 15 || s);               /* data processing, shifted register */
+    return 0;
+}
+static int rom_patch(const Cpu *c, uint32_t site, uint16_t h1) {
+    if (!opt.bus || !g_stub_ready || !g_romcopy || (c->r[16] & ((0x3Fu << 10) | (3u << 25)))) return 0;
+    int rt = h1 & 7, rn = (h1 >> 3) & 7, rm = (h1 >> 6) & 7, s = 0;
+    while (s == rt || s == rn || s == rm) s++;
+    int n1 = g_rd16(site + 2), n2 = n1 >= 0xE800 ? g_rd16(site + 4) : -1, nlen = n1 >= 0xE800 ? 2 : 1;
+    if (!movable_insn(n1, n2) || target_hits(site, site + 2)) return 0;
+    uint32_t span = 2 + 2 * (uint32_t)nlen;
+    uint16_t k[24]; int n = 0;
+#define E(x) k[n++] = (uint16_t)(x)
+    E(0xB400 | (1 << s));                                                   /* push {s}                   */
+    E(0xEB00 | rn); E((s << 8) | rm);                                       /* add.w s, rn, rm            */
+    E(0xEA4F); E((3 << 12) | (rt << 8) | (3 << 6) | (1 << 4) | s);          /* lsr.w rt, s, #15           */
+    E(0xFAB0 | rt); E(0xF080 | (rt << 8) | rt);                             /* clz rt, rt (32: boot ROM)  */
+    E(0xEA4F); E((1 << 12) | (rt << 8) | (1 << 6) | (1 << 4) | rt);         /* lsr.w rt, rt, #5           */
+    E(0xEB00 | s); E((7 << 12) | (s << 8) | (3 << 6) | rt);                 /* add.w s, s, rt, lsl #31    */
+    E(0xF890 | s); E(rt << 12);                                             /* ldrb.w rt, [s]             */
+    E(0xBC00 | (1 << s));                                                   /* pop {s}                    */
+    E(n1); if (nlen == 2) E(n2);                                            /* the next instruction       */
+    int b_at = n; n += 2;                                                   /* b.w site + span            */
+    E(0xBF00);
+    uint32_t bytes = (uint32_t)n * 2, base;
+    int pb = patch_begin(site, span, bytes, &base);
+    if (pb <= 0) return pb == -1;                                           /* -1: the other core patched it: run the site again */
+    uint32_t bw = enc_bw(base + (uint32_t)b_at * 2, site + span);
+    k[b_at] = (uint16_t)(bw & 0xFFFF); k[b_at + 1] = (uint16_t)(bw >> 16);
+    memcpy((void *)(uintptr_t)base, k, bytes);
+#undef E
+    __builtin___clear_cache((char *)(uintptr_t)base, (char *)(uintptr_t)(base + bytes));
+    patch_end(site, span, base);
+    if (opt.bus_verbose) fprintf(stderr, "rom_patch: %08x ldrb r%d,[r%d,r%d] -> stub %08x%c", site, rt, rn, rm, base, 10);
     return 1;
 }
 /* VSEL.F32 (ARMv8 FP, in the M33's FPv5; UNDEFINED on the A9).  BattleZone's cart-audio synthesis executes ~60000 of them per second (a clamp in the
@@ -2184,6 +2247,7 @@ static void guest_load_and_map(void) {
     uint32_t words; memcpy(&words, g_file + 16, 4);
     memcpy((void *)IMG_BASE, g_file + 20, (size_t)words * 4);
     if (opt.bus && !getenv("UM2_NODIVPATCH")) stub_setup();
+    if (opt.bus) romcopy_setup();
     if (opt.patch_svc) {
         uint16_t *h = (uint16_t *)IMG_BASE; size_t n = (size_t)words * 2, cnt = 0;
         static uint16_t o[(IMG_TOP - IMG_BASE) / 2]; memcpy(o, h, n * 2);   /* original halfwords: the cluster test must not see our own patches */
