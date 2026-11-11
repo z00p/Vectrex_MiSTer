@@ -69,6 +69,7 @@
 #define IMG_TOP  0x20082000u        /* top of RP2350 SRAM == initial SP of every image */
 #define ROM_FUNCTAB 0x7C00u
 #define ROM_LOOKUP  0x7D01u     /* fake rom_table_lookup entry (Thumb) */
+static uint8_t *g_bootrom;      /* --bootrom: the 32 KB RP2350 boot ROM image, else the boot ROM area reads as zero (plus the header words above) */
 static uint32_t g_romcode[64], g_nrom;
 #define PSRAM_BASE 0x11000000u
 #define PSRAM_SIZE (8u << 20)
@@ -528,7 +529,8 @@ static uint32_t mmio_load_base(uint32_t addr, int size, uint32_t pc) {
     int known = 2, isnew = 0;                         /* known: 2 canned (a model), 1 only what the image wrote, 0 nothing to go by */
     if (p) v = *p;
     if (!opt.no_canned && addr < 0x8000) {            /* bootrom: fake header + function table pointers (guess at RP2350 layout) */
-        if ((addr & ~3u) == 0x10) v = 0x01754D;       /* 'M' 'u' 0x01 magic */
+        if (g_bootrom) memcpy(&v, g_bootrom + base, 4);
+        if ((addr & ~3u) == 0x10) v = 0x01754D;      /* 'M' 'u' 0x01 magic */
         else if ((addr & ~3u) == 0x14) v = ROM_FUNCTAB | ((uint32_t)ROM_LOOKUP << 16);   /* u16 @0x14 func table, u16 @0x16 lookup fn */
     } else if (!opt.no_canned) {
         uint32_t blk = addr & ~0x7FFFu, off = addr & 0x7FFF;
@@ -1189,6 +1191,7 @@ static void romcopy_setup(void) {
     void *q = mmap((void *)ROMCOPY_BASE, 0x8000, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (q != (void *)ROMCOPY_BASE) { perror("um2run: boot ROM copy (its reads trap as before)"); return; }
     uint32_t *w = (uint32_t *)q;
+    if (g_bootrom) memcpy(q, g_bootrom, 0x8000);
     w[0x10 / 4] = 0x01754Du; w[0x14 / 4] = ROM_FUNCTAB | ((uint32_t)ROM_LOOKUP << 16);       /* as mmio_load_base */
     mprotect(q, 0x8000, PROT_READ);
     g_romcopy = 1;
@@ -3211,6 +3214,8 @@ static void usage(void) {
         "  --cpu1-normal      core 1 leaves real-time scheduling (SCHED_OTHER, nice -20) once on its own CPU\n"
         "  --settle S         sleep S s before starting (let Main finish its video setup)\n"
         "  --no-canned        reads return only what was written (else 0)\n"
+        "  --bootrom FILE     the RP2350 boot ROM image (32 KB, bootrom-combined.bin from github.com/raspberrypi/pico-bootrom-rp2350)\n"
+        "                     for images that read it as data (Centipede 0.3a: its noise); without it the area reads as zero\n"
         "  --bus              run the image for real: svc dispatch, RP2350 PIO/DMA/SIO device model, core 1 as a thread,\n"
         "                     bus traffic -> ptx stream (PTX_BACKEND=file|mister, see src/ptx_*.c); implies inproc + svc patching\n"
         "  --bus-verbose      model log on stderr (twice: every DMA run); --capture FILE records the model inputs for replay\n"
@@ -3255,6 +3260,12 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--pot") && i + 1 < argc) { char *q = argv[++i]; while (*q && g_npot < 16) { g_potf[g_npot] = (unsigned)strtoul(q, &q, 0); if (*q == ':') q++; for (int k = 0; k < 4; k++) { g_potv[g_npot][k] = 0; if (*q && *q != ';') { g_potv[g_npot][k] = (int8_t)strtol(q, &q, 0); if (*q == ',') q++; } } g_npot++; if (*q == ';') q++; } }
         else if (!strcmp(a, "--keys") && i + 1 < argc) { char *q = argv[++i]; while (*q && g_nkeys < 16) { g_keyf[g_nkeys] = (unsigned)strtoul(q, &q, 0); if (*q == ':') q++; g_keyv[g_nkeys++] = (unsigned)strtoul(q, &q, 0); if (*q == ',') q++; } }
         else if (!strcmp(a, "--sd") && i + 1 < argc) g_sd_path = argv[++i];
+        else if (!strcmp(a, "--bootrom") && i + 1 < argc) {
+            const char *bp = argv[++i]; FILE *bf = fopen(bp, "rb");
+            g_bootrom = malloc(0x8000 + 1);
+            if (!bf || !g_bootrom || fread(g_bootrom, 1, 0x8000 + 1, bf) != 0x8000) { fprintf(stderr, "um2run: %s is not a 32 KB boot ROM image: the boot ROM area reads as zero\n", bp); free(g_bootrom); g_bootrom = NULL; }
+            if (bf) fclose(bf);
+        }
         else if (!strcmp(a, "--cpu1") && i + 1 < argc) g_cpu1 = atoi(argv[++i]);
         else if (!strcmp(a, "--settle") && i + 1 < argc) g_settle = atof(argv[++i]);
         else if (!strcmp(a, "--cpu1-after") && i + 1 < argc) g_cpu1_after = atof(argv[++i]);
