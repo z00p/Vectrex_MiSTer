@@ -51,6 +51,7 @@
 #include "um2sd.h"
 #include "um2aud.h"
 #include "um2clock.h"
+#include "um2card_lock.h"
 #include "ptx.h"
 #include "ptx_font.h"
 #ifdef __arm__
@@ -3276,6 +3277,7 @@ int main(int argc, char **argv) {
         else if (a[0] == '-') { usage(); return 2; }
         else opt.file = a;
     }
+    if (g_sd_path) { int rc = um2card_lock(g_sd_path); if (rc) return rc; }
     if (g_msg) return msg_main();
     if (!opt.file) { usage(); return 2; }
     if (g_settle > 0) { fprintf(stderr, "settle %.1f s\n", g_settle); struct timespec ts = { (time_t)g_settle, (long)((g_settle - (time_t)g_settle) * 1e9) }; nanosleep(&ts, NULL); }

@@ -87,7 +87,9 @@ commands, so the cartridge and the core never need to know about each other.
 
 - **SD card.** SPI0 is a PL022 model; the card is `um2sd.c` over an image file given with
   `--sd`. The image's own FatFs mounts it, so the file must be a FAT image the cartridge
-  understands (see `../UVMC2_GAMES.md`, "Card images"). Every card byte is four accesses
+  understands (see `../UVMC2_GAMES.md`, "Card images"). um2run holds an exclusive flock on
+  `<image>.lock` until it exits. The card builder takes the same lock before reading saves
+  or replacing an image. The lock file stays in place, even after a crash. Every card byte is four accesses
   (status poll, data write, status poll, data read), so the stubs take SPI0's data and status
   words straight to the model (`um2bus_spi_load` / `um2bus_spi_dr_store`), and the status read
   skips the bus lock. VecDoom, which streams its WAD in play, went from about 47 to 50 fps in

@@ -28,7 +28,7 @@ elif [ -f "$INI.pitrex-bak" ]; then
 	rm -f "$INI.pitrex-bak"
 fi
 
-find /media/fat/pitrex -mindepth 1 -maxdepth 1 ! -name uvmc2 ! -name um2run -exec rm -rf {} + 2>/dev/null
+find /media/fat/pitrex -mindepth 1 -maxdepth 1 ! -name uvmc2 ! -name um2run ! -name '*.lock' -exec rm -rf {} + 2>/dev/null
 # pitrex/um2run: only the release's own files. sd= card names are looked up there too, so it can hold your card
 # images (BattleZone's saves), .um2 images, sidecars and .load files; those, and um2run.* copies, stay.
 rm -f /media/fat/pitrex/um2run/um2run /media/fat/pitrex/um2run/mister_run.sh \
