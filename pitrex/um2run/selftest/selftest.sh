@@ -25,13 +25,14 @@
 #            instruction is patched from the `it` into a stub (ITE: one part per instruction); 24 blocks x ITER, values, registers, flags and sp must be right
 #  16. vmaxnm: VMAXNM/VMINNM.F32 (UNDEFINED on the A9; Vector Tank's clamp): emulated at the first trap, then a stub; 10 sites x 11 operand pairs x 12 iterations
 #             (+0 / -0, quiet and signalling NaN, infinity) must give the IEEE maxNum / minNum bits, keep the flags and the other VFP registers
-# Work files go to /tmp/um2self.  Expected: sixteen PASS lines.
+#  17. dcp:    RP2350 DCP canned floating-point sequences: arithmetic, comparisons, classification, conversions, rounding, edge values and both guest cores
+# Work files go to /tmp/um2self.  Expected: seventeen PASS lines.
 H=$(cd "$(dirname "$0")" && pwd); T=$H/..; S=$T/../../src; [ -f $S/ptx_core.c ] || S=$T/../src; W=/tmp/um2self; mkdir -p $W; cd $W || exit 1
 BIN=${1:-$T/um2run}
 run() { PTX_STREAM=$W/s.ptxs timeout 60 qemu-arm -cpu cortex-a9 "$@"; }
 mark() { grep -E "^ +[0-9]+ +40001000" "$1" | head -1 | sed 's/.*last=//'; }
 (cd $T && arm-linux-gnueabihf-gcc -O2 -static -pthread -I$S -I$T -DUM2_VFPTEST -o $W/um2run_vt um2run.c um2bus.c um2sd.c um2aud.c um2clock.c $S/ptx_core.c $S/ptx_backend_file.c $S/ptx_backend_mister.c -lm) || { echo "build failed"; exit 1; }
-for g in gen_vfp gen_race gen_v8 gen_pre gen_prim gen_aud gen_vsel gen_alarm gen_frame gen_far gen_reach gen_vrint gen_svc gen_dwt gen_ite gen_vmaxnm; do python3 $H/$g.py >/dev/null 2>&1 || { echo "$g failed"; exit 1; }; done
+for g in gen_vfp gen_race gen_v8 gen_pre gen_prim gen_aud gen_vsel gen_alarm gen_frame gen_far gen_reach gen_vrint gen_svc gen_dwt gen_ite gen_vmaxnm gen_dcp; do python3 $H/$g.py >/dev/null 2>&1 || { echo "$g failed"; exit 1; }; done
 run $W/um2run_vt --bus --bus-verbose --no-loading --secs 3 --log 100 $W/vfptest.um2 > vfp.out 2> vfp.err
 [ "$(mark vfp.out)" = c0de0000 ] && grep -q ", 0 of them on the guest stack" vfp.err && echo "vfp:  PASS" || echo "vfp:  FAIL ($(mark vfp.out))"
 ok=0; for i in $(seq 1 30); do
@@ -85,3 +86,8 @@ n=$(grep -c "^hot_patch.*+IT[TE]" ite.err)
 run "$BIN" --bus --bus-verbose --no-loading --secs 10 --log 100 $W/vmaxnm.um2 > vmaxnm.out 2> vmaxnm.err
 n=$(grep -c "^vmaxnm_patch" vmaxnm.err)
 [ "$(mark vmaxnm.out)" = c0de0000 ] && [ "$n" -ge 10 ] && echo "vmaxnm: PASS ($n VMAXNM / VMINNM stubs)" || echo "vmaxnm: FAIL ($(mark vmaxnm.out), $n stubs)"
+run "$BIN" --bus --bus-verbose --no-loading --secs 3 --log 20000 $W/dcp.um2 > dcp.out 2> dcp.err
+dm=$(grep -E "^ +[0-9]+ +4000100[04]" dcp.out | sed 's/.*last=//' | sort -u | tr '\n' ' ')
+dn=$(grep -cE "\\[ILL\\] pc=[0-9a-f]+ DCP [A-Z0-9]+ emulated$" dcp.out)
+db=$(grep -c "DCP .* not emulated" dcp.out)
+[ "$dm" = "c0de0000 c0de0100 " ] && [ "$dn" -ge 100 ] && [ "$db" = 0 ] && echo "dcp:  PASS (two cores, $dn DCP sites)" || echo "dcp:  FAIL ($dm, $dn emulated, $db unsupported)"
