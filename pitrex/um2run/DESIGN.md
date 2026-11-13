@@ -34,6 +34,15 @@ commands, so the cartridge and the core never need to know about each other.
   to `b.w stub`, where the stub does the same without a trap (a trap costs about 50 us on the
   A9). A patch is only made with the other core parked, so it can never run half-written.
   `selftest/` has synthetic guests for each of these paths.
+- **RP2350 DCP (coprocessor p4).** The trap decodes the pico-sdk's canned arithmetic,
+  comparison, classification and conversion sequences, and computes results with the A9's VFP.
+  X, Y, E and the in-progress sequence are kept per guest core. The pico-sdk checks DCP state
+  with PCMP and saves/restores X, Y and E when nested code uses the DCP, including an interrupt
+  handler that uses the SDK routines; um2run models that save/restore sequence. The arithmetic
+  uses round-to-nearest, ties-to-even and preserves subnormals; truncating integer conversions
+  turn subnormals into zero. The test covers ties, signed zeros, infinities, quiet/signalling
+  NaNs, normal and subnormal limits, and integer limits. There are no native stubs yet, so each
+  p4 instruction still traps.
 - **Peripheral access** (loads and stores to 0x4xxxxxxx / 0xdxxxxxxx) faults the same way and is
   handed to the device model; hot sites are patched to a short stub too.
 - **XIP cache maintenance.** Some images flush the RP2350's flash cache one line at a time with
