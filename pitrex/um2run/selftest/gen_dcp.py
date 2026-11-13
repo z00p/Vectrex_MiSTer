@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Synthetic guest for the RP2350 DCP canned-sequence emulation. Both cores
 # exercise arithmetic, classification, comparisons and conversions.
+# DCP sequences are adapted from pico-sdk dcp_canned.inc.S:
+# Copyright (c) 2020 Raspberry Pi (Trading) Ltd.; SPDX-License-Identifier: BSD-3-Clause.
 import math
 import struct
 import subprocess
@@ -225,8 +227,30 @@ def dcp_pair(op, a_bits, b_bits, core):
               "    umlal r10, r8, r5, r7\n" +
               mcrr(3, 10, 8) + cdp(8, 0x20) + mrrc(5, 0, 1))
     else:
-        s += (mrrc(2, 4, 5, 1) + mcrr(4, 4, 5) +
-              cdp(8, 0x20) + mrrc(7, 0, 1))
+        s += (mrrc(2, 0, 1, 1) + "    umull r1, r2, r0, r1\n"
+              "    mvn r2, r2, lsl #2\n"
+              "    smmlar r0, r2, r0, r0\n"
+              "    smmulr r2, r2, r2\n"
+              "    smmlar r0, r2, r0, r0\n"
+              "    sub r12, r0, r0, lsr #31\n" +
+              mrrc(0, 2, 3, 4) + "    smmulr r1, r12, r3\n" +
+              mrrc(1, 2, 3, 5) + "    umull r2, r0, r1, r2\n"
+              "    mla r0, r1, r3, r0\n" +
+              mrrc(4, 2, 3, 4) + "    sub r0, r2, r0\n"
+              "    smmulr r2, r0, r12\n"
+              "    mov r3, r1, lsr #4\n"
+              "    adds r0, r2, r1, lsl #28\n"
+              "    adc r1, r3, r2, asr #31\n"
+              "    orr r0, r0, r1, lsr #21\n"
+              "    bic r0, r0, r1, lsr #22\n"
+              "    bic r0, r0, #7\n" +
+              mrrc(7, 2, 3, 5) + "    umull r3, r12, r0, r2\n" +
+              mrrc(7, 2, 3, 5) + "    mla r12, r0, r3, r12\n"
+              "    mla r12, r1, r2, r12\n" +
+              mrrc(0, 2, 3, 4) + "    sub r12, r12, r2, lsl #18\n"
+              "    orr r0, r0, r12, lsr #29\n"
+              "    sub r0, r0, #1\n"
+              + mcrr(4, 0, 1) + cdp(8, 0x20) + mrrc(7, 0, 1))
     value = arithmetic(op, a, b)
     return s + check64(b64(value))
 
@@ -242,22 +266,132 @@ def fcp_pair(op, a_bits, b_bits):
         s += (mrrc(1, 4, 5, 1) + "    umull r4, r5, r4, r5\n" +
               mcrr(10, 4, 5) + cdp(8, 0x22) + mrc(0x52))
     else:
-        s += (mrrc(2, 4, 5, 1) + "    umull r4, r5, r4, r5\n" +
-              mcrr(11, 4, 5) + cdp(8, 0x22) + mrc(0x72))
+        s += (mrrc(2, 0, 1, 1) + "    umull r1, r2, r0, r1\n"
+              "    mvn r2, r2, lsl #2\n"
+              "    smmlar r0, r2, r0, r0\n"
+              "    smmulr r2, r2, r2\n"
+              "    smmlar r0, r2, r0, r0\n"
+              + mrrc(1, 1, 2, 1) + "    umull r0, r1, r0, r1\n"
+              "    orr r0, r0, r0, lsr #24\n"
+              "    bic r0, r0, r0, lsr #25\n"
+              "    bic r0, r0, #15\n"
+              "    mov r2, r2, lsr #7\n"
+              "    mul r3, r0, r2\n"
+              "    rsb r3, r3, r1, lsl #22\n"
+              "    sub r0, r0, r3, lsr #31\n"
+              + mcrr(11, 0, 0) + cdp(8, 0x22) + mrc(0x72))
     return s + check32(b32(arithmetic(op, a, b)))
 
 
-def dcp_sqrt(bits):
+def dcp_div_fast_pair(a_bits, b_bits, core):
+    a, b = f64(a_bits), f64(b_bits)
+    if core and a == 1.5 and b == 2.25:
+        a, b = 11.5, 12.25
+        a_bits, b_bits = b64(a), b64(b)
+    s = load64(0, 1, a_bits) + load64(2, 3, b_bits)
+    s += (mcrr(1, 0, 1) + mcrr(1, 2, 3, 1) +
+          mrrc(2, 0, 1, 1) + "    umull r1, r2, r0, r1\n"
+          "    mvn r2, r2, lsl #2\n"
+          "    smmlar r0, r2, r0, r0\n"
+          "    smmulr r2, r2, r2\n"
+          "    smmlar r0, r2, r0, r0\n"
+          "    sub r12, r0, r0, lsr #31\n" +
+          mrrc(0, 2, 3, 4) + "    smmulr r1, r12, r3\n" +
+          mrrc(1, 2, 3, 5) + "    umull r2, r0, r1, r2\n"
+          "    mla r0, r1, r3, r0\n" +
+          mrrc(4, 2, 3, 4) + "    sub r0, r2, r0\n"
+          "    smmulr r2, r0, r12\n"
+          "    mov r3, r1, lsr #4\n"
+          "    adds r0, r2, r1, lsl #28\n"
+          "    adc r1, r3, r2, asr #31\n"
+          + mcrr(4, 0, 1) + cdp(8, 0x20) + mrrc(7, 0, 1))
+    return s + check64(b64(ieee_div(a, b)))
+
+
+def fcp_div_fast_pair(a_bits, b_bits):
+    a, b = f32(a_bits), f32(b_bits)
+    s = load32(0, a_bits) + load32(1, b_bits) + mcrr(1, 0, 1, 2)
+    s += (mrrc(2, 0, 1, 1) + "    umull r1, r2, r0, r1\n"
+          "    mvn r2, r2, lsl #2\n"
+          "    smmlar r0, r2, r0, r0\n"
+          "    smmulr r2, r2, r2\n"
+          "    smmlar r0, r2, r0, r0\n" +
+          mrrc(1, 1, 2, 1) + "    umull r0, r1, r0, r1\n" +
+          mcrr(11, 1, 1) + cdp(8, 0x22) + mrc(0x72))
+    return s + check32(b32(arithmetic("div", a, b)))
+
+
+def dcp_sqrt(bits, fast=False):
     value = f64(bits)
     s = load64(0, 1, bits) + mcrr(1, 0, 1) + cdp(2, 1)
-    s += mrrc(4, 4, 5, 1) + mcrr(5, 4, 5) + cdp(8, 0x20) + mrrc(9, 0, 1)
+    s += (mrrc(4, 2, 3, 1) +
+          "    umull r0, r1, r2, r2\n"
+          "    umull r0, r1, r1, r3\n"
+          "    mov r1, r1, lsl #3\n"
+          "    sub r1, r1, #2147483648\n"
+          "    smmlsr r2, r2, r1, r2\n"
+          "    umull r0, r1, r2, r2\n"
+          "    umull r0, r1, r1, r3\n"
+          "    movs r0, r0, lsr #28\n"
+          "    adc r1, r0, r1, lsl #4\n"
+          "    smmulr r0, r1, r2\n")
+    if fast:
+        s += ("    sub r2, r2, r0, asr #1\n"
+              "    umull r0, r1, r2, r3\n"
+              "    mov r1, r1, lsr #1\n"
+              "    umull r3, r0, r1, r1\n" +
+              mrrc(6, 0, 12, 4) + "    sub r0, r0, r3\n"
+              "    smmulr r0, r0, r2\n"
+              "    add r1, r1, r0, asr #28\n"
+              "    mov r0, r0, lsl #4\n" +
+              mcrr(5, 0, 1))
+    else:
+        s += ("    sub r3, r0, r3\n"
+              "    smmulr r3, r3, r2\n"
+              "    add r1, r1, r3, asr #28\n"
+              "    mov r3, r3, lsl #4\n"
+              "    bic r3, r3, #255\n"
+              "    orr r3, r3, #128\n"
+              "    umull r12, r2, r3, r3\n"
+              "    mul r12, r1, r1\n"
+              "    umlal r2, r12, r1, r3\n"
+              "    umlal r2, r12, r1, r3\n"
+              "    sub r12, r12, r0\n"
+              "    orr r3, r3, r12, lsr #24\n"
+              "    sub r3, r3, #11\n" +
+              mcrr(5, 3, 1))
+    s += cdp(8, 0x20) + mrrc(9, 0, 1)
     return s + check64(b64(ieee_sqrt(value)))
 
 
-def fcp_sqrt(bits):
+def fcp_sqrt(bits, fast=False):
     value = f32(bits)
     s = load32(0, bits) + mcrr(1, 0, 0, 2) + cdp(2, 1)
-    s += mrrc(4, 4, 5, 1) + mcrr(12, 4, 5) + cdp(8, 0x22) + mrc(0x92)
+    s += (mrrc(4, 2, 3, 1) +
+          "    umull r0, r1, r2, r2\n"
+          "    umull r0, r1, r1, r3\n"
+          "    mov r1, r1, lsl #3\n"
+          "    sub r1, r1, #2147483648\n"
+          "    smmlsr r2, r2, r1, r2\n"
+          "    umull r0, r1, r2, r2\n"
+          "    umull r0, r1, r1, r3\n"
+          "    movs r0, r0, lsr #28\n"
+          "    adc r1, r0, r1, lsl #4\n"
+          "    smmulr r0, r1, r2\n")
+    if not fast:
+        s += ("    sub r2, r2, r0, asr #1\n"
+              "    umull r0, r1, r2, r3\n"
+              "    orr r1, r1, #63\n"
+              "    mov r0, r1, lsr #5\n"
+              "    mul r0, r0, r0\n"
+              "    rsb r0, r0, r3, lsl #18\n"
+              "    bic r1, r1, r0, lsr #26\n" +
+              mcrr(12, 0, 1))
+    else:
+        s += ("    sub r2, r2, r0, asr #1\n"
+              "    umull r0, r1, r2, r3\n" +
+              mcrr(12, 0, 1))
+    s += cdp(8, 0x22) + mrc(0x92)
     return s + check32(b32(ieee_sqrt(value)))
 
 
@@ -279,21 +413,29 @@ def fcp_conversion(value_bits, unsigned, rounded):
 
 def worker(core):
     global ERR_MASK
-    out = "    movs r6, #%d\n    mov r12, r6\n    movs r7, #0\n" % core
+    out = "    movs r6, #%d\n    mov r11, r6\n    movs r7, #0\n" % core
     for op in ("add", "sub", "mul", "div"):
         ERR_MASK = {"add": 1, "sub": 2, "mul": 4, "div": 8}[op]
         for a, b in F64_PAIRS:
             out += pooled(dcp_pair(op, a, b, core))
+    ERR_MASK = 8
+    for a, b in F64_PAIRS:
+        out += pooled(dcp_div_fast_pair(a, b, core))
     ERR_MASK = 16
     for bits in D64_VALUES:
         out += pooled(dcp_sqrt(bits))
+        out += pooled(dcp_sqrt(bits, True))
     for op in ("add", "sub", "mul", "div"):
         ERR_MASK = {"add": 32, "sub": 64, "mul": 128, "div": 256}[op]
         for a, b in F32_PAIRS:
             out += pooled(fcp_pair(op, a, b))
+    ERR_MASK = 256
+    for a, b in F32_PAIRS:
+        out += pooled(fcp_div_fast_pair(a, b))
     ERR_MASK = 512
     for bits in F32_VALUES:
         out += pooled(fcp_sqrt(bits))
+        out += pooled(fcp_sqrt(bits, True))
 
     ERR_MASK = 1024
     for a_bits, b_bits in F64_PAIRS:
@@ -370,21 +512,21 @@ def worker(core):
             mcrr(1, 0, 1) + mcrr(1, 2, 3, 1) + cdp(0, 1) + cdp(1, 1) +
             mrc2(0x30, 3) + load32(4, 0x80000000) + "    cmp r3, r4\n"
             "    it ne\n    orrne r7, r7, #262144\n" +
-            mrrc(0, 4, 5, 8) + mrrc(0, 8, 9, 9) + mrrc(0, 10, 11, 10) +
+            mrrc(0, 4, 5, 8) + mrrc(0, 8, 9, 9) + mrrc(0, 10, 12, 10) +
             mrc2(0x30, 3) + "    cmp r3, #0\n"
             "    it ne\n    orrne r7, r7, #262144\n" +
             load64(0, 1, b64(6.0)) + load64(2, 3, b64(7.0)) +
             mcrr(1, 0, 1) + mcrr(1, 2, 3, 1) +
             mcrr(2, 0, 1) + mcrr(3, 2, 3) + cdp(8, 0x20) + mrrc(5, 0, 1) +
-            mcrr(0, 4, 5) + mcrr(0, 8, 9, 1) + mcrr(0, 10, 11, 2) +
+            mcrr(0, 4, 5) + mcrr(0, 8, 9, 1) + mcrr(0, 10, 12, 2) +
             cdp(8, 0x20) + mrrc(1, 0, 1) +
             check64(b64(7.0)))
 
     out += ("    ldr r0, =0xC0DE0000\n"
             "    orr r0, r0, r7\n"
-            "    orr r0, r0, r12, lsl #8\n"
+            "    orr r0, r0, r11, lsl #8\n"
             "    ldr r1, =0x40001000\n"
-            "    add r1, r1, r12, lsl #2\n"
+            "    add r1, r1, r11, lsl #2\n"
             "    str r0, [r1]\n"
             "    str r0, [r1]\n"
             "    str r0, [r1]\n"
