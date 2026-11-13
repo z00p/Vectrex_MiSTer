@@ -159,6 +159,7 @@ constant cb2_delay_clocks    : natural := 24;
 --------------------------------------------------------------
 
 signal clken_12            : std_logic;
+signal clken_24            : std_logic := '1';
 signal speech_enable_count : unsigned(6 downto 0);
 signal ce_250k             : std_logic;
 signal cpu_en              : std_logic;
@@ -407,19 +408,23 @@ end process;
 -- RAMP release: 9.5 us [228 clocks at 24 MHz]; the extra 1 us [24 clocks]
 -- models Q301's release tail.
 -- Both CB2 blanking edges: 1 us [24 clocks at 24 MHz].
+-- These 24 MHz paths step on clken_24, so a pause holds them where they are, in step with the VIA, the
+-- DAC/ZERO delay buffer and the integrators (clken_12), and they resume unchanged.
 process (clock)
 begin
 	if rising_edge(clock) then
-		cb2_delay_q <= cb2_delay_q(cb2_delay_q'high - 1 downto 0) & via_cb2_o;
+		if clken_24 = '1' then
+			cb2_delay_q <= cb2_delay_q(cb2_delay_q'high - 1 downto 0) & via_cb2_o;
 
-		ramp_delay_q <= ramp_delay_q(ramp_delay_q'high - 1 downto 0) & via_pb_o(7);
-		if ramp_delay_q(ramp_delay_q'high) = '0' then
-			ramp_integrator_n <= '0';
-			ramp_release_q    <= ramp_release_clocks;
-		elsif ramp_release_q /= 0 then
-			ramp_release_q <= ramp_release_q - 1;
-		else
-			ramp_integrator_n <= '1';
+			ramp_delay_q <= ramp_delay_q(ramp_delay_q'high - 1 downto 0) & via_pb_o(7);
+			if ramp_delay_q(ramp_delay_q'high) = '0' then
+				ramp_integrator_n <= '0';
+				ramp_release_q    <= ramp_release_clocks;
+			elsif ramp_release_q /= 0 then
+				ramp_release_q <= ramp_release_q - 1;
+			else
+				ramp_integrator_n <= '1';
+			end if;
 		end if;
 
 		if clken_12 = '1' then
@@ -467,12 +472,15 @@ port map
 process (clock)
 begin
 	if rising_edge(clock) then
-		-- B8: in PiTrex mode a pause (command underrun, manual pause) freezes the phase too, so
-		-- the beam/integrator enables keep their exact 8-per-E-cycle pattern across the pause.
-		-- Otherwise the free-running phase could lose or gain one 12 MHz tick per pause.
-		if pause = '0' or ptx_enable = '0' then
+		-- A pause (manual or OSD pause, PiTrex command underrun) freezes the phase too, so the
+		-- beam/integrator enables keep their exact 8-per-E-cycle pattern and their alignment with the
+		-- 24 MHz RAMP/CB2 paths across a pause of any length. A free-running phase could lose or gain
+		-- one 12 MHz tick per pause.
+		if pause = '0' then
 			cpu_phase <= cpu_phase + 1;
 		end if;
+		-- registered like clken_12 and cpu_en, so all three stop and restart on the same clock
+		clken_24  <= not pause;
 		clken_12  <= '0';
 		cpu_en    <= '0';
 		if pause = '0' then
