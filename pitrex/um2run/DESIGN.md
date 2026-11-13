@@ -40,9 +40,10 @@ commands, so the cartridge and the core never need to know about each other.
   with PCMP and saves/restores X, Y and E when nested code uses the DCP, including an interrupt
   handler that uses the SDK routines; um2run models that save/restore sequence. The arithmetic
   uses round-to-nearest, ties-to-even and preserves subnormals; truncating integer conversions
-  turn subnormals into zero. The test covers ties, signed zeros, infinities, quiet/signalling
-  NaNs, normal and subnormal limits, and integer limits. There are no native stubs yet, so each
-  p4 instruction still traps.
+  turn subnormals into zero. Signalling NaNs are quieted with their payload retained; invalid
+  operations produce the A9 VFP's positive canonical quiet NaN (`0x7ff8000000000000`). The test
+  covers ties, signed zeros, infinities, quiet/signalling NaNs, normal and subnormal limits, and
+  integer limits. There are no native stubs yet, so each p4 instruction still traps.
 - **Peripheral access** (loads and stores to 0x4xxxxxxx / 0xdxxxxxxx) faults the same way and is
   handed to the device model; hot sites are patched to a short stub too.
 - **XIP cache maintenance.** Some images flush the RP2350's flash cache one line at a time with
