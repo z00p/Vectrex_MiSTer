@@ -65,6 +65,7 @@ typedef struct {
 
 volatile int ptx_boot_phase;   /* see ptx.h; defined for every platform */
 volatile int ptx_core_stalled;   /* ditto */
+__thread int ptx_in_ring_wait;   /* ditto: set in the thread that is waiting in m_frame for the core */
 
 static int memfd = -1;
 static volatile uint8_t *base;
@@ -412,6 +413,7 @@ static void m_frame(uint64_t stream_cycles)
 	{ uint64_t rd = st->rd_idx; uint64_t lead = wr > rd ? wr - rd : 0;
 	  ps_frames++; ps_lead_sum += lead; if (lead > ps_lead_max) ps_lead_max = lead;
 	  if (rd < target) { ps_waited++; wait0_ms = now_ms(); } else ps_behind++; }
+	ptx_in_ring_wait = 1;
 	while (st->rd_idx < target) {
 		ps_naps++;
 		/* Once stalled (usually the core's Pause button: it stops the machine, and the player reads the stream only on its E edges)
@@ -423,6 +425,7 @@ static void m_frame(uint64_t stream_cycles)
 			ptx_core_stalled = 1;
 		}
 	}
+	ptx_in_ring_wait = 0;
 	if (ptx_core_stalled) {
 		fprintf(stderr, "ptx: core fetching again after %ld s\n", (now_ms() - wait0_ms) / 1000);
 		ptx_core_stalled = 0;
