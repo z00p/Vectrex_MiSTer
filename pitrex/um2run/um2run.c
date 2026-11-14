@@ -2646,6 +2646,9 @@ static void on_donate(int sig, siginfo_t *si, void *vuc) {
     /* core 0 has CPU 0 to itself once core 1 sits on its own CPU (--cpu1): only core 1 shares its CPU with Main.  BEFORE the move (--cpu1-after)
      * both guests share CPU 0 and core 0 must donate too: on 27 Oct 2026 a natively spinning core 0 that never yielded starved core 1 (0 ms CPU) until the move. */
     if (g_cpu1 >= 0 && g_c1_own_cpu && !tl_core) return;
+    /* The core has stopped reading the stream (paused, 14 Nov 2026: Pac-Man waited 15 min at a full CPU): core 0 sits in the ring wait, and a guest core 1
+     * that spins natively would keep Main's CPU busy for nothing.  Park it in 2 ms naps, at most 50 ms per tick, so it is back within a frame of the resume. */
+    if (tl_core && ptx_core_stalled) { for (int i = 0; i < 25 && ptx_core_stalled; i++) { struct timespec ts = { 0, 2000000L }; nanosleep(&ts, NULL); } return; }
     if (++n % 8 == 0) { struct timespec ts = { 0, (long)g_donate_us * 1000L }; nanosleep(&ts, NULL); }   /* a share for tasks below us (Main) */
     else sched_yield();                                                                              /* the other guest thread, if runnable */
 }
