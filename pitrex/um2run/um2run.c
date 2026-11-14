@@ -34,7 +34,9 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <signal.h>
+#include <stddef.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -90,6 +92,20 @@ static void bus_finish(void);
 static void rh_dump(void);
 uint64_t g_trap_ns, g_trap_n;   /* time spent inside the trap handler body (not the kernel's signal path) and count, for the profile line */
 static __thread int tl_core;          /* 0 = main thread (core 0), 1 = the core-1 thread */
+
+enum { DCP_NONE, DCP_FLOAT, DCP_DOUBLE, DCP_INT, DCP_UINT, DCP_FLOAT_INT, DCP_DOUBLE_INT };
+enum { DCP_OP_NONE, DCP_OP_ADD, DCP_OP_SUB, DCP_OP_MUL, DCP_OP_DIV, DCP_OP_SQRT };
+typedef struct {
+    uint64_t x, y, e;
+    unsigned xkind, ykind, op, rounding, active;
+    struct {
+        uint64_t x, y, e;
+        unsigned xkind, ykind, op, rounding, active;
+    } saved[8];
+    unsigned depth;
+    unsigned lost;                    /* saves past the 8th, not kept: their restores must not pop a kept one */
+} DcpState;
+static DcpState g_dcp[2];
 
 /* static (not malloc'd): a >128 KB malloc is mmap'd, and under qemu-user that lands in the 0x40000000 MMIO window */
 static uint8_t g_file[1 << 20]; static size_t g_filesz;
@@ -1862,6 +1878,211 @@ static void reserve_mmio(void) {
     mmap((void *)0x40000000u, 0x00801000u, PROT_NONE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);   /* where qemu's stack was: every peripheral below 0x40801000 */
 }
 
+/* Field values follow the pico-sdk DCP instruction and canned-sequence definitions.
+ * Copyright (c) 2020 Raspberry Pi (Trading) Ltd.; SPDX-License-Identifier: BSD-3-Clause. */
+static double dcp_bits_double(uint64_t u) { double d; memcpy(&d, &u, sizeof d); return d; }
+static uint64_t dcp_double_bits(double d) { uint64_t u; memcpy(&u, &d, sizeof u); return u; }
+static double dcp_bits_float(uint32_t u) { float f; memcpy(&f, &u, sizeof f); return f; }
+static uint32_t dcp_float_bits(double d) { float f = (float)d; uint32_t u; memcpy(&u, &f, sizeof u); return u; }
+
+static double dcp_input(uint64_t bits, unsigned kind) {
+    if (kind == DCP_FLOAT || kind == DCP_FLOAT_INT) return dcp_bits_float((uint32_t)bits);
+    if (kind == DCP_INT) return (double)(int32_t)bits;
+    if (kind == DCP_UINT) return (double)(uint32_t)bits;
+    return dcp_bits_double(bits);
+}
+
+static uint32_t dcp_class(uint64_t bits, unsigned kind) {
+    double v = dcp_input(bits, kind);
+    uint32_t f = signbit(v) ? 0x80000000u : 0;
+    if (isnan(v)) return f | 0x30000000u;
+    if (isinf(v)) return f | 0x20000000u;
+    if (v == 0) return f | 0x40000000u;
+    return f;
+}
+
+static double dcp_round_even(double x) {
+    double lo = floor(x), frac = x - lo;
+    if (frac > 0.5) return lo + 1.0;
+    if (frac < 0.5) return lo;
+    return fmod(fabs(lo), 2.0) == 0.0 ? lo : lo + 1.0;
+}
+
+static uint32_t dcp_to_integer(double x, int unsig, int rounded) {
+    if (isnan(x)) return unsig ? (signbit(x) ? 0u : UINT32_MAX) :
+        (signbit(x) ? 0x80000000u : 0x7fffffffu);
+    if (isinf(x)) return unsig ? (signbit(x) ? 0u : UINT32_MAX) :
+        (signbit(x) ? 0x80000000u : 0x7fffffffu);
+    if (rounded) x = dcp_round_even(x); else x = trunc(x);
+    if (unsig) {
+        if (x <= 0.0) return 0;
+        if (x >= 4294967295.0) return UINT32_MAX;
+        return (uint32_t)x;
+    }
+    if (x <= -2147483648.0) return 0x80000000u;
+    if (x >= 2147483647.0) return 0x7fffffffu;
+    return (uint32_t)(int32_t)x;
+}
+
+static void dcp_mrc_result(uint32_t *r, unsigned rd, uint32_t value) {
+    if (rd == 15) r[16] = (r[16] & 0x0fffffffu) | (value & 0xf0000000u);
+    else if (rd < 15) r[rd] = value;
+}
+
+static void dcp_mrrc_result(uint32_t *r, unsigned rt, unsigned rt2, uint64_t value) {
+    if (rt < 15) r[rt] = (uint32_t)value;
+    if (rt2 < 15) r[rt2] = (uint32_t)(value >> 32);
+}
+
+static int dcp_exec(int core, uint16_t h1, uint16_t h2, uint32_t *r, const char **name) {
+    DcpState *s = &g_dcp[core & 1];
+    /* T32 MCRR/MRRC: hw1 = 1110 1100 010L Rt2, hw2 = Rt coproc opc1 CRm. Rt is the low word, Rt2 the high word
+     * (mcrr p4,#1,r0,r1,c0 = ec41 0410 writes r1:r0) */
+    unsigned cp = (h2 >> 8) & 15, rt = (h2 >> 12) & 15, rt2 = h1 & 15;
+    if (cp != 4) return 0;
+
+    if ((h1 & 0xfff0) == 0xec40 || (h1 & 0xfff0) == 0xfc40) {
+        unsigned op = (h2 >> 4) & 15, cr = h2 & 15;
+        uint64_t v = (uint64_t)r[rt] | ((uint64_t)r[rt2] << 32);
+        *name = "MCRR";
+        if (op == 0 && cr == 0) { s->x = v; s->xkind = DCP_DOUBLE; *name = "WXMD"; }
+        else if (op == 0 && cr == 1) { s->y = v; s->ykind = DCP_DOUBLE; *name = "WYMD"; }
+        else if (op == 0 && cr == 2) {
+            s->e = v;
+            *name = "WEFD";
+            if (s->lost) s->lost--;
+            else if (s->depth) {
+                unsigned i = --s->depth;
+                s->x = s->saved[i].x; s->y = s->saved[i].y; s->e = s->saved[i].e;
+                s->xkind = s->saved[i].xkind; s->ykind = s->saved[i].ykind;
+                s->op = s->saved[i].op; s->rounding = s->saved[i].rounding;
+                s->active = s->saved[i].active;
+            }
+        } else if (op == 1 && cr == 0) { s->x = v; s->xkind = DCP_DOUBLE; s->active = 1; *name = "WXUP"; }
+        else if (op == 1 && cr == 1) { s->y = v; s->ykind = DCP_DOUBLE; s->active = 1; *name = "WYUP"; }
+        else if (op == 1 && cr == 2) {
+            s->x = (uint32_t)v; s->y = (uint32_t)(v >> 32);
+            s->xkind = s->ykind = DCP_FLOAT; s->active = 1; *name = "WXYU";
+        } else if (op == 2 && cr == 0) { s->e = v; s->op = DCP_OP_MUL; *name = "WXMS"; }
+        else if (op == 3 && cr == 0) { s->e = v; s->op = DCP_OP_MUL; *name = "WXMO"; }
+        else if (op == 4 && cr == 0) { s->e = v; s->op = DCP_OP_DIV; *name = "WXDD"; }
+        else if (op == 5 && cr == 0) { s->e = v; s->op = DCP_OP_SQRT; *name = "WXDQ"; }
+        else if (op == 6 && cr == 0) { s->x = (uint32_t)v; s->xkind = DCP_UINT; s->active = 1; *name = "WXUC"; }
+        else if (op == 7 && cr == 0) { s->x = (uint32_t)v; s->xkind = DCP_INT; s->active = 1; *name = "WXIC"; }
+        else if (op == 8 && cr == 0) { s->x = v; s->xkind = DCP_DOUBLE_INT; s->active = 1; *name = "WXDC"; }
+        else if (op == 9 && cr == 2) { s->x = (uint32_t)v; s->xkind = DCP_FLOAT_INT; s->active = 1; *name = "WXFC"; }
+        else if (op == 10 && cr == 0) { s->e = v; s->op = DCP_OP_MUL; *name = "WXFM"; }
+        else if (op == 11 && cr == 0) { s->e = v; s->op = DCP_OP_DIV; *name = "WXFD"; }
+        else if (op == 12 && cr == 0) { s->e = v; s->op = DCP_OP_SQRT; *name = "WXFQ"; }
+        else return 0;
+        return 1;
+    }
+    if ((h1 & 0xfff0) == 0xec50 || (h1 & 0xfff0) == 0xfc50) {
+        unsigned op = (h2 >> 4) & 15, cr = h2 & 15;
+        uint64_t v = 0;
+        int intermediate = 1;
+        *name = "MRRC";
+        if (op == 0 && cr == 8) { v = s->x; *name = "RXMD"; }
+        else if (op == 0 && cr == 9) { v = s->y; *name = "RYMD"; }
+        else if (op == 0 && cr == 10) {
+            v = s->e; *name = "REFD";
+            if (s->depth < sizeof s->saved / sizeof s->saved[0]) {
+                unsigned i = s->depth++;
+                s->saved[i].x = s->x; s->saved[i].y = s->y; s->saved[i].e = s->e;
+                s->saved[i].xkind = s->xkind; s->saved[i].ykind = s->ykind;
+                s->saved[i].op = s->op; s->saved[i].rounding = s->rounding;
+                s->saved[i].active = s->active;
+            } else if (s->lost++ == 0)
+                logf_("[DCP] core %d: more than %u nested saves; the deeper ones are not kept\n", core & 1,
+                      (unsigned)(sizeof s->saved / sizeof s->saved[0]));
+            s->active = 0;
+        } else if (cr == 4) { *name = "RXMS"; }
+        else if (cr == 5) { *name = "RYMS"; }
+        else if (op == 1 && cr == 1) { *name = "RXYH"; }
+        else if (op == 2 && cr == 1) { *name = "RYMR"; }
+        else if (op == 4 && cr == 1) { *name = "RXMQ"; }
+        else if (op == 1 && cr == 0) { *name = "RDDA"; intermediate = 0; }
+        else if (op == 3 && cr == 0) { *name = "RDDS"; intermediate = 0; }
+        else if (op == 5 && cr == 0) { *name = "RDDM"; intermediate = 0; }
+        else if (op == 7 && cr == 0) { *name = "RDDD"; intermediate = 0; }
+        else if (op == 9 && cr == 0) { *name = "RDDQ"; intermediate = 0; }
+        else if (op == 11 && cr == 0) { *name = "RDDG"; intermediate = 0; }
+        else return 0;
+        if (!intermediate && !s->active) return 0;
+
+        if (cr == 4 || cr == 5 || (op == 1 && cr == 1) || (op == 2 && cr == 1) || (op == 4 && cr == 1))
+            v = 0; /* Intermediate mantissa reads feed only integer steps in the canned sequences. */
+        else if (op == 1 && cr == 0) v = dcp_double_bits(dcp_input(s->x, s->xkind) + dcp_input(s->y, s->ykind));
+        else if (op == 3 && cr == 0) {
+            if (s->xkind == DCP_INT || s->xkind == DCP_UINT) v = dcp_double_bits(dcp_input(s->x, s->xkind));
+            else v = dcp_double_bits(dcp_input(s->x, s->xkind) - dcp_input(s->y, s->ykind));
+        } else if (op == 5 && cr == 0) v = dcp_double_bits(dcp_input(s->x, s->xkind) * dcp_input(s->y, s->ykind));
+        else if (op == 7 && cr == 0) v = dcp_double_bits(dcp_input(s->x, s->xkind) / dcp_input(s->y, s->ykind));
+        else if (op == 9 && cr == 0) v = dcp_double_bits(sqrt(dcp_input(s->x, s->xkind)));
+        else if (op == 11 && cr == 0) v = dcp_double_bits((double)dcp_bits_float((uint32_t)s->x));
+        dcp_mrrc_result(r, rt, rt2, v);
+        if (!intermediate) s->active = 0;
+        return 1;
+    }
+    if (((h1 & 0xff00) == 0xee00 || (h1 & 0xff00) == 0xfe00) && h2 & 0x10) {
+        unsigned rd = (h2 >> 12) & 15, key = h2 & 0xff;
+        uint32_t value = 0;
+        *name = "MRC";
+        if ((h1 & 0xfff0) != 0xee10 && (h1 & 0xfff0) != 0xfe10) return 0;
+        if (!(h1 & 0x1000) || key != 0x30) {
+            if (!s->active) return 0;
+        }
+        if (key == 0x10) {
+            value = dcp_class(s->x, s->xkind); *name = (h1 & 0x1000) ? "PXVD" : "RXVD"; s->active = 0;
+        } else if (key == 0x30 && (h1 & 0x1000)) {
+            value = s->active ? 0x80000000u : 0;
+            *name = "PCMP";
+        } else if (key == 0x30) {
+            double a = dcp_input(s->x, s->xkind), b = dcp_input(s->y, s->ykind);
+            if (isnan(a) || isnan(b)) value = 0x30000000u;
+            else if (a == b) value = 0x60000000u;
+            else if (a < b) value = 0x80000000u;
+            else value = 0x20000000u;
+            *name = "RCMP"; s->active = 0;
+        } else if (key == 0x12) {
+            value = dcp_float_bits(dcp_input(s->x, s->xkind) + dcp_input(s->y, s->ykind)); *name = "RDFA"; s->active = 0;
+        } else if (key == 0x32) {
+            value = dcp_float_bits(s->xkind == DCP_INT || s->xkind == DCP_UINT ? dcp_input(s->x, s->xkind) :
+                dcp_input(s->x, s->xkind) - dcp_input(s->y, s->ykind)); *name = "RDFS"; s->active = 0;
+        } else if (key == 0x52) {
+            value = dcp_float_bits(dcp_input(s->x, s->xkind) * dcp_input(s->y, s->ykind)); *name = "RDFM"; s->active = 0;
+        } else if (key == 0x72) {
+            value = dcp_float_bits(dcp_input(s->x, s->xkind) / dcp_input(s->y, s->ykind)); *name = "RDFD"; s->active = 0;
+        } else if (key == 0x92) {
+            value = dcp_float_bits(sqrt(dcp_input(s->x, s->xkind))); *name = "RDFQ"; s->active = 0;
+        } else if (key == 0xb2) {
+            value = dcp_float_bits(dcp_input(s->x, s->xkind)); *name = "RDFG"; s->active = 0;
+        } else if (key == 0x13 || key == 0x33) {
+            value = dcp_to_integer(dcp_input(s->x, s->xkind), key == 0x33, s->rounding); *name = key == 0x13 ? "RDIC" : "RDUC"; s->active = 0;
+        } else return 0;
+        dcp_mrc_result(r, rd, value);
+        return 1;
+    }
+    if (((h1 & 0xff00) == 0xee00 || (h1 & 0xff00) == 0xfe00) && !(h2 & 0x10) &&
+        (h1 & 15) == 0 && ((h2 >> 12) & 15) == 0) {
+        unsigned op = (h1 >> 4) & 15, key = h2 & 0xff;
+        *name = "CDP";
+        if (op == 0 && key == 0x00) { memset(s, 0, offsetof(DcpState, saved)); *name = "INIT"; }
+        else if (op == 0 && key == 0x01) { *name = "ADD0"; }
+        else if (op == 1 && key == 0x01) { s->op = DCP_OP_ADD; *name = "ADD1"; }
+        else if (op == 1 && key == 0x21) { s->op = DCP_OP_SUB; *name = "SUB1"; }
+        else if (op == 2 && key == 0x01) { s->op = DCP_OP_SQRT; *name = "SQR0"; }
+        else if (op == 8 && key == 0x02) { *name = "NORM"; }
+        else if (op == 8 && key == 0x22) { s->rounding = 1; *name = "NRDF"; }
+        else if (op == 8 && key == 0x20) { s->rounding = 1; *name = "NRDD"; }
+        else if (op == 8 && key == 0x40) { s->rounding = 0; *name = "NTDC"; }
+        else if (op == 8 && key == 0x60) { s->rounding = 1; *name = "NRDC"; }
+        else return 0;
+        return 1;
+    }
+    return 0;
+}
+
 static __thread uint32_t tl_rpc, tl_rn;
 static int cpu_trap(int sig, Cpu *c, uint32_t fault_addr, int svc_from_syscall, uint32_t svc_hw) {
     reserve_mmio();
@@ -1908,6 +2129,29 @@ static int cpu_trap(int sig, Cpu *c, uint32_t fault_addr, int svc_from_syscall, 
                 if (e && (e->n == 6 || (e->n > 6 && e->n < 520 && ((e->n - 6) & 7) == 0)) && svc_patch(c, pc, n)) return ACT_CONT;     /* now `b.w stub`: run the site again (before any frame is built: no exception returns inside the span) */
                 if (!exc_enter(c, pc + 2, 11)) { printf("STOP: cannot enter SVCall (vector unreadable)\n"); return ACT_STOP; } goto done; }
             c->r[0] = 0; skip(c, 2); goto done;
+        }
+        if (sig == SIGILL && len == 4 && (h1 & 0xec00) == 0xec00 && ((h2 >> 8) & 15) == 4) {
+            const char *name = NULL;
+            int handled = dcp_exec(tl_core, h1, h2, c->r, &name), isnew;
+            Ev *e = ev_get(K_ILL, pc, 0, &isnew);
+            if (e) {
+                e->n++;
+                if (isnew) {
+                    e->x = h1; e->y = h2;
+                    if (handled) {
+                        snprintf(e->note, sizeof e->note, "DCP %s emulated", name);
+                        logf_("[ILL] pc=%08x DCP %s emulated\n", pc, name);
+                    } else
+                        snprintf(e->note, sizeof e->note, "DCP %04x %04x not emulated", h1, h2);
+                }
+            }
+            if (!handled) {               /* every miss, not just a site's first: a site that worked once can miss later (no operation set up) */
+                static unsigned misses;
+                unsigned m = __atomic_add_fetch(&misses, 1, __ATOMIC_RELAXED);
+                if (m <= 32) logf_("[ILL] pc=%08x DCP %04x %04x not emulated%s\n", pc, h1, h2,
+                                   m == 32 ? " (further misses not logged)" : "");
+            }
+            skip(c, 4); goto done;
         }
         if (sig == SIGILL && len == 4 && (((h1 & 0xFFF0) == 0xFB90) || ((h1 & 0xFFF0) == 0xFBB0)) && (h2 & 0xF0F0) == 0xF0F0) {
             int sgn = (h1 & 0xFFF0) == 0xFB90, rd = (h2 >> 8) & 15, rn = h1 & 15, rm = h2 & 15, isnew;
