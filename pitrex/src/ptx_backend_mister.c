@@ -407,21 +407,24 @@ static void m_frame(uint64_t stream_cycles)
 	if (lead_f < 0) { const char *e = getenv("PTX_LEAD"); lead_f = e && *e >= '0' && *e <= '6' ? *e - '0' : (int)PTX_LEAD_FRAMES; }
 	if (n_frames <= (unsigned)lead_f) return;
 	uint64_t target = frame_end[(n_frames - 1 - lead_f) % 8];
-	int waited_ms = 0;
+	int naps = 0;
+	long wait0_ms = 0;
 	{ uint64_t rd = st->rd_idx; uint64_t lead = wr > rd ? wr - rd : 0;
 	  ps_frames++; ps_lead_sum += lead; if (lead > ps_lead_max) ps_lead_max = lead;
-	  if (rd < target) ps_waited++; else ps_behind++; }
+	  if (rd < target) { ps_waited++; wait0_ms = now_ms(); } else ps_behind++; }
 	while (st->rd_idx < target) {
 		ps_naps++;
-		nap_us(200);
-		if (++waited_ms == 10000) {              /* 2 s without progress */
-			fprintf(stderr, "ptx: core not fetching (rd_idx %llu < %llu) - PiTrex Mode on?\n",
+		/* Once stalled (usually the core's Pause button: it stops the machine, and the player reads the stream only on its E edges)
+		 * nap 2 ms, not 200 us: the wait can last minutes, and a 2 ms nap still notices the resume within a frame. */
+		nap_us(ptx_core_stalled ? 2000 : 200);
+		if (++naps == 10000) {                   /* 2 s without progress */
+			fprintf(stderr, "ptx: core not fetching (rd_idx %llu < %llu) - paused (the core's Pause button)? PiTrex Mode on?\n",
 			        (unsigned long long)st->rd_idx, (unsigned long long)target);
 			ptx_core_stalled = 1;
 		}
 	}
 	if (ptx_core_stalled) {
-		fprintf(stderr, "ptx: core fetching again after %d s\n", waited_ms / 5000);
+		fprintf(stderr, "ptx: core fetching again after %ld s\n", (now_ms() - wait0_ms) / 1000);
 		ptx_core_stalled = 0;
 	}
 }
