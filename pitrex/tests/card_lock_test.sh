@@ -1,6 +1,6 @@
-#!/bin/sh
+#!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Run on Linux: sh pitrex/tests/card_lock_test.sh
+# Run on Linux: bash pitrex/tests/card_lock_test.sh
 set -eu
 P=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 W=$(mktemp -d "${TMPDIR:-/tmp}/card-lock.XXXXXX")
@@ -14,9 +14,10 @@ trap cleanup EXIT
 mkdir -p "$W/bin" "$W/tmp" "$W/fat/pitrex/uvmc2" "$W/fat/games/Vectrex-PiTrex/UVMC2"
 FAT=$W/fat; UV=$FAT/pitrex/uvmc2; GAMES=$FAT/games/Vectrex-PiTrex/UVMC2
 export PITREX_FAT=$FAT PITREX_TMP=$W/tmp PATH="$W/bin:$PATH"
-CARD_SHELL=${CARD_SHELL:-sh}
+CARD_SHELL=${CARD_SHELL:-bash}   # the scripts are bash scripts and always run under bash
 
 cat > "$W/lock.c" <<'EOF'
+#define _GNU_SOURCE                 /* as um2run.c: O_CLOEXEC needs POSIX 2008 */
 #include "um2card_lock.h"
 int main(int argc, char **argv) {
     if (argc != 2) return 2;

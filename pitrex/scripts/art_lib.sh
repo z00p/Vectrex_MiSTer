@@ -14,14 +14,13 @@ type cfg_get > /dev/null 2>&1 || cfg_get() {
 	tr -d '\r' < "$1" | sed -n "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*//p" | tail -1 | sed 's/[[:space:]]*$//'
 }
 
-# art_ci <dir> <name> [-d]: the file (with -d, the folder) in <dir> called <name>, ignoring case; prints its path, else status 1.
+# art_ci <dir> <name> [-d]: the file (with -d, the folder) in <dir> called <name>, ignoring case; prints its path, else status 1. Shell builtins only.
 art_ci() {
-	local f b n
-	n=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+	local f b n=${2,,}
 	[ "${3:--f}" "$1/$2" ] && { echo "$1/$2"; return 0; }
 	for f in "$1"/*; do
 		b=${f##*/}
-		[ "$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]')" = "$n" ] && [ "${3:--f}" "$f" ] && { echo "$f"; return 0; }
+		[ "${b,,}" = "$n" ] && [ "${3:--f}" "$f" ] && { echo "$f"; return 0; }
 	done
 	return 1
 }
@@ -42,7 +41,7 @@ art_tate() {
 art_open() {
 	local v
 	v=$(cfg_get "$1" view)
-	[ "$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')" = open ]
+	[ "${v,,}" = open ]
 }
 
 # art_sub <suffix> <name without .art> <overlay folder>...: <name><suffix>.art in the first folder that has it (suffix set: in its Tate folder)

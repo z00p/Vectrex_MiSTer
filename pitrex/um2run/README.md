@@ -34,9 +34,9 @@ cd pitrex/um2run
 The binary is not kept in git. Copy `um2run` and `mister_run.sh` to `/media/fat/pitrex/um2run/` on
 the MiSTer (the release zip and PiTrex_Setup do this for you).
 
-Self test (needs `qemu-user`, `apt install qemu-user`): `./selftest/selftest.sh` should print fifteen
+Self test (needs `qemu-user`, `apt install qemu-user`): `./selftest/selftest.sh` should print sixteen
 `PASS` lines.
-From the repository root, `sh pitrex/tests/card_lock_test.sh` tests card locking on Linux without
+From the repository root, `bash pitrex/tests/card_lock_test.sh` tests card locking on Linux without
 the ARM build or card images.
 
 ## Run by hand (SSH on the MiSTer)

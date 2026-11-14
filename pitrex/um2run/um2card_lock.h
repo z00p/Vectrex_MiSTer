@@ -20,7 +20,7 @@ static int um2card_lock(const char *card) {
     if (!path) { perror("um2run: card lock"); return 1; }
     memcpy(path, card, n);
     memcpy(path + n, ".lock", sizeof ".lock");
-    int fd = open(path, O_CREAT | O_RDWR, 0666);
+    int fd = open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0666);
     if (fd < 0) { perror(path); free(path); return 1; }
     if (flock(fd, LOCK_EX | LOCK_NB)) {
         int err = errno;
