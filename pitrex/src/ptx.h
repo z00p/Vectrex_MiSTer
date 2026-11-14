@@ -68,6 +68,7 @@ typedef struct {
 extern const ptx_backend_t ptx_backend_file;    /* PC harness: raw stream file */
 extern const ptx_backend_t ptx_backend_mister;  /* DE10-Nano: DDR ring via /dev/mem */
 extern volatile int ptx_core_stalled;           /* set while the core has stopped fetching the ring (its Pause button, OSD pause, or a stall): the program is not at fault */
+extern __thread int ptx_in_ring_wait;           /* nonzero in the thread that is waiting for the core to fetch (the one that clears ptx_core_stalled): never park it */
 extern volatile int ptx_boot_phase;             /* launcher sets it while no program picture exists yet (um2run loading indicator): a core drop then re-attaches */
 
 /* Stream layer API (ptx_core.c) */
