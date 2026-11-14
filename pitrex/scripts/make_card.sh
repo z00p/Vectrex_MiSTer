@@ -35,7 +35,7 @@ OUT=$UV/sd.img
 GAMES=$FAT/games/Vectrex-PiTrex/UVMC2
 # one folder for everything, unless an older install has files in the card folder
 CARD=$GAMES; ONE=1
-if [ -n "$(find "$UV/card" -mindepth 1 -maxdepth 1 ! -name README.txt 2>/dev/null | head -1)" ]; then CARD=$UV/card; ONE=0; fi
+if [ -n "$(find "$UV/card" -mindepth 1 -maxdepth 1 ! -name README.txt ! -iname '*.lock' 2>/dev/null | head -1)" ]; then CARD=$UV/card; ONE=0; fi
 UM2=$FAT/pitrex/um2run
 MAX_MIB=16000
 BIG_MIB=2000    # above this, 4 KiB clusters: the FAT of a big card with 512-byte clusters would be hundreds of MiB
@@ -78,7 +78,7 @@ def why_skip(path, name, isdir, top):
         return "menu pictures and videos (ASSETS)"
     if n.endswith((".um2", ".uf2")):
         return ".um2/.uf2 files"
-    if n.endswith((".um2.cfg", ".um2.load", ".img", ".img.list", ".img.bak")):
+    if n.endswith((".um2.cfg", ".um2.load", ".img", ".img.list", ".img.bak", ".lock")):
         return "game settings and card images"
     if n.endswith(".art"):
         return "overlay art"
@@ -425,11 +425,15 @@ resolve() {
 
 # Nothing for a card and no card yet: a blank one, so that games can keep scores and settings. It takes no mounting. The empty .list makes
 # the next build with files in the card folder replace it, keeping what games saved on it.
-blank_card() {
+blank_card() (
 	local free
+	trap cleanup EXIT
 	[ -f "$OUT" ] && return 0
 	command -v python3 > /dev/null && command -v mkfs.vfat > /dev/null || return 0
 	mkdir -p "$UV" 2>/dev/null
+	exec 9>>"$OUT.lock" || die "cannot open $OUT.lock"
+	flock -n 9 || die "a UVMC2 game is running and may be writing to its card: stop it first (Scripts > PiTrex_Stop)"
+	[ -f "$OUT" ] && return 0
 	free=$(py free "$UV") || return 0
 	if [ "$free" -lt $(( BLANK_MIB + 4 )) ]; then say "no room for a blank card in $UV: games play, but cannot save."; return 0; fi
 	TMPFILES="$OUT.new"
@@ -438,7 +442,7 @@ blank_card() {
 	TMPFILES=""
 	: > "$OUT.list"
 	say "made a blank card, $OUT, so that games can save. Games that need ROMs want a real one: see ADDING_GAMES.md."
-}
+)
 
 # Scale cards (see the header). cfg_get is pitrexd.sh's, so both read a sidecar alike (and no python per game: --check runs at every start).
 cfg_get() {
@@ -452,7 +456,7 @@ game_scale() {
 	local g=$1 s n
 	[ -n "$(cfg_get "$g.cfg" sd)" ] && return 0
 	s=$(cfg_get "$g.cfg" scale)
-	if [ -z "$s" ]; then n=${g##*/}; case "${n,,}" in *vector*pinball*) s=118 ;; esac; fi
+	if [ -z "$s" ]; then n=$(printf '%s' "${g##*/}" | tr '[:upper:]' '[:lower:]'); case "$n" in *vector*pinball*) s=118 ;; esac; fi
 	case "$s" in [1-9]|[1-9][0-9]|[1-9][0-9][0-9]) echo "$s" ;; esac
 }
 SC_SCALES=""
@@ -489,7 +493,7 @@ fi
 # ---------------------------------------------------------------------------------------------
 # 1. What is in the card folder
 if [ ! -d "$CARD" ] || [ -z "$(ls -A "$CARD" 2>/dev/null)" ]; then
-	blank_card
+	blank_card || exit $?
 	[ "$IF_NEEDED" = 1 ] && exit 0
 	say "the card folder $CARD is empty or missing, so there is nothing to put on a card."
 	say "Copy the files from your UVMC2 SD card (or just your ROM zips, in a roms folder) into it, then run this again."
@@ -532,20 +536,20 @@ NFILES=$1; DATA=$(echo "$2" | tr _ ' '); MIB=$3; shift 3; SKIPS="$*"
 [ "$SKIPS" = "-" ] && SKIPS="nothing"
 if [ "$NFILES" = 0 ]; then
 	if [ "$ONE" = 1 ]; then
-		blank_card
+		blank_card || exit $?
 		[ "$IF_NEEDED" = 1 ] && exit 0
 		say "no card files in $CARD, only games: nothing to build."
 		exit 0
 	fi
 	if [ "$NUM2" -gt 0 ]; then
 		# only games: they are in the games folder now, and there is nothing to make a card from
-		blank_card
+		blank_card || exit $?
 		[ "$IF_NEEDED" = 1 ] && [ "$NCOPIED" = 0 ] && exit 0
 		say "the card folder has only .um2 games, which go in the games folder, so there was nothing to build a card from."
 		say "Games that need ROMs or other files from the card: copy the rest of your UVMC2 SD card into $CARD too, then run this again."
 		exit 0
 	fi
-	blank_card
+	blank_card || exit $?
 	[ "$IF_NEEDED" = 1 ] && exit 0
 	say "nothing to put on a card in $CARD (skipped: $SKIPS)."
 	say "Copy the files from your UVMC2 SD card (or just your ROM zips, in a roms folder) into it, then run this again."
@@ -586,7 +590,7 @@ if [ "$IF_NEEDED" = 1 ] && [ -f "$OUT" ]; then
 			[ "$LIST" = "$(cat "$OUT.list")" ] && uptodate=1
 		else
 			# a card made some other way: rebuild only if the folder has a file newer than it
-			[ -z "$(find "$CARD" -type f ! -iname '*.um2' ! -iname '*.art' -newer "$OUT" 2>/dev/null | head -1)" ] && uptodate=1
+			[ -z "$(find "$CARD" -type f ! -iname '*.um2' ! -iname '*.art' ! -iname '*.lock' -newer "$OUT" 2>/dev/null | head -1)" ] && uptodate=1
 		fi
 		if [ "$uptodate" = 1 ]; then
 			# sd.img is fine: only the scale cards, if one is missing or was made from an older sd.img
@@ -608,11 +612,7 @@ fi
 
 # 2. Checks before anything is written
 [ "$(id -u)" = 0 ] || die "run this as root (it mounts the card image)"
-for c in mkfs.vfat losetup mount umount; do command -v $c > /dev/null || die "$c not found"; done
-for p in /proc/[0-9]*; do
-	{ read -r n < "$p/comm"; } 2>/dev/null || continue
-	[ "$n" = um2run ] && die "a UVMC2 game is running and may be writing to its card: stop it first (Scripts > PiTrex_Stop)"
-done
+for c in mkfs.vfat losetup mount umount flock; do command -v $c > /dev/null || die "$c not found"; done
 LOCK=$T/make_card.lock
 if ! mkdir "$LOCK" 2>/dev/null; then
 	old=$(cat "$LOCK/pid" 2>/dev/null)
@@ -620,6 +620,21 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 	rm -rf "$LOCK"; mkdir "$LOCK" || { LOCK=""; die "cannot create $LOCK"; }
 fi
 echo $$ > "$LOCK/pid"
+mkdir -p "$UV" || die "cannot create $UV"
+
+# Each waiting shell holds its descriptor while the next card is locked and built.
+lock_cards() {
+	if [ "$#" = 0 ]; then build_cards; return; fi
+	local card=$1
+	shift
+	(
+		flock -n 9 || die "a UVMC2 game is running and may be writing to its card: stop it first (Scripts > PiTrex_Stop)"
+		lock_cards "$@"
+	) 9>>"$card.lock"
+}
+
+build_cards() {
+trap 'LOCK=""; cleanup' EXIT
 # saves folders of a run that was killed hard (we hold the lock, so no other run uses them)
 for d in "$UV"/.make_card.*; do [ -d "$d" ] && rm -rf "$d"; done
 WORK=$(mktemp -d "$T/make_card.XXXXXX") || die "cannot create a work folder in $T"
@@ -802,4 +817,9 @@ if [ -n "$BZ_IMGS" ]; then
 $BZ_IMGS
 EOF
 fi
-exit 0
+}
+
+set -- "$OUT"
+for t in $BZ_TARGETS; do set -- "$@" "$t"; done
+for n in $SC_SCALES; do set -- "$@" "$UV/sd_scale$n.img"; done
+lock_cards "$@"
