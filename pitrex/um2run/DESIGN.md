@@ -34,6 +34,20 @@ commands, so the cartridge and the core never need to know about each other.
   to `b.w stub`, where the stub does the same without a trap (a trap costs about 50 us on the
   A9). A patch is only made with the other core parked, so it can never run half-written.
   `selftest/` has synthetic guests for each of these paths.
+- **RP2350 DCP (coprocessor p4).** The trap decodes the pico-sdk's canned arithmetic,
+  comparison, classification and conversion sequences, and computes results with the A9's VFP.
+  X, Y, E and the in-progress sequence are kept per guest core. The pico-sdk checks DCP state
+  with PCMP and saves/restores X, Y and E when nested code uses the DCP, including an interrupt
+  handler that uses the SDK routines; um2run keeps up to 8 nested saves (deeper ones are logged
+  and not kept, and their restores don't pop a kept one). This is a model of the sequences, not
+  of the DCP's datapath: each operation's result is computed whole when the sequence reads it,
+  and the intermediate mantissa reads return 0. Results are the A9 VFP's (round to nearest,
+  ties to even). Edge cases (subnormals, NaN payloads and the NaN produced by invalid operations,
+  out-of-range conversions) follow the A9 and have **not** been checked against a real RP2350.
+  `selftest/gen_dcp.py` writes the DCP instructions as mnemonics so the assembler encodes them;
+  its expected values restate the same rules, so it checks the decoding and the sequences, not
+  the hardware's edge cases. Every miss is logged (up to 32). There are no native stubs yet, so
+  each p4 instruction traps (about 50 us): a double add costs about 0.3 ms.
 - **Peripheral access** (loads and stores to 0x4xxxxxxx / 0xdxxxxxxx) faults the same way and is
   handed to the device model; hot sites are patched to a short stub too.
 - **XIP cache maintenance.** Some images flush the RP2350's flash cache one line at a time with
