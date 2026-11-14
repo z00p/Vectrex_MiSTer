@@ -102,6 +102,7 @@ typedef struct {
         unsigned xkind, ykind, op, rounding, active;
     } saved[8];
     unsigned depth;
+    unsigned lost;                    /* saves past the 8th, not kept: their restores must not pop a kept one */
 } DcpState;
 static DcpState g_dcp[2];
 
@@ -1934,7 +1935,9 @@ static void dcp_mrrc_result(uint32_t *r, unsigned rt, unsigned rt2, uint64_t val
 
 static int dcp_exec(int core, uint16_t h1, uint16_t h2, uint32_t *r, const char **name) {
     DcpState *s = &g_dcp[core & 1];
-    unsigned cp = (h2 >> 8) & 15, rt = h1 & 15, rt2 = (h2 >> 12) & 15;
+    /* T32 MCRR/MRRC: hw1 = 1110 1100 010L Rt2, hw2 = Rt coproc opc1 CRm. Rt is the low word, Rt2 the high word
+     * (mcrr p4,#1,r0,r1,c0 = ec41 0410 writes r1:r0) */
+    unsigned cp = (h2 >> 8) & 15, rt = (h2 >> 12) & 15, rt2 = h1 & 15;
     if (cp != 4) return 0;
 
     if ((h1 & 0xfff0) == 0xec40 || (h1 & 0xfff0) == 0xfc40) {
@@ -1946,7 +1949,8 @@ static int dcp_exec(int core, uint16_t h1, uint16_t h2, uint32_t *r, const char 
         else if (op == 0 && cr == 2) {
             s->e = v;
             *name = "WEFD";
-            if (s->depth) {
+            if (s->lost) s->lost--;
+            else if (s->depth) {
                 unsigned i = --s->depth;
                 s->x = s->saved[i].x; s->y = s->saved[i].y; s->e = s->saved[i].e;
                 s->xkind = s->saved[i].xkind; s->ykind = s->saved[i].ykind;
@@ -1987,7 +1991,9 @@ static int dcp_exec(int core, uint16_t h1, uint16_t h2, uint32_t *r, const char 
                 s->saved[i].xkind = s->xkind; s->saved[i].ykind = s->ykind;
                 s->saved[i].op = s->op; s->saved[i].rounding = s->rounding;
                 s->saved[i].active = s->active;
-            }
+            } else if (s->lost++ == 0)
+                logf_("[DCP] core %d: more than %u nested saves; the deeper ones are not kept\n", core & 1,
+                      (unsigned)(sizeof s->saved / sizeof s->saved[0]));
             s->active = 0;
         } else if (cr == 4) { *name = "RXMS"; }
         else if (cr == 5) { *name = "RYMS"; }
@@ -2134,11 +2140,15 @@ static int cpu_trap(int sig, Cpu *c, uint32_t fault_addr, int svc_from_syscall, 
                     if (handled) {
                         snprintf(e->note, sizeof e->note, "DCP %s emulated", name);
                         logf_("[ILL] pc=%08x DCP %s emulated\n", pc, name);
-                    } else {
+                    } else
                         snprintf(e->note, sizeof e->note, "DCP %04x %04x not emulated", h1, h2);
-                        logf_("[ILL] pc=%08x DCP %04x %04x not emulated\n", pc, h1, h2);
-                    }
                 }
+            }
+            if (!handled) {               /* every miss, not just a site's first: a site that worked once can miss later (no operation set up) */
+                static unsigned misses;
+                unsigned m = __atomic_add_fetch(&misses, 1, __ATOMIC_RELAXED);
+                if (m <= 32) logf_("[ILL] pc=%08x DCP %04x %04x not emulated%s\n", pc, h1, h2,
+                                   m == 32 ? " (further misses not logged)" : "");
             }
             skip(c, 4); goto done;
         }

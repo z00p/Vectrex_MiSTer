@@ -82,28 +82,33 @@ def nzcv_classify(value):
     return flags
 
 
-def inst(h1, h2):
-    return "    .inst.w 0x%04x%04x\n" % (h1, h2)
-
-
+# The DCP instructions are written as mnemonics, as in dcp_canned.inc.S, so the assembler encodes them: the test
+# then checks um2run's decoder against an independent encoder, not against hand-built words that share its mistakes.
+# rt is the low word, rt2 the high word (mcrr p4,#1,r0,r1,c0 writes r1:r0 and assembles to ec41 0410).
 def mcrr(op, rt, rt2, cr=0):
-    return inst(0xEC40 | rt, (rt2 << 12) | 0x0400 | (op << 4) | cr)
+    return "    mcrr p4, #%d, r%d, r%d, c%d\n" % (op, rt, rt2, cr)
 
 
 def mrrc(op, rt, rt2, cr=0):
-    return inst(0xEC50 | rt, (rt2 << 12) | 0x0400 | (op << 4) | cr)
+    return "    mrrc p4, #%d, r%d, r%d, c%d\n" % (op, rt, rt2, cr)
 
 
+def _rd(rd):
+    return "APSR_nzcv" if rd == 15 else "r%d" % rd
+
+
+# key = opc2 << 5 | 0x10 | CRm, as um2run decodes it
 def mrc(key, rd=0):
-    return inst(0xEE10, (rd << 12) | 0x0400 | key)
+    return "    mrc p4, #0, %s, c0, c%d, #%d\n" % (_rd(rd), key & 15, key >> 5)
 
 
 def mrc2(key, rd=0):
-    return inst(0xFE10, (rd << 12) | 0x0400 | key)
+    return "    mrc2 p4, #0, %s, c0, c%d, #%d\n" % (_rd(rd), key & 15, key >> 5)
 
 
+# key = opc2 << 5 | CRm
 def cdp(op, key):
-    return inst(0xEE00 | (op << 4), 0x0400 | key)
+    return "    cdp p4, #%d, c0, c0, c%d, #%d\n" % (op, key & 15, key >> 5)
 
 
 def load32(reg, value):
