@@ -1858,21 +1858,21 @@ static void hud(void)
 	int fork = state == RACE && ph < 4 && pos_z > (fork_start - FORK_WARN) * SEG_LEN &&
 	           pos_z < (fork_start + FORK_LEN) * SEG_LEN;   /* not once the split is behind you */
 	snprintf(t, sizeof t, "TIME %02d", (int)(time_left + 0.99f));
-	v_printString(-110, 122, t, 5, 80);
+	v_printString(-110, 119, t, 5, 80);	/* size 5 glyphs are 7 units tall: 119 keeps the tops on screen (127) */
 	snprintf(t, sizeof t, "%3d KM/H", (int)(speed / MAX_SPEED * 290));
-	v_printString(25, 122, t, 5, 80);
+	v_printString(25, 119, t, 5, 80);
 	/* text is the expensive part of a frame: the phase line gives way to
 	   the fork sign and to the banners, which carry the same information */
 	if (fork) {
 		const char *l = theme_name[lat_theme[ph][next_pos(ph, cur_pos, 0)]];
 		const char *r = theme_name[lat_theme[ph][next_pos(ph, cur_pos, 1)]];
 		snprintf(t, sizeof t, "< %s", l);
-		v_printString(-118, 108, t, 4, 90);
+		v_printString(-118, 106, t, 4, 90);
 		snprintf(t, sizeof t, "%s >", r);
-		v_printString(118 - (int)(strlen(t) * 44 / 10), 108, t, 4, 90);
+		v_printString(118 - (int)(strlen(t) * 44 / 10), 106, t, 4, 90);
 	} else if (state != TIMEUP && state != GOAL && banner_timer <= 0 && banner2_timer <= 0) {
 		snprintf(t, sizeof t, "PHASE %d/4  %s", ph, theme_name[sky_w < 0.5f ? prev_theme : ph_theme]);
-		ctext(108, t, 4, 60);
+		ctext(106, t, 4, 60);
 	}
 	if (state == ATTRACT) ctext(60, "PRESS BUTTON 1", 6, 90);
 	if (state == COUNTDOWN) {
