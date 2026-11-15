@@ -29,6 +29,19 @@ static uint64_t gt_count(void) {
 	return (uint64_t)h << 32 | l;
 }
 static uint64_t conv(uint64_t c) { return g_n0 + (((c - g_c0) * g_mul) >> 24); }
+/* One (count, CLOCK_MONOTONIC) pair: the kernel read between two counter reads, the narrowest of 8 tries, its count taken at the middle.
+ * One plain read is not enough (15 Nov 2026): in main-pitrex --um2run (a large dynamically linked process) the first clock_gettime took
+ * 52-54 us against 3-4 us later, every time.  That window sat inside the 50 ms calibration, so the fast clock ran 0.1 % slow and was 1 ms
+ * behind CLOCK_MONOTONIC after a second.  The irq thread's sleep deadlines (150 us to 20 ms ahead, made from this clock) were then already
+ * past for the kernel: it spun at 40 kHz at real-time priority, starved core 0 and the heartbeat that re-syncs the clock, and BattleZone 0.3a
+ * took 8 to 45+ s to load instead of 1.7. */
+static void gt_pair(uint64_t *c, uint64_t *n) {
+	uint64_t best = ~0ull;
+	for (int i = 0; i < 8; i++) {
+		uint64_t a = gt_count(), t = sys_ns(), b = gt_count();
+		if (b - a < best) { best = b - a; *c = a + ((b - a) >> 1); *n = t; }
+	}
+}
 
 void um2_clock_init(void) {
 	if (getenv("UM2_SLOWCLOCK")) return;
@@ -40,9 +53,10 @@ void um2_clock_init(void) {
 	volatile const uint32_t *gt = (volatile const uint32_t *)((volatile const char *)p + 0x200);
 	if (!(gt[2] & 1)) { munmap(p, 4096); return; }                                       /* timer not enabled: leave it alone */
 	g_gt = gt;
-	uint64_t c1 = gt_count(), n1 = sys_ns();
+	uint64_t c1, n1, c2, n2;
+	gt_pair(&c1, &n1);
 	struct timespec w = { 0, 50000000 }; nanosleep(&w, NULL);
-	uint64_t c2 = gt_count(), n2 = sys_ns();
+	gt_pair(&c2, &n2);
 	if (c2 <= c1 || n2 <= n1) { g_gt = NULL; munmap(p, 4096); return; }
 	uint64_t mul = ((n2 - n1) << 24) / (c2 - c1);
 	if (mul < (2ull << 24) || mul > (20ull << 24)) { g_gt = NULL; munmap(p, 4096); return; }  /* outside 50..500 MHz: not the timer we expect */
@@ -67,7 +81,7 @@ uint64_t um2_clock_ns(void) {
 
 void um2_clock_sync(void) {
 	if (!g_gt) return;
-	uint64_t c = gt_count(), n = sys_ns();
+	uint64_t c, n; gt_pair(&c, &n);
 	if (c <= g_last_c || n <= g_last_n) return;
 	uint64_t f = conv(c);                                   /* where the fast clock is now: the new segment starts here (continuous) */
 	/* the rate since the last sync, corrected so that the fast clock meets CLOCK_MONOTONIC again in about 2 s */
