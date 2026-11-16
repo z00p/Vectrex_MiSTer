@@ -124,7 +124,31 @@ static double now(void) { return (double)um2_clock_ns() * 1e-9; }
 /* CLOCK_MONOTONIC is seconds since boot: *1e6 exceeds 2^32 after 71.6 min of uptime and a double->uint32 cast then SATURATES on ARM (timer stuck at 0xFFFFFFFF). Go through uint64 and wrap. */
 static double up_add(void) { static double add = -1; if (add < 0) { const char *e = getenv("UM2_UPTIME_ADD"); add = e ? atof(e) : 0; } return add; }   /* test hook: pretend a long uptime */
 static uint32_t micros_ts(const struct timespec *t) { return (uint32_t)((uint64_t)((t->tv_sec + t->tv_nsec * 1e-9 + up_add()) * 1e6)); }
-static uint32_t micros(void) { return (uint32_t)((uint64_t)((double)um2_clock_ns() * 1e-3 + up_add() * 1e6)); }   /* micros_ts without the timespec (no 64-bit divide on this hot path) */
+/* UM2_VXCLOCK=1 (PROTOTYPE, pause root-cause study 16 Nov 2026, off by default): while a guest thread waits in ptx_frame() for the core to play
+ * what it has handed over (the um2run form of core 1 replaying the list on the Vectrex's E clock), the cart's clock advances by the E time the
+ * core reports it ran (core_cycles; our reading of the RTL, to be confirmed by Videodr0me), not by Linux time.  Outside those waits it is Linux time minus everything held so far.  No pause
+ * detection, no timeout: a paused core runs no E cycles, so a wait across a pause adds none.  Readers on other threads see
+ * min(Linux-based, E-based) during a wait; a floor keeps the clock monotonic (prototype: no seqlock). */
+static int g_vx_on; static volatile int g_vx_wait; static uint64_t g_vx_lin0, g_vx_cyc0, g_vx_floor; static volatile uint64_t g_vx_held;
+static uint64_t vx_core_cyc(void) { ptx_status_t st = {0}; ptx_get_status(&st); return st.core_cycles; }
+static uint64_t guest_ns(void) {
+    uint64_t lin = um2_clock_ns();
+    if (!g_vx_on) return lin;
+    uint64_t held = __atomic_load_n(&g_vx_held, __ATOMIC_ACQUIRE), v = lin - held;
+    if (__atomic_load_n(&g_vx_wait, __ATOMIC_ACQUIRE)) { uint64_t c = vx_core_cyc(); uint64_t lim = g_vx_lin0 - held + (c > g_vx_cyc0 ? (c - g_vx_cyc0) * 2000 / 3 : 0); if (lim < v) v = lim; }
+    uint64_t f = __atomic_load_n(&g_vx_floor, __ATOMIC_RELAXED);
+    while (v > f && !__atomic_compare_exchange_n(&g_vx_floor, &f, v, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) ;
+    return v > f ? v : f;
+}
+static void vx_wait_begin(void) { if (!g_vx_on) return; g_vx_cyc0 = vx_core_cyc(); g_vx_lin0 = um2_clock_ns(); __atomic_store_n(&g_vx_wait, 1, __ATOMIC_RELEASE); }
+static void vx_wait_end(void) {
+    if (!g_vx_on) return;
+    uint64_t lin1 = um2_clock_ns(), c1 = vx_core_cyc(), ran = c1 > g_vx_cyc0 ? (c1 - g_vx_cyc0) * 2000 / 3 : 0, wall = lin1 - g_vx_lin0;
+    int64_t h = (int64_t)g_vx_held + (int64_t)wall - (int64_t)ran; if (h < 0) h = 0;
+    __atomic_store_n(&g_vx_held, (uint64_t)h, __ATOMIC_RELEASE); __atomic_store_n(&g_vx_wait, 0, __ATOMIC_RELEASE);
+    if (wall > 1000000000ull) fprintf(stderr, "um2run: vxclock: a ring wait of %.1f s ran %.3f s of E time; cart clock held %.1f s in all\n", wall * 1e-9, ran * 1e-9, h * 1e-9);
+}
+static uint32_t micros(void) { return (uint32_t)((uint64_t)((double)guest_ns() * 1e-3 + up_add() * 1e6)); }   /* micros_ts without the timespec (no 64-bit divide on this hot path) */
 
 static void logf_(const char *fmt, ...) {
     if (opt.quiet || g_logged >= opt.logmax) return;
@@ -423,7 +447,7 @@ static void *irq_thread(void *arg) {
     for (;;) {
         uint32_t seq = __atomic_load_n(&g_irq_seq, __ATOMIC_SEQ_CST);         /* before the scan: a wake-up after this point makes the futex wait below return at once */
         struct timespec ts; um2_mono(&ts);                                     /* the one clock read of this round: the sleep below ends `wait` after it (a few us early at most) */
-        uint32_t nowu = micros_ts(&ts), gen = g_tm_gen; int64_t wait = 20000; int fired = 0;
+        uint32_t nowu = g_vx_on ? micros() : micros_ts(&ts), gen = g_tm_gen; int64_t wait = 20000; int fired = 0;   /* UM2_VXCLOCK: the cart's clock (the sleep below stays on ts) */
         for (int t = 0; t < 2; t++) for (int n = 0; n < 4; n++) {
             if (!((g_tm[t].armed >> n) & 1)) continue;
             int32_t d = (int32_t)(g_tm[t].target[n] - nowu);
@@ -539,6 +563,15 @@ static uint32_t dwt_now(void) {
 }
 
 static unsigned g_tm_reads[32], g_tm_broken[32];
+/* PC test hooks (pause root-cause study, 16 Nov 2026): TIMELR/TIMERAWL reads in all, and UM2_TMRPC=1: per pc, with the largest step between two reads at that pc */
+static volatile unsigned long g_tmr_rd;
+static struct { uint32_t pc, last; unsigned long n; uint32_t maxstep; } g_tpc[32]; static int g_ntpc, g_tpc_on = -1;
+static void tmrpc_note(uint32_t pc, uint32_t v) {
+    if (g_tpc_on < 0) { g_tpc_on = getenv("UM2_TMRPC") != NULL; } if (!g_tpc_on) return;
+    int i; for (i = 0; i < g_ntpc && g_tpc[i].pc != pc; i++) ; if (i == g_ntpc) { if (g_ntpc == 32) return; g_tpc[i].pc = pc; g_tpc[i].last = v; g_ntpc++; }
+    uint32_t d = v - g_tpc[i].last; if (g_tpc[i].n && d > g_tpc[i].maxstep) g_tpc[i].maxstep = d; g_tpc[i].last = v; g_tpc[i].n++;
+}
+static void tmrpc_dump(void) { for (int i = 0; i < g_ntpc; i++) fprintf(stderr, "tmrpc %08x reads %lu max step %u us\n", g_tpc[i].pc, g_tpc[i].n, g_tpc[i].maxstep); }
 static const uint32_t g_lb_cyc[15] = { 0xFFFFFFFFu, 0, 1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80, 0x100, 0x1000, 0x10000, 0x80000000u, 0xFFFF0000u };
 static __thread uint32_t tl_lb_pc, tl_lb_a, tl_lb_act, tl_lb_run;
 static uint32_t mmio_load_base(uint32_t addr, int size, uint32_t pc) {
@@ -559,7 +592,7 @@ static uint32_t mmio_load_base(uint32_t addr, int size, uint32_t pc) {
         else if (blk == 0x40050000 || blk == 0x40058000) v |= 0x80000000u;             /* PLL CS.LOCK */
         else if (blk == 0x40048000 || blk == 0x400E8000) v |= 0x80000000u;             /* XOSC/ROSC STATUS.STABLE (bit 31) */
         else if (blk == 0x40010000 && off <= 0x74 && off % 12 == 8) v = off == 0x38 ? 1u << (shv(0x40010030) & 3) : off == 0x44 ? 1u << (shv(0x4001003C) & 1) : 1;   /* CLK_x_SELECTED: one-hot SRC of the glitchless muxes (clk_ref, clk_sys; the SDK waits for == 1), else hardwired 1 */
-        else if ((blk == 0x400B0000 || blk == 0x400B8000) && (off == 0x0C || off == 0x28)) { v = micros(); if (opt.bus) timer_poll_nap(pc); }  /* TIMELR/TIMERAWL */
+        else if ((blk == 0x400B0000 || blk == 0x400B8000) && (off == 0x0C || off == 0x28)) { v = micros(); g_tmr_rd++; tmrpc_note(pc, v); if (opt.bus) timer_poll_nap(pc); }  /* TIMELR/TIMERAWL */
         else if (addr == 0xE0001004) v = dwt_now();                                    /* DWT_CYCCNT */
         else if (addr == 0xE000E010) v |= 0x10000;                                     /* SYST_CSR.COUNTFLAG */
         else if (addr == 0xE000E018) v = (0xFFFFFF - (micros() * 150u)) & 0xFFFFFF;    /* SYST_CVR counts down */
@@ -2649,7 +2682,8 @@ static void on_donate(int sig, siginfo_t *si, void *vuc) {
      * and is the only one that can see the resume and clear ptx_core_stalled: never hold it here (the first version parked core 1 in a loop of naps,
      * and since the next tick is already pending when the handler returns, its own code never ran again: frozen after the unpause).  Any other guest
      * thread is spinning on guest work that cannot progress: one 2 ms nap per tick parks it, and the tick after the resume returns at once. */
-    if (ptx_core_stalled) {
+    static int nopark = -1; if (nopark < 0) nopark = getenv("UM2_NOPARK") != NULL;   /* PC A/B test hook (16 Nov 2026): the 17e50dc/b9dce53 parking off */
+    if (ptx_core_stalled && !nopark) {
         if (ptx_in_ring_wait) return;
         struct timespec ts = { 0, 2000000L }; nanosleep(&ts, NULL); return;
     }
@@ -2663,7 +2697,7 @@ static void *fair_thread(void *arg) {
         struct timespec ts = { 0, (long)g_donate_period_us * 1000L }; nanosleep(&ts, NULL);
         static unsigned tk; tk++;
         (void)tk;
-        if (!(g_cpu1 >= 0 && g_c1_own_cpu) || ptx_core_stalled) pthread_kill(g_th_core0, SIGUSR1);   /* otherwise on_donate would return at once (a stalled core: park it) */
+        if (!(g_cpu1 >= 0 && g_c1_own_cpu) || (ptx_core_stalled && !getenv("UM2_NOPARK"))) pthread_kill(g_th_core0, SIGUSR1);   /* otherwise on_donate would return at once (a stalled core: park it) */
         if (__atomic_load_n(&g_have_core1, __ATOMIC_ACQUIRE)) pthread_kill(g_th_core1, SIGUSR1);
     }
     return NULL;
@@ -2702,11 +2736,24 @@ static void mon_sample(int final) {
         t_last = t; min_cmd = ~0ull; max_cmd = 0; min_cyc = ~0ull; max_cyc = 0; u_prev = un; f_prev = fr; cc_prev = cc; g_maxgap = 0;
     }
 }
+/* PTX_SIMCORE=1 (PC test hook): one line per second with what the pause study needs */
+static void sim_report(void) {
+    static double tl, t0, c0p, c1p, cpp; static unsigned long ip, tp, mp, alp, vp; static uint64_t ccp; static int have;
+    double t = now(); if (!have) { have = 1; tl = t0 = t; return; } if (t - tl < 1.0) return;
+    struct rusage ru; getrusage(RUSAGE_SELF, &ru); double cp = ru.ru_utime.tv_sec + ru.ru_utime.tv_usec * 1e-6 + ru.ru_stime.tv_sec + ru.ru_stime.tv_usec * 1e-6;
+    double c0 = thr_cpu(g_th_core0), c1 = g_have_core1 ? thr_cpu(g_th_core1) : 0; ptx_status_t st = {0}; ptx_get_status(&st);
+    unsigned long i0 = g_irq_cnt[0], tr = g_tmr_rd, mk = g_marks, al = g_al_inline, vc = (unsigned long)ru.ru_nvcsw;
+    fprintf(stderr, "sim t=%.0f frames +%lu irq0 +%lu inline-alarms +%lu timer-reads +%lu cpu core0 %.0f core1 %.0f proc %.0f ms, volcs +%lu, core played %.1f%% stalled %d alarm lag %d ms\n",
+            t - t0, mk - mp, i0 - ip, al - alp, tr - tp, (c0 - c0p) * 1e3, (c1 - c1p) * 1e3, (cp - cpp) * 1e3, vc - vp, (double)(st.core_cycles - ccp) / (t - tl) / 15000.0, ptx_core_stalled,
+            g_irq_cnt[0] ? -(int32_t)(g_tm[0].target[0] - micros()) / 1000 : 0);
+    tl = t; c0p = c0; c1p = c1; cpp = cp; ip = i0; tp = tr; mp = mk; alp = al; vp = vc; ccp = st.core_cycles;
+}
 static void *hb_thread(void *arg) {
     (void)arg; pthread_setname_np(pthread_self(), "u2hb");
     um2_rt_boost(2);
     if (g_ringmon) mon_open();
-    while (g_ptx_up) { struct timespec ts = { 0, 10 * 1000000L }; nanosleep(&ts, NULL); if (g_ptx_up) { ptx_poll(); if (g_ringmon) mon_sample(0); } }
+    int simrep = getenv("PTX_SIMCORE") != NULL;
+    while (g_ptx_up) { struct timespec ts = { 0, 10 * 1000000L }; nanosleep(&ts, NULL); if (g_ptx_up) { ptx_poll(); if (g_ringmon) mon_sample(0); if (simrep) sim_report(); } }
     return NULL;
 }
 /* The ptx backend (MiSTer: the takeover handshake) starts at the first bus event, not at launch: the image boots for
@@ -2978,7 +3025,7 @@ static void thr_dump(FILE *f) {
 }
 static void bus_atexit(void) { if (!exit_claim(0)) for (;;) pause(); bus_finish(); }
 static void bus_finish(void) {
-    rh_dump(); hs_dump();
+    rh_dump(); hs_dump(); tmrpc_dump();
     if (!opt.bus) return;
     if (opt.bus_verbose) { print_summary(1); fflush(stdout); }
     fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb); %u branch targets known, %lu patch attempts postponed (an exception returns inside)\n", (unsigned long long)g_events, g_nstubs, g_nv8, g_nbtgt, g_patch_frame);
@@ -3092,7 +3139,7 @@ static void k_frame(void) {
         g_last_frame_t = t = now();
         return;
     }
-    ld_take(); if (g_hold) { hq_flush(); g_vnow = gnow(); } ptx_frame(); g_last_frame_t = now();
+    ld_take(); if (g_hold) { hq_flush(); g_vnow = gnow(); } vx_wait_begin(); ptx_frame(); vx_wait_end(); g_last_frame_t = now();
     /* Once the game is producing lists, core 1 (the real-time consumer) runs one level above core 0: core 0's native spin-waits then only
      * use the CPU while core 1 sleeps (pacing naps, ring waits) instead of taking half of it.  Not from the start: during boot core 1's
      * idle input reads would starve core 0 before it publishes the first list. */
@@ -3468,6 +3515,7 @@ static void usage(void) {
 
 int main(int argc, char **argv) {
     um2_clock_init();
+    if (getenv("UM2_VXCLOCK") && *getenv("UM2_VXCLOCK") == '1') { g_vx_on = 1; fprintf(stderr, "um2run: UM2_VXCLOCK=1 (prototype): ring waits advance the cart clock by the core's E time\n"); }
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "--parse")) opt.parse = 1;

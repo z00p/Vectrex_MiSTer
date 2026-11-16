@@ -19,6 +19,39 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
+#include <sys/resource.h>
+#include <pthread.h>
+
+/* PTX_SIMCORE=1 (PC test hook, 16 Nov 2026): model the core's consumption of the stream so the PC run is paced like the
+ * MiSTer.  The simulated core plays stream cycles at 1.5 MHz of wall time, never past what has been handed over (an empty
+ * FIFO stalls it, exact resume), and not at all inside PTX_SIMPAUSE="start_s:len_s[,start_s:len_s]" (the core's Pause
+ * button).  ptx_frame() waits like m_frame: at most PTX_LEAD (default 1) frames ahead, 200 us naps, 2 ms once stalled,
+ * ptx_core_stalled set after 10000 naps.  status.core_cycles = cycles the simulated core has run. */
+static int sim_on = -1, sim_lead = 1, sim_np; static double sim_ps[4], sim_pl[4], sim_t0, sim_last, sim_pos, sim_prod;
+static uint64_t sim_fend[8]; static uint32_t sim_n;
+static double sim_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec * 1e-9; }
+static int sim_paused(double t) { for (int i = 0; i < sim_np; i++) if (t - sim_t0 >= sim_ps[i] && t - sim_t0 < sim_ps[i] + sim_pl[i]) return 1; return 0; }
+static pthread_mutex_t sim_m = PTHREAD_MUTEX_INITIALIZER;
+static void sim_adv_locked(void);
+static void sim_adv(void) { pthread_mutex_lock(&sim_m); sim_adv_locked(); pthread_mutex_unlock(&sim_m); }
+static void sim_adv_locked(void) {
+	double t = sim_now(), a = sim_last; sim_last = t;
+	/* split [a,t) at pause edges so a long nap across an edge is counted right */
+	for (int i = 0; i < sim_np; i++) { double ps = sim_t0 + sim_ps[i], pe = ps + sim_pl[i];
+		if (a < ps && t > ps) { sim_pos += (ps - a) * 1.5e6; a = ps; }
+		if (a >= ps && a < pe) { a = t < pe ? t : pe; } }
+	if (!sim_paused(a)) sim_pos += (t - a) * 1.5e6;
+	if (sim_pos > sim_prod) sim_pos = sim_prod;
+}
+static void sim_init(void) {
+	const char *e = getenv("PTX_SIMCORE"); sim_on = e && *e == '1';
+	if (!sim_on) return;
+	e = getenv("PTX_LEAD"); if (e) sim_lead = atoi(e);
+	e = getenv("PTX_SIMPAUSE");
+	while (e && *e && sim_np < 4) { char *q; sim_ps[sim_np] = strtod(e, &q); if (*q != ':') break; sim_pl[sim_np] = strtod(q + 1, &q); sim_np++; e = *q == ',' ? q + 1 : q; }
+	sim_t0 = sim_last = sim_now();
+}
 
 static FILE *out;
 static uint32_t frames, max_frames;
@@ -70,7 +103,21 @@ static void file_close(void) { if (out) { fclose(out); out = NULL; } }
 
 static void file_frame(uint64_t stream_cycles)
 {
-	(void)stream_cycles;
+	if (sim_on < 0) sim_init();
+	if (sim_on) {
+		pthread_mutex_lock(&sim_m); sim_adv_locked(); sim_prod = (double)stream_cycles; pthread_mutex_unlock(&sim_m);
+		sim_fend[sim_n % 8] = stream_cycles; sim_n++;
+		if (sim_n > (uint32_t)sim_lead) {
+			double target = (double)sim_fend[(sim_n - 1 - sim_lead) % 8], w0 = sim_now(); int naps = 0;
+			ptx_in_ring_wait = 1;
+			for (sim_adv(); sim_pos < target; sim_adv()) {
+				struct timespec ts = { 0, (ptx_core_stalled && !getenv("UM2_NOPARK") ? 2000 : 200) * 1000L }; nanosleep(&ts, NULL);
+				if (++naps == 10000) { fprintf(stderr, "ptx: (sim) core not fetching\n"); ptx_core_stalled = 1; }
+			}
+			ptx_in_ring_wait = 0;
+			if (ptx_core_stalled) { fprintf(stderr, "ptx: (sim) core fetching again after %.1f s\n", sim_now() - w0); ptx_core_stalled = 0; }
+		}
+	}
 	if (++frames >= max_frames) {
 		file_close();
 		fprintf(stderr, "ptx: %u frames written, stopping\n", frames);
@@ -86,6 +133,6 @@ static void file_input(ptx_input_t *o)
 	for (int i = 0; i < npotat; i++) if (frames >= potat[i].from) for (int k = 0; k < 4; k++) fake.pot[k] = potat[i].p[k];
 	*o = fake;
 }
-static void file_status(ptx_status_t *o) { o->valid = 0; }
+static void file_status(ptx_status_t *o) { o->valid = 0; if (sim_on > 0) { sim_adv(); pthread_mutex_lock(&sim_m); o->core_cycles = (uint64_t)sim_pos; pthread_mutex_unlock(&sim_m); o->frames = frames; } }
 
 const ptx_backend_t ptx_backend_file = { file_open, file_push, file_frame, file_input, file_status, file_close, NULL };
