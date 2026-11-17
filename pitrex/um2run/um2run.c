@@ -3516,11 +3516,6 @@ static void usage(void) {
 int main(int argc, char **argv) {
     um2_clock_init();
     if (getenv("UM2_VXCLOCK") && *getenv("UM2_VXCLOCK") == '1') { g_vx_on = 1; fprintf(stderr, "um2run: UM2_VXCLOCK=1 (prototype): ring waits advance the cart clock by the core's E time\n"); }
-    if (!g_vx_on) {   /* main-pitrex starts um2run with its own environment (PTX_* only), so mister_run.sh's file switch is read here as well */
-        char exe[1024]; ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 16);
-        char *sl = n > 0 ? (exe[n] = 0, strrchr(exe, '/')) : NULL;
-        if (sl) { strcpy(sl + 1, "VXCLOCK"); if (access(exe, F_OK) == 0) { g_vx_on = 1; fprintf(stderr, "um2run: VXCLOCK file beside um2run (prototype): ring waits advance the cart clock by the core's E time\n"); } }
-    }
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "--parse")) opt.parse = 1;
