@@ -124,31 +124,7 @@ static double now(void) { return (double)um2_clock_ns() * 1e-9; }
 /* CLOCK_MONOTONIC is seconds since boot: *1e6 exceeds 2^32 after 71.6 min of uptime and a double->uint32 cast then SATURATES on ARM (timer stuck at 0xFFFFFFFF). Go through uint64 and wrap. */
 static double up_add(void) { static double add = -1; if (add < 0) { const char *e = getenv("UM2_UPTIME_ADD"); add = e ? atof(e) : 0; } return add; }   /* test hook: pretend a long uptime */
 static uint32_t micros_ts(const struct timespec *t) { return (uint32_t)((uint64_t)((t->tv_sec + t->tv_nsec * 1e-9 + up_add()) * 1e6)); }
-/* UM2_VXCLOCK=1 (PROTOTYPE, pause root-cause study 16 Nov 2026, off by default): while a guest thread waits in ptx_frame() for the core to play
- * what it has handed over (the um2run form of core 1 replaying the list on the Vectrex's E clock), the cart's clock advances by the E time the
- * core reports it ran (core_cycles; our reading of the RTL, to be confirmed by Videodr0me), not by Linux time.  Outside those waits it is Linux time minus everything held so far.  No pause
- * detection, no timeout: a paused core runs no E cycles, so a wait across a pause adds none.  Readers on other threads see
- * min(Linux-based, E-based) during a wait; a floor keeps the clock monotonic (prototype: no seqlock). */
-static int g_vx_on; static volatile int g_vx_wait; static uint64_t g_vx_lin0, g_vx_cyc0, g_vx_floor; static volatile uint64_t g_vx_held;
-static uint64_t vx_core_cyc(void) { ptx_status_t st = {0}; ptx_get_status(&st); return st.core_cycles; }
-static uint64_t guest_ns(void) {
-    uint64_t lin = um2_clock_ns();
-    if (!g_vx_on) return lin;
-    uint64_t held = __atomic_load_n(&g_vx_held, __ATOMIC_ACQUIRE), v = lin - held;
-    if (__atomic_load_n(&g_vx_wait, __ATOMIC_ACQUIRE)) { uint64_t c = vx_core_cyc(); uint64_t lim = g_vx_lin0 - held + (c > g_vx_cyc0 ? (c - g_vx_cyc0) * 2000 / 3 : 0); if (lim < v) v = lim; }
-    uint64_t f = __atomic_load_n(&g_vx_floor, __ATOMIC_RELAXED);
-    while (v > f && !__atomic_compare_exchange_n(&g_vx_floor, &f, v, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) ;
-    return v > f ? v : f;
-}
-static void vx_wait_begin(void) { if (!g_vx_on) return; g_vx_cyc0 = vx_core_cyc(); g_vx_lin0 = um2_clock_ns(); __atomic_store_n(&g_vx_wait, 1, __ATOMIC_RELEASE); }
-static void vx_wait_end(void) {
-    if (!g_vx_on) return;
-    uint64_t lin1 = um2_clock_ns(), c1 = vx_core_cyc(), ran = c1 > g_vx_cyc0 ? (c1 - g_vx_cyc0) * 2000 / 3 : 0, wall = lin1 - g_vx_lin0;
-    int64_t h = (int64_t)g_vx_held + (int64_t)wall - (int64_t)ran; if (h < 0) h = 0;
-    __atomic_store_n(&g_vx_held, (uint64_t)h, __ATOMIC_RELEASE); __atomic_store_n(&g_vx_wait, 0, __ATOMIC_RELEASE);
-    if (wall > 1000000000ull) fprintf(stderr, "um2run: vxclock: a ring wait of %.1f s ran %.3f s of E time; cart clock held %.1f s in all\n", wall * 1e-9, ran * 1e-9, h * 1e-9);
-}
-static uint32_t micros(void) { return (uint32_t)((uint64_t)((double)guest_ns() * 1e-3 + up_add() * 1e6)); }   /* micros_ts without the timespec (no 64-bit divide on this hot path) */
+static uint32_t micros(void) { return (uint32_t)((uint64_t)((double)um2_clock_ns() * 1e-3 + up_add() * 1e6)); }   /* micros_ts without the timespec (no 64-bit divide on this hot path) */
 
 static void logf_(const char *fmt, ...) {
     if (opt.quiet || g_logged >= opt.logmax) return;
@@ -447,7 +423,7 @@ static void *irq_thread(void *arg) {
     for (;;) {
         uint32_t seq = __atomic_load_n(&g_irq_seq, __ATOMIC_SEQ_CST);         /* before the scan: a wake-up after this point makes the futex wait below return at once */
         struct timespec ts; um2_mono(&ts);                                     /* the one clock read of this round: the sleep below ends `wait` after it (a few us early at most) */
-        uint32_t nowu = g_vx_on ? micros() : micros_ts(&ts), gen = g_tm_gen; int64_t wait = 20000; int fired = 0;   /* UM2_VXCLOCK: the cart's clock (the sleep below stays on ts) */
+        uint32_t nowu = micros_ts(&ts), gen = g_tm_gen; int64_t wait = 20000; int fired = 0;
         for (int t = 0; t < 2; t++) for (int n = 0; n < 4; n++) {
             if (!((g_tm[t].armed >> n) & 1)) continue;
             int32_t d = (int32_t)(g_tm[t].target[n] - nowu);
@@ -3139,7 +3115,7 @@ static void k_frame(void) {
         g_last_frame_t = t = now();
         return;
     }
-    ld_take(); if (g_hold) { hq_flush(); g_vnow = gnow(); } vx_wait_begin(); ptx_frame(); vx_wait_end(); g_last_frame_t = now();
+    ld_take(); if (g_hold) { hq_flush(); g_vnow = gnow(); } ptx_frame(); g_last_frame_t = now();
     /* Once the game is producing lists, core 1 (the real-time consumer) runs one level above core 0: core 0's native spin-waits then only
      * use the CPU while core 1 sleeps (pacing naps, ring waits) instead of taking half of it.  Not from the start: during boot core 1's
      * idle input reads would starve core 0 before it publishes the first list. */
@@ -3515,7 +3491,6 @@ static void usage(void) {
 
 int main(int argc, char **argv) {
     um2_clock_init();
-    if (getenv("UM2_VXCLOCK") && *getenv("UM2_VXCLOCK") == '1') { g_vx_on = 1; fprintf(stderr, "um2run: UM2_VXCLOCK=1 (prototype): ring waits advance the cart clock by the core's E time\n"); }
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "--parse")) opt.parse = 1;

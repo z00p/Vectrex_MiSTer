@@ -44,9 +44,6 @@ case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3
 #          (main-pitrex passes UM2_SCHED="rt nonice irq1 rt0"); the stock Main polls all the time and keeps the share.
 #          Heard on the MiSTer 10 Nov: no static in play, controls very responsive (wired pad).
 # A file FAIR_TEST beside this script replaces the words (to compare): "rt" alone = 1.3 behaviour, "nonice irq1" = normal priority.
-# A file VXCLOCK beside this script (prototype, 16 Nov 2026, off by default): while the cart waits on the console for a frame, its
-# clock follows the E cycles the core ran (um2run UM2_VXCLOCK=1), so a Pause is not replayed afterwards
-[ -f VXCLOCK ] && { export UM2_VXCLOCK=1; echo "$(date +%T) VXCLOCK: on (prototype)" >> /tmp/pitrexd.log; }
 ft_restore() { [ -f /tmp/ft_irq_saved ] && { read -r n m < /tmp/ft_irq_saved; echo "$m" > /proc/irq/$n/smp_affinity 2>/dev/null; rm -f /tmp/ft_irq_saved; }; }
 ft_restore
 ft=${UM2_SCHED:-"rt nonice irq1 share"}
