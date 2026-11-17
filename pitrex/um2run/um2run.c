@@ -293,6 +293,27 @@ typedef struct {
     int held;
 } Nvic;
 static Nvic g_nv[2];
+/* UM2_IRQLAT=1 (diagnostics, 18 Nov 2026, off by default): per core, how long an interrupt stayed pending before it was taken (from the moment
+ * its pending bit was set to the ISR entry).  On an RP2350 that is a few cycles unless the guest masks it; in um2run it is also every stretch a
+ * guest thread spends in host code (review B2).  Printed at exit: count, over 1 ms, over 10 ms, the longest and its IRQ. */
+static int g_ilat; static uint64_t g_ilat_t[2][64], g_ilat_max[2], g_ilat_at[2], g_ilat_t0; static unsigned long g_ilat_n[2], g_ilat_1ms[2], g_ilat_10ms[2], g_ilat_late[2]; static int g_ilat_irq[2];
+static void ilat_pend(int c, int w, uint32_t newbits) {
+    if (!g_ilat || !newbits) return;
+    uint64_t t = um2_clock_ns();
+    while (newbits) { int b = __builtin_ctz(newbits); newbits &= newbits - 1; uint64_t z = 0; __atomic_compare_exchange_n(&g_ilat_t[c][w * 32 + b], &z, t, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED); }
+}
+static void ilat_take(int c, int irq) {
+    if (!g_ilat) return;
+    uint64_t t0 = __atomic_exchange_n(&g_ilat_t[c][irq & 63], 0, __ATOMIC_RELAXED); if (!t0) return;
+    uint64_t tn = um2_clock_ns(), d = tn - t0; if (!g_ilat_t0) g_ilat_t0 = tn;
+    g_ilat_n[c]++; if (d > 1000000u) g_ilat_1ms[c]++; if (d > 10000000u) { g_ilat_10ms[c]++; if (tn - g_ilat_t0 > 10000000000ull) g_ilat_late[c]++; }
+    if (d > g_ilat_max[c]) { g_ilat_max[c] = d; g_ilat_irq[c] = irq; g_ilat_at[c] = tn - g_ilat_t0; }
+}
+static void ilat_dump(void) {
+    if (!g_ilat) return;
+    for (int c = 0; c < 2; c++) if (g_ilat_n[c]) fprintf(stderr, "irqlat core %d: %lu taken, %lu waited > 1 ms, %lu > 10 ms (%lu of them after the first 10 s), longest %.3f ms (IRQ %d, %.1f s after the first)\n", c, g_ilat_n[c], g_ilat_1ms[c], g_ilat_10ms[c], g_ilat_late[c], g_ilat_max[c] * 1e-6, g_ilat_irq[c], g_ilat_at[c] * 1e-9);
+}
+static void pend_or(int c, int w, uint32_t bits) { uint32_t old = __atomic_fetch_or(&g_nv[c].pend[w], bits, __ATOMIC_SEQ_CST); ilat_pend(c, w, bits & ~old); }
 /* UM2_ISRSTAT=1 (diagnostics): per-ISR wall and thread-CPU time, MMIO accesses and traps inside the ISR, per core; printed with --bus-verbose at exit. */
 static int g_isrstat;
 static uint64_t ns_wall(void) { return um2_clock_ns(); }
@@ -368,8 +389,8 @@ static int irq_kick(void) {                  /* signal every core that has an en
 static int irq_levels(void) {               /* level lines -> pending on both cores (a line nobody cleared pends again), then kick */
     uint64_t m = irq_lines();
     for (int c = 0; c < 2; c++) {
-        if ((uint32_t)m) __atomic_fetch_or(&g_nv[c].pend[0], (uint32_t)m, __ATOMIC_SEQ_CST);
-        if ((uint32_t)(m >> 32)) __atomic_fetch_or(&g_nv[c].pend[1], (uint32_t)(m >> 32), __ATOMIC_SEQ_CST);
+        if ((uint32_t)m) pend_or(c, 0, (uint32_t)m);
+        if ((uint32_t)(m >> 32)) pend_or(c, 1, (uint32_t)(m >> 32));
     }
     return irq_kick();
 }
@@ -472,8 +493,8 @@ static int nvic_access(int store, uint32_t addr, int size, uint32_t *val) {   /*
     switch (grp) {
     case 0x100: if (store) { __atomic_fetch_or(&n->en[w], v, __ATOMIC_SEQ_CST); g_irq_on = 1; } else *val = n->en[w]; break;
     case 0x180: if (store) __atomic_fetch_and(&n->en[w], ~v, __ATOMIC_SEQ_CST); else *val = n->en[w]; break;
-    case 0x200: if (store) __atomic_fetch_or(&n->pend[w], v, __ATOMIC_SEQ_CST); else *val = n->pend[w]; break;
-    case 0x280: if (store) __atomic_fetch_and(&n->pend[w], ~v, __ATOMIC_SEQ_CST); else *val = n->pend[w]; break;
+    case 0x200: if (store) pend_or(tl_core & 1, (int)w, v); else *val = n->pend[w]; break;
+    case 0x280: if (store) { __atomic_fetch_and(&n->pend[w], ~v, __ATOMIC_SEQ_CST); if (g_ilat) for (uint32_t b = v; b; b &= b - 1) g_ilat_t[tl_core & 1][w * 32 + __builtin_ctz(b)] = 0; } else *val = n->pend[w]; break;
     case 0x300: if (!store) { uint32_t a = 0; for (int d = 0; d < n->depth; d++) if (n->sirq[d] >= 0 && (n->sirq[d] >> 5) == (int)w) a |= 1u << (n->sirq[d] & 31); *val = a; } break;
     default: return 0;
     }
@@ -992,7 +1013,7 @@ static int irq_enter(Cpu *c, ucontext_t *uc) {        /* take the best pending I
     if (irq_held(n)) { g_ie_why[3]++; return 0; }
     uint32_t ret = c->r[15];
     if (!exc_enter2(c, ret, 16 + (unsigned)irq, 1)) return 0;
-    __atomic_fetch_and(&n->pend[irq >> 5], ~(1u << (irq & 31)), __ATOMIC_SEQ_CST);
+    __atomic_fetch_and(&n->pend[irq >> 5], ~(1u << (irq & 31)), __ATOMIC_SEQ_CST); ilat_take(tl_core & 1, irq);
     uint32_t *v = uc ? uc_vfp(uc) : NULL;
     if (v) memcpy(tl_fps[n->depth], v, sizeof tl_fps[0]);
     else { uint32_t *d = tl_fps[n->depth]; uint32_t fp;       /* no VFP block in the signal frame: the hardware registers still hold the interrupted values */
@@ -1023,15 +1044,15 @@ uint32_t um2_irq_exit(uint32_t sp) {
     if (n->depth) n->depth--;
     if (!n->depth) isr_end();
     if (g_irq_on) { uint64_t m = irq_lines();                       /* an unserviced level line pends again */
-        if ((uint32_t)m) __atomic_fetch_or(&n->pend[0], (uint32_t)m, __ATOMIC_SEQ_CST);
-        if ((uint32_t)(m >> 32)) __atomic_fetch_or(&n->pend[1], (uint32_t)(m >> 32), __ATOMIC_SEQ_CST); }
+        if ((uint32_t)m) pend_or(tl_core & 1, 0, (uint32_t)m);
+        if ((uint32_t)(m >> 32)) pend_or(tl_core & 1, 1, (uint32_t)(m >> 32)); }
     if (n->prim || n->depth >= 7) return 0;
     int irq = nvic_pick(n); if (irq < 0) return 0;
     if (!n->depth && g_irq_burst) { uint32_t t = micros();             /* tail-chain from the outermost ISR: thread mode starved for too long? */
         if (t - n->since > g_irq_burst) { n->hold = t + g_irq_gap; n->held = 1; g_irq_bursts++; irq_wake(); return 0; } }       /* the irq thread must come back when the hold ends (it may be asleep for 20 ms) */
     uint32_t vt = vtor_now(); int h = g_rd16(vt + (16 + (unsigned)irq) * 4), h2 = g_rd16(vt + (16 + (unsigned)irq) * 4 + 2);
     if (h < 0 || h2 < 0) return 0;
-    __atomic_fetch_and(&n->pend[irq >> 5], ~(1u << (irq & 31)), __ATOMIC_SEQ_CST);
+    __atomic_fetch_and(&n->pend[irq >> 5], ~(1u << (irq & 31)), __ATOMIC_SEQ_CST); ilat_take(tl_core & 1, irq);
     if (!n->depth) isr_begin(irq);
     if (!tl_fpv[n->depth & 7]) { uint32_t *dd = tl_fps[n->depth & 7]; uint32_t fp;      /* chained after a frame that carries no VFP state (a native SVC return): the ISR may clobber d0-d15, so keep what is in them now for the final return */
         __asm__ volatile("vstmia %0, {d0-d15}" :: "r"(dd) : "memory"); __asm__ volatile("vmrs %0, fpscr" : "=r"(fp)); dd[64] = fp; tl_fpv[n->depth & 7] = 1; }
@@ -3006,7 +3027,7 @@ static void thr_dump(FILE *f) {
 }
 static void bus_atexit(void) { if (!exit_claim(0)) for (;;) pause(); bus_finish(); }
 static void bus_finish(void) {
-    rh_dump(); hs_dump(); tmrpc_dump();
+    rh_dump(); hs_dump(); tmrpc_dump(); ilat_dump();
     if (!opt.bus) return;
     if (opt.bus_verbose) { print_summary(1); fflush(stdout); }
     fprintf(stderr, "um2run: %llu traps, %u stubs (%u LDA/STL with dmb); %u branch targets known, %lu patch attempts postponed (an exception returns inside)\n", (unsigned long long)g_events, g_nstubs, g_nv8, g_nbtgt, g_patch_frame);
@@ -3496,6 +3517,7 @@ static void usage(void) {
 
 int main(int argc, char **argv) {
     um2_clock_init();
+    g_ilat = getenv("UM2_IRQLAT") != NULL;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "--parse")) opt.parse = 1;
