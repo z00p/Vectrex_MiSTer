@@ -101,28 +101,34 @@ static void file_push(uint64_t cmd)
 
 static void file_close(void) { if (out) { fclose(out); out = NULL; } }
 
+static double sim_target; static int sim_pend;   /* the wait file_frame leaves to file_wait */
 static void file_frame(uint64_t stream_cycles)
 {
 	if (sim_on < 0) sim_init();
 	if (sim_on) {
 		pthread_mutex_lock(&sim_m); sim_adv_locked(); sim_prod = (double)stream_cycles; pthread_mutex_unlock(&sim_m);
 		sim_fend[sim_n % 8] = stream_cycles; sim_n++;
-		if (sim_n > (uint32_t)sim_lead) {
-			double target = (double)sim_fend[(sim_n - 1 - sim_lead) % 8], w0 = sim_now(); int naps = 0;
-			ptx_in_ring_wait = 1;
-			for (sim_adv(); sim_pos < target; sim_adv()) {
-				struct timespec ts = { 0, (ptx_core_stalled && !getenv("UM2_NOPARK") ? 2000 : 200) * 1000L }; nanosleep(&ts, NULL);
-				if (++naps == 10000) { fprintf(stderr, "ptx: (sim) core not fetching\n"); ptx_core_stalled = 1; }
-			}
-			ptx_in_ring_wait = 0;
-			if (ptx_core_stalled) { fprintf(stderr, "ptx: (sim) core fetching again after %.1f s\n", sim_now() - w0); ptx_core_stalled = 0; }
-		}
+		if (sim_n > (uint32_t)sim_lead) { sim_target = (double)sim_fend[(sim_n - 1 - sim_lead) % 8]; sim_pend = 1; }
 	}
 	if (++frames >= max_frames) {
 		file_close();
 		fprintf(stderr, "ptx: %u frames written, stopping\n", frames);
 		exit(0);
 	}
+}
+
+static void file_wait(void)      /* the simulated core's pacing wait, apart from file_frame as in the MiSTer backend */
+{
+	if (!sim_pend) return;
+	sim_pend = 0;
+	double target = sim_target, w0 = sim_now(); int naps = 0;
+	ptx_in_ring_wait = 1;
+	for (sim_adv(); sim_pos < target; sim_adv()) {
+		struct timespec ts = { 0, (ptx_core_stalled && !getenv("UM2_NOPARK") ? 2000 : 200) * 1000L }; nanosleep(&ts, NULL);
+		if (++naps == 10000) { fprintf(stderr, "ptx: (sim) core not fetching\n"); ptx_core_stalled = 1; }
+	}
+	ptx_in_ring_wait = 0;
+	if (ptx_core_stalled) { fprintf(stderr, "ptx: (sim) core fetching again after %.1f s\n", sim_now() - w0); ptx_core_stalled = 0; }
 }
 
 static void file_input(ptx_input_t *o)
@@ -135,4 +141,4 @@ static void file_input(ptx_input_t *o)
 }
 static void file_status(ptx_status_t *o) { o->valid = 0; if (sim_on > 0) { sim_adv(); pthread_mutex_lock(&sim_m); o->core_cycles = (uint64_t)sim_pos; pthread_mutex_unlock(&sim_m); o->frames = frames; } }
 
-const ptx_backend_t ptx_backend_file = { file_open, file_push, file_frame, file_input, file_status, file_close, NULL };
+const ptx_backend_t ptx_backend_file = { file_open, file_push, file_frame, file_input, file_status, file_close, NULL, file_wait };

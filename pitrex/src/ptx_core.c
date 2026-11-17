@@ -138,10 +138,21 @@ void ptx_get_input(ptx_input_t *o) { be->input(o); }
 
 void ptx_poll(void) { if (be && be->poll) be->poll(); }
 
-void ptx_frame(void)
+void ptx_frame_mark(void)
 {
 	be->push(ptx_cmd(PTX_OP_FRAME, 0, 0, 0));
 	be->frame(now_cycles);
+}
+
+void ptx_frame_wait(void)
+{
+	if (be->wait) be->wait();
+}
+
+void ptx_frame(void)
+{
+	ptx_frame_mark();
+	ptx_frame_wait();
 }
 
 void ptx_write(uint16_t addr, uint8_t data)

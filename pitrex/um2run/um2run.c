@@ -605,13 +605,18 @@ static uint32_t mmio_load_base(uint32_t addr, int size, uint32_t pc) {
     return v;
 }
 
+/* A frame mark reached from a guest's bus access (k_frame, under um2bus's lock) publishes the frame and leaves its pacing wait owed here;
+ * the access returns through mmio_store / mmio_load, which wait once the lock is released (18 Nov 2026).  On a real cart core 1 waits on the
+ * PIO while core 0, the DMA and the timer go on; waiting under the lock blocked core 0's next DMA access, and in a Pause its timer ISRs. */
+static __thread int tl_fwait;
+static void fwait_owed(void) { if (tl_fwait) { tl_fwait = 0; ptx_frame_wait(); } }
 static void mmio_store(uint32_t addr, int size, uint32_t val) {
     tl_act++; tl_n_ms++;
     if (opt.bus) {
         if (addr >= 0xE000E100u && addr < 0xE000E500u && nvic_access(1, addr, size, &val)) return;
         if (size == 4 && (addr & 0xFFFF4000u) == 0x400B0000u) tmr_access(1, addr, &val);       /* TIMER0 / TIMER1 (+ aliases) */
     }
-    if (opt.bus) { uint64_t b0 = g_isrstat ? ns_wall() : 0; int r = um2bus_store(addr, size, val, tl_core); if (b0) tl_bus_ns += ns_wall() - b0; if (r) return; }
+    if (opt.bus) { uint64_t b0 = g_isrstat ? ns_wall() : 0; int r = um2bus_store(addr, size, val, tl_core); if (b0) tl_bus_ns += ns_wall() - b0; fwait_owed(); if (r) return; }
     mmio_store_base(addr, size, val);
 }
 static uint32_t mmio_dwt_read(void) { tl_n_ml++; tl_act++; return dwt_now(); }      /* what mmio_load does for DWT_CYCCNT (no NVIC, timer or bus-model address; canned value), without the shadow lookups, the census and the loop-breaker bookkeeping */
@@ -622,7 +627,7 @@ static uint32_t mmio_load(uint32_t addr, int size, uint32_t pc) {
         if (addr >= 0xE000E100u && addr < 0xE000E500u && nvic_access(0, addr, size, &v)) return v;
         if (size == 4 && (addr & 0xFFFF4000u) == 0x400B0000u && tmr_access(0, addr, &v)) return v;
     }
-    uint64_t b0 = (opt.bus && g_isrstat) ? ns_wall() : 0; int bl = opt.bus && um2bus_load(addr, size, &v, tl_core); if (b0) tl_bus_ns += ns_wall() - b0;
+    uint64_t b0 = (opt.bus && g_isrstat) ? ns_wall() : 0; int bl = opt.bus && um2bus_load(addr, size, &v, tl_core); if (b0) tl_bus_ns += ns_wall() - b0; fwait_owed();
     if (bl) {
         if (size == 1) return (v >> ((addr & 3) * 8)) & 0xFF;
         if (size == 2) return (v >> ((addr & 3) * 8)) & 0xFFFF;
@@ -3115,7 +3120,7 @@ static void k_frame(void) {
         g_last_frame_t = t = now();
         return;
     }
-    ld_take(); if (g_hold) { hq_flush(); g_vnow = gnow(); } ptx_frame(); g_last_frame_t = now();
+    ld_take(); if (g_hold) { hq_flush(); g_vnow = gnow(); } ptx_frame_mark(); if (tl_guest) tl_fwait = 1; else ptx_frame_wait(); g_last_frame_t = now();   /* a guest thread waits after the bus lock (fwait_owed) */
     /* Once the game is producing lists, core 1 (the real-time consumer) runs one level above core 0: core 0's native spin-waits then only
      * use the CPU while core 1 sleeps (pacing naps, ring waits) instead of taking half of it.  Not from the start: during boot core 1's
      * idle input reads would starve core 0 before it publishes the first list. */

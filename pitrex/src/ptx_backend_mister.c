@@ -395,6 +395,7 @@ static void m_push(uint64_t cmd)
 	if (wr - published >= PTX_PUBLISH) publish();
 }
 
+static uint64_t pend_target, pend_wr; static int pend;   /* the wait m_frame leaves to m_wait */
 static void m_frame(uint64_t stream_cycles)
 {
 	(void)stream_cycles;
@@ -407,7 +408,18 @@ static void m_frame(uint64_t stream_cycles)
 	n_frames++;
 	if (lead_f < 0) { const char *e = getenv("PTX_LEAD"); lead_f = e && *e >= '0' && *e <= '6' ? *e - '0' : (int)PTX_LEAD_FRAMES; }
 	if (n_frames <= (unsigned)lead_f) return;
-	uint64_t target = frame_end[(n_frames - 1 - lead_f) % 8];
+	pend_target = frame_end[(n_frames - 1 - lead_f) % 8]; pend_wr = wr; pend = 1;
+}
+
+/* The pacing wait for the last m_frame, apart from it (18 Nov 2026): um2run publishes the frame under its bus lock and
+ * waits here only after releasing it, as core 1 waits on the PIO on a real cart while core 0, the DMA and the timer go on.
+ * Holding the lock across this wait blocked core 0's next DMA access for the whole wait, so in a Pause its timer
+ * interrupts stopped and were replayed afterwards. */
+static void m_wait(void)
+{
+	if (!pend) return;
+	pend = 0;
+	uint64_t target = pend_target, wr = pend_wr;
 	int naps = 0;
 	long wait0_ms = 0;
 	{ uint64_t rd = st->rd_idx; uint64_t lead = wr > rd ? wr - rd : 0;
@@ -479,7 +491,7 @@ static void m_poll(void)
 	hb_tick();
 }
 
-const ptx_backend_t ptx_backend_mister = { m_open, m_push, m_frame, m_input, m_status, m_close, m_poll };
+const ptx_backend_t ptx_backend_mister = { m_open, m_push, m_frame, m_input, m_status, m_close, m_poll, m_wait };
 
 /* PCM audio (B6 cores): 16-bit mono at 32 kHz into the core's mixer. Samples are packed
  * four to a word (first in bits 15:0); the core reports the words it has fetched in its
