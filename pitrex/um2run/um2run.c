@@ -2621,7 +2621,9 @@ static void install_seccomp(void) {
 #endif
 static volatile int g_ptx_up, g_guest_seen;   /* g_guest_seen: the image itself has produced a bus event (ptx may be up earlier: loading indicator) */
 static const char *g_sd_path;
-static double g_last_frame_t, g_bus_timeout = 60, g_frame_timeout = 30;    /* --bus: exit if the bus stays unused / no frame for this long */
+/* --bus-timeout S / --frame-timeout S: exit if the bus stays unused / no frame comes for this long.  Test runs only, off by default (18 Nov 2026):
+ * a real cart may draw nothing for as long as it likes, so a missing frame is no proof of a hang (it was 60 s / 30 s until then). */
+static double g_last_frame_t, g_bus_timeout = 0, g_frame_timeout = 0;
 static void on_alarm(int sig, siginfo_t *si, void *vuc) {
     ucontext_t *uc = vuc; (void)sig; (void)si;
     if (g_exit_claimed) { if (g_exit_t > 0 && now() - g_exit_t > 3) _exit(g_exit_rc); return; }

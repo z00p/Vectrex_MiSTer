@@ -61,8 +61,8 @@ The log is `/tmp/um2.log`. Useful `um2run` options:
 | `--bus-verbose`, `--ringmon` | model log and a once-a-second ring monitor, for diagnosis |
 
 Exit statuses: 0 is a normal stop; 1 is an input or setup error; 2 is a usage or runtime setup
-error; 3 is an unsupported image or backend error; 4 is a bus timeout; 5 is a frame timeout;
-6 means the `--sd` card is locked by another process. Lock file errors also stop the run with status 1.
+error; 3 is an unsupported image or backend error; 4 is a bus timeout and 5 a frame timeout
+(`--bus-timeout S`, `--frame-timeout S`: for test runs, off by default); 6 means the `--sd` card is locked by another process. Lock file errors also stop the run with status 1.
 
 ## Sidecar file
 `pitrexd` reads `<image>.um2.cfg` next to the picked file: `key=value` lines, `#` comments,
