@@ -89,6 +89,7 @@ static struct {
     unsigned frame_cycles;
 } opt = { 0, 1, 0, 0, 0, 0, 0, 200000, 20000, 20.0, 30, 400, 0, NULL, 0, 0, NULL, 30000 };
 static void bus_finish(void);
+static void pick_report(void);
 static void rh_dump(void);
 uint64_t g_trap_ns, g_trap_n;   /* time spent inside the trap handler body (not the kernel's signal path) and count, for the profile line */
 static __thread int tl_core;          /* 0 = main thread (core 0), 1 = the core-1 thread */
@@ -3038,7 +3039,7 @@ static void bus_finish(void) {
     if (g_nsvcp) { fprintf(stderr, "um2run: %u SVC veneers became stubs; native SVC entries (call number:count):", g_nsvcp); for (int q = 0; q < 256; q++) if (g_svc_nat[q]) fprintf(stderr, " %d:%lu", q, g_svc_nat[q]); fputc(10, stderr); }
     lb_dump(stderr); um_dump(stderr);
     thr_dump(stderr);
-    um2bus_stats(stderr); um2sd_stats();
+    um2bus_stats(stderr); um2sd_stats(); pick_report();
     if (getenv("UM2_HASHMEM") && !opt.no_psram) {      /* test hook: FNV-1a of the guest's PSRAM (where the images stage what they read from the SD card): what the guest really received */
         uint64_t h = 0xcbf29ce484222325ull; const uint32_t *p = (const uint32_t *)(uintptr_t)PSRAM_BASE;
         for (uint32_t i = 0; i < PSRAM_SIZE / 4; i++) h = (h ^ p[i]) * 0x100000001b3ull;
@@ -3113,7 +3114,10 @@ static uint8_t sh_read(uint16_t a, uint8_t v) {
     int8_t cap = g_sh_en ? pot_get(g_sh_sel) : g_sh_cap;           /* mux on: the cap follows the pot */
     return (uint8_t)((v & ~0x20) | (cap > g_sh_dac ? 0x20 : 0));
 }
-static void k_out(uint16_t a, uint8_t d) { if (g_hold) { hq_add(0, a, d, 0); g_vnow += 1; } else { ld_take(); gap_note(); ptx_write(a, d); } }
+/* list pickup diagnostics (UM2_PKDIAG, see pick_install): the sink calls are folded into per-list hashes */
+static FILE *g_pkd; static volatile int g_pkd_st;      /* 0 idle, 1 inside the function before its first word, 2 between its first and last word */
+static void pkd_note(uint32_t op, uint32_t a, uint32_t b); static void pkd_frame(void);
+static void k_out(uint16_t a, uint8_t d) { if (g_pkd_st) pkd_note(1, a, d); if (g_hold) { hq_add(0, a, d, 0); g_vnow += 1; } else { ld_take(); gap_note(); ptx_write(a, d); } }
 static void k_write_raw(uint16_t a, uint8_t d) { gup(); sh_write(a, d); k_out(a, d); }
 /* Every write reaches the core as the game made it.  The runtime's re-zero (DAC <ZERO> for 7 E-cycles, then 0xFF for 4, then the
  * mux closes) charges the zero reference to a level its ZERO calibration sets, as on a real console.  From 2 Nov to 13 Nov 2026
@@ -3128,8 +3132,8 @@ static struct { uint16_t a; uint8_t v, k; unsigned n; } g_rh[48]; static int g_n
 static void rh_note(uint16_t a, uint8_t v, uint8_t k) { for (int i = 0; i < g_nrh; i++) if (g_rh[i].a == a && g_rh[i].v == v && g_rh[i].k == k) { g_rh[i].n++; return; } if (g_nrh < 48) { g_rh[g_nrh].a = a; g_rh[g_nrh].v = v; g_rh[g_nrh].k = k; g_rh[g_nrh++].n = 1; } }
 static void rh_dump(void) { if (opt.bus_verbose < 2) return; for (int i = 0; i < 32; i++) if (g_tm_reads[i]) fprintf(stderr, "timer reg %02x reads %u (loop-breaker overrode %u)\n", i * 4, g_tm_reads[i], g_tm_broken[i]); for (int i = 0; i < g_nrh; i++) fprintf(stderr, "read reg %x val %02x key %02x: %u\n", g_rh[i].a & 0xF, g_rh[i].v, g_rh[i].k, g_rh[i].n); }
 static uint8_t ld_read(uint16_t a) { pthread_mutex_lock(&g_ld_m); uint64_t t0 = ptx_now_cycles(); uint8_t v = ptx_read(a); g_ld_gw += ptx_now_cycles() - t0; pthread_mutex_unlock(&g_ld_m); return v; }
-static uint8_t k_read(uint16_t a) { gup(); if (!g_hold) ld_take(); uint8_t v; if (g_hold) { hq_flush(); v = g_ld_done ? ptx_read(a) : ld_read(a); g_vnow = gnow(); } else v = ptx_read(a); v = sh_read(a, v); if (g_nkeys && (a & 0xF) == 1) { uint8_t k = key_now(); if (k != 0xFF) v = k; } if (opt.bus_verbose > 1) rh_note(a, v, g_nkeys ? key_now() : 0); return v; }
-static void k_advance(uint32_t c) { gup(); if (g_hold) { hq_add(1, 0, 0, c); g_vnow += c; } else if (g_ld_done) ptx_advance_cycles(c); else g_drop += c; }
+static uint8_t k_read(uint16_t a) { gup(); if (!g_hold) ld_take(); uint8_t v; if (g_hold) { hq_flush(); v = g_ld_done ? ptx_read(a) : ld_read(a); g_vnow = gnow(); } else v = ptx_read(a); v = sh_read(a, v); if (g_nkeys && (a & 0xF) == 1) { uint8_t k = key_now(); if (k != 0xFF) v = k; } if (opt.bus_verbose > 1) rh_note(a, v, g_nkeys ? key_now() : 0); if (g_pkd_st) pkd_note(4, a, v); return v; }
+static void k_advance(uint32_t c) { if (g_pkd_st) pkd_note(2, c, 0); gup(); if (g_hold) { hq_add(1, 0, 0, c); g_vnow += c; } else if (g_ld_done) ptx_advance_cycles(c); else g_drop += c; }
 static uint64_t k_now(void) { gup(); if (g_hold) { if (!g_vnow) g_vnow = gnow(); return g_vnow; } return gnow(); }
 static void k_frame(void) {
     g_marks++;
@@ -3143,7 +3147,7 @@ static void k_frame(void) {
         g_last_frame_t = t = now();
         return;
     }
-    ld_take(); if (g_hold) { hq_flush(); g_vnow = gnow(); } ptx_frame_mark(); if (tl_guest) tl_fwait = 1; else ptx_frame_wait(); g_last_frame_t = now();   /* a guest thread waits after the bus lock (fwait_owed) */
+    pkd_frame(); ld_take(); if (g_hold) { hq_flush(); g_vnow = gnow(); } ptx_frame_mark(); if (tl_guest) tl_fwait = 1; else ptx_frame_wait(); g_last_frame_t = now();   /* a guest thread waits after the bus lock (fwait_owed) */
     /* Once the game is producing lists, core 1 (the real-time consumer) runs one level above core 0: core 0's native spin-waits then only
      * use the CPU while core 1 sleeps (pacing naps, ring waits) instead of taking half of it.  Not from the start: during boot core 1's
      * idle input reads would starve core 0 before it publishes the first list. */
@@ -3209,6 +3213,305 @@ static void k_launch_core1(uint32_t vtor, uint32_t sp, uint32_t entry) {
         if (!pthread_create(&mt, &ma, c1_mover, NULL)) pthread_detach(mt); }
 }
 static void k_irq_poke(void) { if (g_irq_on) irq_levels(); }
+
+/* ================================================================== list pickup (um2 step 1, 19 Nov 2026; opt-in: UM2_PICKUP=1 or --pickup)
+ * The cart's core 1 hands each frame's whole VIA list to one function: the SDK's uvm2_exec(buf, n) (3-byte entries: data 0-7, VIA register 8-11,
+ * idle E periods 12-23), or the push function of Ralf Kornmann's v2 bus engine (BattleZone 0.3a, Centipede 0.3a: push(_, words, n), 32-bit TX words).
+ * Without pickup each word reaches the model through the guest's own per-word code: SDK batches of 64 words, each batch 4 DMA register stores and a
+ * DMA run; Ralf, an FSTAT load and a TXF0 store per word, each a stub (or trap) trip.  With pickup the function entry becomes `b.w stub`, the stub
+ * calls um2_pick_call() through the VFP-safe thunk, and that hands the same words, in the same order, to the same model function (pio_txf_push,
+ * via um2bus_pio0_push): the bus stream is the same by construction.  What it keeps of the cart's function (read from the disassembly):
+ *  - SDK: when the bus-mode flag is set (core 1 used SIO since the last list) the 27 pin FUNCSEL stores (6 = PIO) and the setup routine's single
+ *    store PIO0 CTRL = 1 go through mmio_store as the guest's own stores did, then the flag is cleared; per entry the write word
+ *    ((v & 0xFFF | K) >> pin_base) << 1 | 1 and, for a delay d, the repeat word (d << 2) - 2; the push routine's running maximum of the park counts
+ *    (read back by its bus-release wait, which polls that many E periods + 2); the return value n + sum of the delays.  Not kept: the push and flush
+ *    routines' own statistics counters (write-only: no reader in the image) and their DMA batch bookkeeping (empty before and after every call).
+ *  - Ralf: the words as they are; the wait for an empty TX FIFO at the end returns at once in the model, as before.
+ * The detector works on the payload bytes at load: exact instruction templates of the function (4 compiled forms of uvm2_exec, 2 of Ralf's push)
+ * and of the five SDK helpers it calls (followed through their veneers), with only addresses, literal-pool words and the pin constant free.
+ * Exactly one hit, or nothing is patched (logged).  UM2_PKDIAG=file: equivalence diagnostics (see pkd_*), with or without pickup. */
+typedef struct { char t; uint32_t v; } PkCap;
+/* template tokens: hex = that halfword; BL / BW = bl / b.w (target captured); L16_n / L32_n = ldr rn,[pc,#imm] (16 / 32-bit; the pool word is captured);
+ * ORRK = orr.w r0,r0,#K (K captured); MWn / MTn = movw / movt rn (imm16 captured); D1 = bne.n (any offset) */
+static const char *const PK_SDK[4] = {
+    /* A: stmdb {r3-r9,lr}, list pointer in r8 (Veccy Road and 38 more: 0x20000238; galaga 0x20000284; vecos 0x200002c8) */
+    "e92d 43f8 L32_9 4680 f8d9 3000 460f b1a3 2300 2606 L16_4 L16_5 fa25 f203 f012 0f01 f103 0301 bf18 6026 2b1b f104 0408 d1f3 BL 2300 f8c9 3000 b377 1c79 eb01 0741 2600 f108 0503 4447 e002 3503 42bd d01e f815 3c01 f815 2c02 f815 0c03 041b ea43 2302 4318 f3c0 000b ORRK 0b1c BL BL 3601 2c00 d0e6 4620 BL 3503 BL 42bd 4426 d1e0 BL 4630 e8bd 83f8 463e BL 4630 e8bd 83f8",
+    /* B: stmdb {r4-r8,lr}, list pointer on the stack across the setup call (all AAE builds, defender, dkong, Horace, Kuroishi, redalarm, temptube) */
+    "e92d 41f0 L32_8 460f f8d8 3000 b082 b1b3 2300 2606 L16_4 L16_5 fa25 f203 f012 0f01 f103 0301 bf18 6026 2b1b f104 0408 d1f3 9001 BL 2300 9801 f8c8 3000 b377 1c79 eb01 0141 2600 1cc5 1847 e002 3503 42bd d01e f815 3c01 f815 2c02 f815 0c03 041b ea43 2302 4318 f3c0 000b ORRK 0b1c BL BL 3601 2c00 d0e6 4620 BL 3503 BL 42bd 4426 d1e0 BL 4630 b002 e8bd 81f0 463e BL 4630 b002 e8bd 81f0",
+    /* A2: as A, the pointer step scheduled before the repeat word (Star Wars, Dracula, Vector Pinball) */
+    "e92d 43f8 L32_9 4680 f8d9 3000 460f b1a3 2300 2606 L16_4 L16_5 fa25 f203 f012 0f01 f103 0301 bf18 6026 2b1b f104 0408 d1f3 BL 2300 f8c9 3000 b36f 1c79 eb01 0741 2600 f108 0503 4447 e001 42bd d01e f815 3c01 f815 2c02 f815 0c03 041b ea43 2302 4318 f3c0 000b ORRK 0b1c BL BL 3503 3601 2c00 d0e6 4620 BL BL 42bd 4426 d1e0 BL 4630 e8bd 83f8 463e BL 4630 e8bd 83f8",
+    /* A3: as A2 with r6 / r7 swapped (stellartrex7) */
+    "e92d 43f8 L32_9 4680 f8d9 3000 460e b1a3 2300 2706 L16_4 L16_5 fa25 f203 f012 0f01 f103 0301 bf18 6027 2b1b f104 0408 d1f3 BL 2300 f8c9 3000 b36e 1c71 eb01 0641 2700 f108 0503 4446 e001 42ae d01e f815 3c01 f815 2c02 f815 0c03 041b ea43 2302 4318 f3c0 000b ORRK 0b1c BL BL 3503 3701 2c00 d0e6 4620 BL BL 42ae 4427 d1e0 BL 4638 e8bd 83f8 4637 BL 4638 e8bd 83f8" };
+static const char *const PK_SDK_NAME[4] = { "A", "B", "A2", "A3" };
+static const char *const PK_V2[2] = {
+    "b18a b410 L16_0 3a01 f851 4b04 6843 03db d4fc 3a01 6104 1c54 d1f6 L16_2 6853 01d9 d5fc bc10 4770 L16_2 6853 01db d5fc 4770",      /* BattleZone 0.3a */
+    "b192 b410 1e50 L16_2 f851 4b04 6853 03db d4fc 3801 6114 1c44 d1f6 L16_2 6853 01d9 d5fc f85d 4b04 4770 L16_2 6853 01db d5fc 4770" };   /* Centipede 0.3a */
+static const char *const PK_VEN = "b580 466f e8bd 4080 BW";                                  /* push {r7,lr}; mov r7,sp; pop {r7,lr}; b.w X */
+static const char *const PK_SETUP = "b580 466f 2000 2101 f2c5 0020 6001 bd80";               /* PIO0 CTRL = 1 */
+static const char *const PK_WB = "b580 466f MW1 MT1 6809 f001 011f 40c8 0040 3001 bd80";     /* ((pins >> (*pin_base & 31)) << 1) | 1 */
+static const char *const PK_REP = "b580 466f f06f 0101 eb01 0080 bd80";                      /* (d << 2) - 2 */
+static const char *const PK_PUSH[2] = {                                                      /* if ((w & 3) == 2 && *pmax <= w >> 2) *pmax = (w >> 2) + 1 */
+    "b5f0 af03 f84d 8d04 4604 f000 0003 2802 D1 MW0 MT0 6801 ebb1 0f94 bf9e 08a1 3101 6001",
+    "b5f0 af03 f84d 8d04 4604 f000 0003 2802 D1 MW1 08a0 MT1 680a 4290 bf24 3001 6008" };
+static const char *const PK_FLUSH = "MW0 MT0 6800 b100 4770";                                /* if (mode word) return; ... */
+static struct {
+    int kind;                      /* 0 none, 1 SDK uvm2_exec, 2 Ralf's v2 push */
+    const char *form; uint32_t fn, hits;
+    uint32_t flag, fbase, fmask, k, pinbase, parkmax;
+    char why[160];
+} g_pk;
+static int g_pick_on;              /* UM2_PICKUP=1 / --pickup: replace the function (else at most observe it for UM2_PKDIAG) */
+static int g_pk_patched;
+static unsigned long g_pk_calls, g_pk_ent, g_pk_words, g_pk_fall;
+static const uint8_t *g_pk_img; static uint32_t g_pk_len;
+static int pk_hw(uint32_t a) { uint32_t o = a - IMG_BASE; if (a < IMG_BASE || (a & 1) || o + 2 > g_pk_len) return -1; return g_pk_img[o] | g_pk_img[o + 1] << 8; }
+static int pk_w32(uint32_t a, uint32_t *v) { uint32_t o = a - IMG_BASE; if (a < IMG_BASE || (a & 3) || o + 4 > g_pk_len) return 0; memcpy(v, g_pk_img + o, 4); return 1; }
+static uint32_t pk_t2imm(uint32_t h1, uint32_t h2) {     /* Thumb-2 modified immediate */
+    uint32_t i = (h1 >> 10) & 1, imm3 = (h2 >> 12) & 7, a = h2 & 0xFF, c = (i << 4) | (imm3 << 1) | (a >> 7);
+    if (c < 8) { switch (c >> 1) { case 0: return a; case 1: return a | a << 16; case 2: return a << 8 | a << 24; default: return a | a << 8 | a << 16 | a << 24; } }
+    uint32_t v = 0x80 | (a & 0x7F); return (v << (32 - c)) | (v >> c);
+}
+static uint32_t pk_bdest(uint32_t pc, uint32_t a, uint32_t c) {      /* B.W T4 / BL target */
+    uint32_t S = (a >> 10) & 1, J1 = (c >> 13) & 1, J2 = (c >> 11) & 1, i1 = !(J1 ^ S), i2 = !(J2 ^ S);
+    int32_t off = (int32_t)((S << 24) | (i1 << 23) | (i2 << 22) | ((a & 0x3FF) << 12) | ((c & 0x7FF) << 1)); if (S) off |= (int32_t)0xFE000000;
+    return pc + 4 + (uint32_t)off;
+}
+/* number of captures, or -1 (no match) */
+static int pk_match(uint32_t a, const char *t, PkCap *cap, int maxc) {
+    int nc = 0;
+    for (const char *p = t; *p;) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        char tok[8]; int k = 0; while (*p && *p != ' ') { if (k < 7) tok[k++] = *p; p++; } tok[k] = 0;
+        int h = pk_hw(a), c = pk_hw(a + 2); uint32_t v = 0; char ct = 0;
+        if (h < 0) return -1;
+        if (!strcmp(tok, "BL") || !strcmp(tok, "BW")) {
+            if (c < 0 || (h & 0xF800) != 0xF000 || (c & 0xD000) != (tok[1] == 'L' ? 0xD000 : 0x9000)) return -1;
+            v = pk_bdest(a, (uint32_t)h, (uint32_t)c); ct = 'B'; a += 4;
+        } else if (!strncmp(tok, "L16_", 4)) {
+            if ((h & 0xFF00) != (0x4800 | (tok[4] - '0') << 8) || !pk_w32(((a + 4) & ~3u) + (uint32_t)(h & 0xFF) * 4, &v)) return -1;
+            ct = 'L'; a += 2;
+        } else if (!strncmp(tok, "L32_", 4)) {
+            if (h != 0xF8DF || c < 0 || (c >> 12) != tok[4] - '0' || !pk_w32(((a + 4) & ~3u) + (uint32_t)(c & 0xFFF), &v)) return -1;
+            ct = 'L'; a += 4;
+        } else if (!strcmp(tok, "ORRK")) {
+            if ((h & 0xFBEF) != 0xF040 || c < 0 || (c & 0x8F00)) return -1;
+            v = pk_t2imm((uint32_t)h, (uint32_t)c); ct = 'K'; a += 4;
+        } else if (tok[0] == 'M' && (tok[1] == 'W' || tok[1] == 'T')) {
+            if ((h & 0xFBF0) != (tok[1] == 'W' ? 0xF240 : 0xF2C0) || c < 0 || (c & 0x8F00) != (tok[2] - '0') << 8) return -1;
+            v = ((uint32_t)(h & 0xF) << 12) | ((uint32_t)(h >> 10 & 1) << 11) | ((uint32_t)(c >> 12 & 7) << 8) | (uint32_t)(c & 0xFF); ct = 'M'; a += 4;
+        } else if (!strcmp(tok, "D1")) { if ((h & 0xFF00) != 0xD100) return -1; a += 2; }
+        else { if (h != (int)strtoul(tok, NULL, 16)) return -1; a += 2; }
+        if (ct) { if (nc < maxc) { cap[nc].t = ct; cap[nc].v = v; } nc++; }
+    }
+    return nc;
+}
+static uint32_t pk_follow(uint32_t a) { PkCap c[2]; for (int i = 0; i < 4 && pk_match(a, PK_VEN, c, 2) == 1; i++) a = c[0].v; return a; }
+static int pk_inram(uint32_t a) { return a >= IMG_BASE && a + 4 <= IMG_TOP && !(a & 3); }
+#define PK_NO(...) do { snprintf(g_pk.why, sizeof g_pk.why, __VA_ARGS__); return 0; } while (0)
+static int pk_sdk_check(const PkCap *c) {          /* c: the 11 captures of an SDK template */
+    uint32_t flag = c[0].v, fbase = c[1].v, fmask = c[2].v, setup = c[3].v, K = c[4].v, wb = c[5].v, push = c[6].v, rep = c[7].v, push2 = c[8].v, fl = c[9].v, fl2 = c[10].v;
+    PkCap h[4];
+    if (fbase != 0x40028004u || fmask != 0x073FFFFFu) PK_NO("FUNCSEL loop %08x/%08x is not IO_BANK0 GPIO0_CTRL/27 pins", fbase, fmask);
+    if (!pk_inram(flag)) PK_NO("bus-mode flag %08x not in SRAM", flag);
+    if (push != push2 || fl != fl2) PK_NO("the two push / flush calls differ");
+    if (pk_match(pk_follow(setup), PK_SETUP, h, 4) != 0) PK_NO("setup routine %08x is not `PIO0 CTRL = 1`", pk_follow(setup));
+    if (pk_match(pk_follow(rep), PK_REP, h, 4) != 0) PK_NO("repeat-word routine %08x not recognised", pk_follow(rep));
+    if (pk_match(pk_follow(wb), PK_WB, h, 4) != 2) PK_NO("write-word routine %08x not recognised", pk_follow(wb));
+    uint32_t pinb = h[0].v | h[1].v << 16;
+    if (pk_match(pk_follow(push), PK_PUSH[0], h, 4) != 2 && pk_match(pk_follow(push), PK_PUSH[1], h, 4) != 2) PK_NO("push routine %08x not recognised", pk_follow(push));
+    uint32_t pmax = h[0].v | h[1].v << 16;
+    if (pk_match(pk_follow(fl), PK_FLUSH, h, 4) != 2) PK_NO("flush routine %08x not recognised", pk_follow(fl));
+    if (!pk_inram(pinb) || !pk_inram(pmax)) PK_NO("pin-base %08x / park-max %08x not in SRAM", pinb, pmax);
+    g_pk.flag = flag; g_pk.fbase = fbase; g_pk.fmask = fmask; g_pk.k = K; g_pk.pinbase = pinb; g_pk.parkmax = pmax;
+    return 1;
+}
+/* load time, on the payload as read (before prepatch) */
+static void pk_detect(const uint8_t *img, uint32_t len) {
+    g_pk_img = img; g_pk_len = len; memset(&g_pk, 0, sizeof g_pk);
+    int kind = 0; uint32_t fn = 0; const char *form = NULL; PkCap keep[12] = { { 0, 0 } }; char why1[160] = "";
+    for (uint32_t a = IMG_BASE; a + 4 <= IMG_BASE + len; a += 2) {
+        int h = pk_hw(a); PkCap c[12]; int n;
+        if (h == 0xE92D) for (int t = 0; t < 4; t++) if ((n = pk_match(a, PK_SDK[t], c, 12)) == 11) {
+            if (!g_pk.hits++) { kind = 1; fn = a; form = PK_SDK_NAME[t]; memcpy(keep, c, sizeof keep); }
+            break;
+        }
+        if (h == 0xB18A || h == 0xB192) for (int t = 0; t < 2; t++) if ((n = pk_match(a, PK_V2[t], c, 12)) == 3) {
+            if (c[0].v != 0x50200000u || c[1].v != 0x50200000u || c[2].v != 0x50200000u) { snprintf(why1, sizeof why1, "v2 push shape at %08x without the PIO0 base", a); break; }
+            if (!g_pk.hits++) { kind = 2; fn = a; form = t ? "Centipede" : "BattleZone"; }
+            break;
+        }
+    }
+    if (g_pk.hits != 1) { snprintf(g_pk.why, sizeof g_pk.why, "%u matches of a known list-push function%s%s", g_pk.hits, why1[0] ? "; " : "", why1); return; }
+    if (kind == 1 && !pk_sdk_check(keep)) return;
+    if (kind == 2) { int nx = pk_hw(fn + 2); if (nx != 0xB410) { snprintf(g_pk.why, sizeof g_pk.why, "v2 push: second instruction %04x", nx); return; } }
+    g_pk.kind = kind; g_pk.fn = fn; g_pk.form = form;
+}
+
+/* ---- equivalence diagnostics (UM2_PKDIAG=file; with pickup off the entry is only observed: the stub notes the call and runs the original).
+ * Per list: key = FNV of the list's bytes (+ n and the bus-mode flag at entry); from the entry to the first PIO0 TXF0 word ("pre": the frame mark of
+ * an SIO->PIO switch) and from the first to the last word of the list ("list"), every sink call this core makes (write a/d, idle n, read a->v,
+ * frame) is folded into a hash.  These calls are the bridge encoder's whole input (ptx_write / ptx_advance_cycles / ptx_read / ptx_frame_mark).
+ * Lines: "W seq key wkey n words flag pre npre list nlist foreign mark" per list, "F mark nkeys keys" per frame mark (the lists whose first word
+ * fell in that frame; the n-th F line belongs to the n-th FRAME command of the stream file). */
+static struct { uint64_t key, wkey, hpre, hl, fk; uint32_t seq, n, words, remain, npre, nl, foreign, flag, unclosed, fn; int core; } D;
+static struct { unsigned m0, m1; uint64_t t0, t1, l0, l1, s0, s1; } g_c1c;   /* core 1's traps / MMIO loads / stores at frame marks 20 and the last */
+static inline uint64_t pk_fnv(uint64_t h, uint32_t v) { for (int i = 0; i < 4; i++) { h = (h ^ (v & 0xFF)) * 0x100000001b3ull; v >>= 8; } return h; }
+static void pkd_note(uint32_t op, uint32_t a, uint32_t b) {
+    if (tl_core != D.core) { D.foreign++; return; }
+    if (g_pkd_st == 1) { D.hpre = pk_fnv(pk_fnv(pk_fnv(D.hpre, op), a), b); D.npre++; }
+    else { D.hl = pk_fnv(pk_fnv(pk_fnv(D.hl, op), a), b); D.nl++; }
+}
+static void pkd_close(void) {
+    fprintf(g_pkd, "W %u %016llx %016llx %u %u %u %016llx %u %016llx %u %u %u\n", D.seq, (unsigned long long)D.key, (unsigned long long)D.wkey, D.n, D.words, D.flag,
+            (unsigned long long)D.hpre, D.npre, (unsigned long long)D.hl, D.nl, D.foreign, g_marks);
+    g_pkd_st = 0;
+}
+static void pkd_txf(uint32_t w, int after) {
+    if (!g_pkd_st || tl_core != D.core) return;
+    if (!after) {
+        if (g_pkd_st == 1) { g_pkd_st = 2; D.fk = pk_fnv(pk_fnv(D.fk, (uint32_t)D.key), (uint32_t)(D.key >> 32)); D.fn++; }
+        D.wkey = pk_fnv(D.wkey, w);
+    } else if (--D.remain == 0) pkd_close();
+}
+static void pkd_begin(uint32_t buf, uint32_t n, int sdk) {
+    if (g_pkd_st) { D.unclosed++; fprintf(g_pkd, "X %u remain %u\n", D.seq, D.remain); g_pkd_st = 0; }
+    const uint8_t *p = (const uint8_t *)(uintptr_t)buf; uint32_t words = n, flag = sdk ? *(volatile uint32_t *)(uintptr_t)g_pk.flag : 0;
+    uint64_t h = 0xcbf29ce484222325ull;
+    if (sdk) { for (uint32_t i = 0; i < n; i++, p += 3) { h = pk_fnv(h, (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16); if (p[2] || (p[1] >> 4)) words++; } }
+    else for (uint32_t i = 0; i < n; i++, p += 4) { uint32_t w; memcpy(&w, p, 4); h = pk_fnv(h, w); }
+    D.key = pk_fnv(pk_fnv(h, n), flag); D.seq++; D.n = n; D.words = D.remain = words; D.flag = flag; D.core = tl_core;
+    D.wkey = D.hpre = D.hl = 0xcbf29ce484222325ull; D.npre = D.nl = D.foreign = 0;
+    g_pkd_st = 1;
+    if (!words) pkd_close();
+}
+static void pkd_frame(void) {          /* k_frame, just before the FRAME command */
+    if (tl_core == 1) {
+        if (!g_c1c.m0 && g_marks >= 20) { g_c1c.m0 = g_marks; g_c1c.t0 = tl_n_trap; g_c1c.l0 = tl_n_ml; g_c1c.s0 = tl_n_ms; }
+        g_c1c.m1 = g_marks; g_c1c.t1 = tl_n_trap; g_c1c.l1 = tl_n_ml; g_c1c.s1 = tl_n_ms;
+    }
+    if (!g_pkd) return;
+    fprintf(g_pkd, "F %u %u %016llx\n", g_marks, D.fn, (unsigned long long)D.fk);
+    D.fk = 0; D.fn = 0;
+}
+
+/* ---- the native replacement */
+static void pk_push(const uint32_t *w, unsigned n) { um2bus_pio0_push(w, n); g_pk_words += n; fwait_owed(); }
+static uint32_t pk_sdk(uint32_t buf, uint32_t n) {
+    volatile uint32_t *flag = (volatile uint32_t *)(uintptr_t)g_pk.flag;
+    if (*flag) {                                           /* the bus is on SIO: back to PIO, as the function's own first block does */
+        for (unsigned i = 0; i < 27; i++) if (g_pk.fmask >> i & 1) mmio_store(g_pk.fbase + 8 * i, 4, 6);
+        mmio_store(0x50200000u, 4, 1);                     /* the setup routine: PIO0 CTRL = 1 */
+        *flag = 0;
+    }
+    volatile uint32_t *pmaxp = (volatile uint32_t *)(uintptr_t)g_pk.parkmax;
+    uint32_t sh = *(volatile uint32_t *)(uintptr_t)g_pk.pinbase & 31, pmax = *pmaxp, ret = 0, w[128]; unsigned nw = 0;
+    const uint8_t *c = (const uint8_t *)(uintptr_t)buf;
+    for (uint32_t i = 0; i < n; i++, c += 3) {
+        uint32_t v = (uint32_t)c[0] | (uint32_t)c[1] << 8 | (uint32_t)c[2] << 16, d = v >> 12;
+        w[nw++] = (((v & 0xFFFu) | g_pk.k) >> sh) << 1 | 1u;
+        ret += 1;
+        if (d) {
+            uint32_t r = (d << 2) - 2u;
+            if ((r & 3) == 2 && pmax <= (r >> 2)) pmax = (r >> 2) + 1;
+            w[nw++] = r; ret += d;
+        }
+        if (nw >= 126) { pk_push(w, nw); nw = 0; }
+    }
+    if (nw) pk_push(w, nw);
+    *pmaxp = pmax;
+    return ret;
+}
+static uint32_t pk_v2(uint32_t words, uint32_t n) {
+    const uint32_t *p = (const uint32_t *)(uintptr_t)words;
+    for (uint32_t i = 0; i < n; i += 64) pk_push(p + i, n - i < 64 ? n - i : 64);
+    return 0x50200000u;                                    /* void; what BattleZone's leaves in r0 */
+}
+/* from the stub (on the guest's thread, host stack, VFP saved): low word = r0 to return, high word = 1 when handled, 0 = run the original */
+uint64_t um2_pick_call(uint32_t a0, uint32_t a1, uint32_t a2) {
+    int sdk = g_pk.kind == 1;
+    uint32_t buf = sdk ? a0 : a1, n = sdk ? a1 : a2;
+    if (n && (n > (1u << 20) || !k_host_ptr(buf, n * (sdk ? 3u : 4u)))) { g_pk_fall++; return 0; }
+    if (g_pkd) pkd_begin(buf, n, sdk);
+    if (!g_pick_on) return 0;
+    tl_act++;                                              /* MMIO activity, as the guest's own stores were (timer-poll nap rule) */
+    uint32_t r = sdk ? pk_sdk(buf, n) : pk_v2(buf, n);
+    g_pk_calls++; g_pk_ent += n;
+    return (uint64_t)r | 1ull << 32;
+}
+/* `b.w stub` at the function entry.  stub: push {r0-r3,r12,lr}; save APSR; um2_pick_call(r0,r1,r2) through the thunk; handled: r0 = result, restore,
+ * bx lr; else restore and run the relocated first instruction(s), b.w back.  SDK: the 32-bit stmdb moves as it is.  Ralf: `cbz r2,X ; push {r4}` becomes
+ * `cbnz r2,+2 ; b.w X ; push {r4}` (no flags touched). */
+static void pick_install(void) {
+    if (!g_pk.kind || (!g_pick_on && !g_pkd)) return;
+    if (!g_stub_ready) { fprintf(stderr, "um2run: list pickup: no stub area, nothing patched\n"); return; }
+    uint32_t site = g_pk.fn; int h0 = g_rd16(site), h1 = g_rd16(site + 2);
+    if (g_pk.kind == 1 ? h0 != 0xE92D : (h0 & 0xFD07) != 0xB102 || h1 != 0xB410) { fprintf(stderr, "um2run: list pickup: entry %08x reads %04x %04x now, nothing patched\n", site, h0, h1); return; }
+    if (g_pk.kind == 2 && target_hits(site, site + 2)) { fprintf(stderr, "um2run: list pickup: %08x + 2 is a branch target, nothing patched\n", site); return; }
+    uint16_t k[64]; int n = 0; struct { int at; uint32_t val; } lits[4]; int nl = 0;
+#define E(x) k[n++] = (uint16_t)(x)
+#define LIT(rt, v) do { E(0xF8DF); lits[nl].at = n; lits[nl].val = (v); nl++; E((rt) << 12); } while (0)
+    E(0xE92D); E(0x500F);                               /* push {r0-r3, r12, lr}     */
+    E(0xF3EF); E(0x8300);                               /* mrs r3, apsr              */
+    E(0xF84D); E(0x3D04);                               /* str r3, [sp, #-4]!        */
+    LIT(12, (uint32_t)(uintptr_t)(g_novfp ? um2_hthunk_lean : um2_hthunk));
+    LIT(3, (uint32_t)(uintptr_t)um2_pick_call);
+    E(0x47E0);                                          /* blx r12: r0 = value, r1 = handled */
+    int cbz_at = n; E(0);                               /* cbz r1, orig              */
+    E(0x9001);                                          /* str r0, [sp, #4]  (the saved r0) */
+    E(0xF85D); E(0x3B04);                               /* ldr r3, [sp], #4          */
+    E(0xF383); E(0x8800);                               /* msr apsr_nzcvq, r3        */
+    E(0xE8BD); E(0x500F);                               /* pop {r0-r3, r12, lr}      */
+    E(0x4770);                                          /* bx lr                     */
+    int orig = n;
+    E(0xF85D); E(0x3B04); E(0xF383); E(0x8800); E(0xE8BD); E(0x500F);
+    int bx_at = -1, b_at;
+    if (g_pk.kind == 1) { E(h0); E(h1); }               /* stmdb sp!, {...} */
+    else {
+        E(0xB90A);                                      /* cbnz r2, +2 (over the b.w) */
+        bx_at = n; n += 2;                              /* b.w X (cbz's target)      */
+        E(h1);                                          /* push {r4}                 */
+    }
+    b_at = n; n += 2;                                   /* b.w site + 4              */
+    if (n & 1) E(0xBF00);
+    int lit_base = n; n += 2 * nl;
+    uint32_t bytes = (uint32_t)n * 2, base;
+    { int pb = patch_begin(site, 4, bytes, &base); if (pb <= 0) { fprintf(stderr, "um2run: list pickup: patch refused (%d)\n", pb); return; } }
+    int off = (orig - cbz_at) * 2 - 4;
+    k[cbz_at] = (uint16_t)(0xB101 | (((off >> 6) & 1) << 9) | (((off >> 1) & 31) << 3));
+    for (int i = 0; i < nl; i++) {
+        uint32_t laddr = base + (uint32_t)(lit_base + 2 * i) * 2, ipc = base + (uint32_t)(lits[i].at - 1) * 2 + 4;
+        k[lits[i].at] |= (uint16_t)(laddr - (ipc & ~3u));
+        memcpy(k + lit_base + 2 * i, &lits[i].val, 4);
+    }
+    if (bx_at >= 0) {
+        uint32_t x = site + 4 + (uint32_t)(((((uint32_t)h0 >> 9) & 1) << 6) | ((((uint32_t)h0 >> 3) & 31) << 1));     /* cbz target */
+        uint32_t bw = enc_bw(base + (uint32_t)bx_at * 2, x); k[bx_at] = (uint16_t)(bw & 0xFFFF); k[bx_at + 1] = (uint16_t)(bw >> 16);
+    }
+    { uint32_t bw = enc_bw(base + (uint32_t)b_at * 2, site + 4); k[b_at] = (uint16_t)(bw & 0xFFFF); k[b_at + 1] = (uint16_t)(bw >> 16); }
+    memcpy((void *)(uintptr_t)base, k, (size_t)bytes);
+#undef LIT
+#undef E
+    __builtin___clear_cache((char *)(uintptr_t)base, (char *)(uintptr_t)(base + bytes));
+    patch_end(site, 4, base);
+    g_pk_patched = 1;
+    if (g_pkd) um2bus_set_txf_hook(pkd_txf);
+    fprintf(stderr, "um2run: list pickup: entry %08x -> stub %08x (%s)\n", site, base, g_pick_on ? "native replacement" : "observed only, UM2_PKDIAG");
+}
+static void pick_report(void) {
+    static int done; if (done++) return;
+    if (g_pkd) { if (g_pkd_st) fprintf(g_pkd, "X %u remain %u (at exit)\n", D.seq, D.remain); fflush(g_pkd); }
+    if (!g_pick_on && !g_pkd) return;
+    fprintf(stderr, "um2run: list pickup: %lu lists replaced natively (%lu entries, %lu words), %lu left to the original (list outside RAM)%s\n",
+            g_pk_calls, g_pk_ent, g_pk_words, g_pk_fall, g_pk_patched ? "" : "; NOT PATCHED");
+    if (g_c1c.m1 > g_c1c.m0 && g_c1c.m0) {
+        double f = (double)(g_c1c.m1 - g_c1c.m0);
+        fprintf(stderr, "um2run: core 1 per frame (marks %u..%u): %.1f traps, %.1f MMIO loads, %.1f MMIO stores (trap + stub; a PC indicator only)\n",
+                g_c1c.m0, g_c1c.m1, (g_c1c.t1 - g_c1c.t0) / f, (g_c1c.l1 - g_c1c.l0) / f, (g_c1c.s1 - g_c1c.s0) / f);
+    }
+    if (g_pkd) fprintf(stderr, "um2run: pickup diagnostics: %u lists, %u not closed\n", D.seq, D.unclosed);
+}
+
 /* Only once on_donate is installed: SIGUSR1's default action kills the process, silently (the launch deaths of 28 and 31 Oct 2026, whenever
  * setup took longer than the 2 ms before the first tick). */
 static void fair_start(void) {
@@ -3269,6 +3572,7 @@ static int run_inproc(void) {
     sa.sa_sigaction = on_quiesce; sigaction(SIGUSR2, &sa, NULL);
     sa.sa_sigaction = on_irq; sigaction(SIGURG, &sa, NULL);       /* asynchronous interrupt delivery (SIGUSR2 is the patch quiesce) */
     guest_load_and_map();
+    if (opt.bus) pick_install();
     hstack_set(0); tl_guest = 1; prof_start(); slice_start();
     g_t0 = now();
     struct itimerval it = { {0, 100000}, {0, 100000} }; setitimer(ITIMER_REAL, &it, NULL);
@@ -3513,6 +3817,8 @@ static void usage(void) {
         "  --bus-verbose      model log on stderr (twice: every DMA run); --capture FILE records the model inputs for replay\n"
         "  --no-loading       no LOADING screen + progress bar while the image has not drawn its first frame (<image>.load keeps the total)\n"
         "  --message TEXT     no image: show TEXT on the Vectrex for 20 s ('|' = new line; 4 lines of 20 at most), then hand it back\n"
+        "  --pickup           (experiment, or UM2_PICKUP=1) hand each frame's whole list from the cart's push function to the bus model\n"
+        "                     natively (SDK uvm2_exec, v2 engine push); the same words in the same order; off by default\n"
         "  --frame-cycles N   idle-pad each stream frame to N E cycles (default 30000, 0 = none)\n"
         "  --keys F:B,F:B     PC tests: from frame mark F on, controller reads (PSG reg 14) return byte B (0xFE = button 1, 0xFF = none)\n"
         "  --pot F:X1,Y1[,X2,Y2];F:..  PC tests: from frame mark F on, the stick pots read these signed values (through the sample/hold model)\n");
@@ -3565,6 +3871,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--cpu1-normal")) g_c1_normal = 1;
         else if (!strcmp(a, "--donate") && i + 1 < argc) g_donate_us = (unsigned)atoi(argv[++i]);
         else if (!strcmp(a, "--capture") && i + 1 < argc) opt.capture = argv[++i];
+        else if (!strcmp(a, "--pickup")) g_pick_on = 1;
         else if (!strcmp(a, "--frame-cycles") && i + 1 < argc) opt.frame_cycles = (unsigned)strtoul(argv[++i], 0, 0);
         else if (a[0] == '-') { usage(); return 2; }
         else opt.file = a;
@@ -3593,6 +3900,19 @@ int main(int argc, char **argv) {
         }
     }
     g_entry = rd32(g_file + 20 + 4) & ~1u;
+#ifdef __arm__
+    {   const char *e = getenv("UM2_PICKUP"); if (e && *e && strcmp(e, "0")) g_pick_on = 1;
+        const char *d = getenv("UM2_PKDIAG");
+        if (d && *d && opt.bus) { g_pkd = fopen(d, "w"); if (!g_pkd) perror(d); else setvbuf(g_pkd, NULL, _IOFBF, 1 << 16); }
+        if (opt.bus && (g_pick_on || g_pkd)) {
+            pk_detect(g_file + 20, words * 4);
+            if (g_pk.kind == 1) fprintf(stderr, "um2run: list pickup: SDK uvm2_exec (form %s) at %08x; pin constant %07x, bus-mode flag %08x, pin base %08x, park max %08x%s\n",
+                                        g_pk.form, g_pk.fn, g_pk.k, g_pk.flag, g_pk.pinbase, g_pk.parkmax, g_pick_on ? "" : " (pickup off: observed only)");
+            else if (g_pk.kind == 2) fprintf(stderr, "um2run: list pickup: v2 bus-engine push (%s form) at %08x%s\n", g_pk.form, g_pk.fn, g_pick_on ? "" : " (pickup off: observed only)");
+            else fprintf(stderr, "um2run: list pickup: nothing detected (%s): the usual path\n", g_pk.why);
+        }
+    }
+#endif
     if (!g_noprepatch) prepatch(g_file + 20, words);
     if (!getenv("UM2_NOBTGT")) btgt_scan(g_file + 20, words);     /* UM2_NOBTGT=1 (test): only the local scan, as before */
     g_next_report = opt.every;

@@ -52,6 +52,10 @@ void     um2bus_spi_dr_store(uint32_t val);
 uint32_t um2bus_spi_sr(void);
 void     um2bus_ring_mark(void);     /* the image took the ring after a loading indicator: um2bus_stats adds an fps line from here */        /* SPI0 SR (lock free) */
 int      um2bus_spi_lean_ok(void);   /* the two above run without VFP use (no UM2_BUSSTAT timing): the card stubs may skip the VFP save */
+/* list pickup: n words for PIO0 TXF0, taken as if the cart's DMA or CPU store had delivered them (bus lock taken here) */
+void     um2bus_pio0_push(const uint32_t *w, unsigned n);
+/* diagnostics: fn(w, 0) before and fn(w, 1) after the model takes each PIO0 TXF0 word (NULL: off) */
+void     um2bus_set_txf_hook(void (*fn)(uint32_t w, int after));
 /* level of the interrupt lines the model owns (bit n = NVIC IRQ n): DMA_IRQ_0..3 = IRQ 10..13 */
 uint64_t um2bus_irq_lines(void);
 void um2bus_stats(FILE *f);

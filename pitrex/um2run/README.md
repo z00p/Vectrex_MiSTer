@@ -58,6 +58,7 @@ The log is `/tmp/um2.log`. Useful `um2run` options:
 | `--no-loading` | no LOADING screen while the image has not drawn its first frame |
 | `--message TEXT` | no image: show TEXT on the Vectrex for 20 s, `\|` for a new line (pitrexd and mister_run.sh use it for errors) |
 | `--no-hold` (mister_run.sh) | do not hand each frame to the ring at once (`--hold` is the default) |
+| `--pickup` | experiment, off by default (also `UM2_PICKUP=1`): take each frame's list from the cartridge's own push function and feed it to the bus model natively (same stream; DESIGN.md, Bus side) |
 | `--bus-verbose`, `--ringmon` | model log and a once-a-second ring monitor, for diagnosis |
 
 Exit statuses: 0 is a normal stop; 1 is an input or setup error; 2 is a usage or runtime setup

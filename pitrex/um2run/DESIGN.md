@@ -100,6 +100,18 @@ commands, so the cartridge and the core never need to know about each other.
   T2 reload the core treats as a frame boundary. `--hold` hands the whole frame to the ring at once.
 - **Pacing.** `ptx_frame()` paces on the core's read index, so the guest never runs far ahead
   of what the core has played.
+- **List pickup (experiment, off by default: `--pickup` or `UM2_PICKUP=1`).** Core 1 hands each
+  frame's whole bus list to one function: the SDK's `uvm2_exec(list, n)` (3-byte entries) or the
+  push function of Ralf Kornmann's v2 engine (BattleZone 0.3a, Centipede 0.3a). At load um2run
+  looks for that function by exact instruction templates (addresses, literal-pool words and the
+  pin constant free; the SDK helpers it calls are checked too) and, with exactly one match,
+  patches its entry to a stub that builds the same PIO0 TXF0 words natively and hands them to
+  the model in the same order (`um2bus_pio0_push`): the stream is unchanged, the guest's
+  per-batch DMA register stores (SDK) or per-word FIFO stores (v2) are gone. The SDK function's
+  SIO-to-PIO switch (27 pin FUNCSEL stores and PIO0 CTRL = 1) goes through the normal MMIO path,
+  and its park-count maximum (read by the image's bus-release wait) is kept. `UM2_PKDIAG=file`
+  writes per-list and per-frame hashes for equivalence tests (and observes the function with
+  pickup off).
 
 ## Storage
 

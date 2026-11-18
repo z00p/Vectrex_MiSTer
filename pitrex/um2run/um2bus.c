@@ -19,8 +19,8 @@
 
 /* UM2_BUSSTAT=1 (diagnostics): wait for and hold time of the bus lock per access class (printed with the stats at exit) */
 static int g_busstat; static __thread uint64_t tl_bl_t0;
-static struct { uint64_t n, wait, hold, max, big, bigw; } g_bst[12];
-static const char *const g_bst_name[12] = { "sio store", "sio load", "dma store", "dma load", "spi", "qmi", "pio store", "pio load", "audio pump", "cap push", "aud_start lock", "irq_poke" };
+static struct { uint64_t n, wait, hold, max, big, bigw; } g_bst[13];
+static const char *const g_bst_name[13] = { "sio store", "sio load", "dma store", "dma load", "spi", "qmi", "pio store", "pio load", "audio pump", "cap push", "aud_start lock", "irq_poke", "pickup push" };
 static uint64_t bl_ns(void) { return um2_clock_ns(); }
 #ifndef UM2BUS_NO_THREADS
 static pthread_mutex_t g_bus = PTHREAD_MUTEX_INITIALIZER;   /* PIO, DMA, GPIO, sink */
@@ -405,9 +405,15 @@ static void v2_word(uint32_t w) {
 }
 
 static struct { uint64_t cpu_words, starts, blocks, irqs, steps, words, aborts, late[5], maxlate, held, forced; double maxheld; double fps[NPIO][4]; int bits[NPIO][4]; } AS;   /* cart audio statistics */
+static void (*g_txf_hook)(uint32_t w, int after);        /* diagnostics only (um2bus_set_txf_hook): every PIO0 TXF0 word, before and after the model took it */
+static uint64_t g_pk_words, g_pk_calls;                  /* words pushed by um2bus_pio0_push (list pickup) */
 static void pio_txf_push(int pio, int smn, uint32_t w) {
 	cap(CAP_PIO_PUSH, 4, (uint32_t)(pio * 4 + smn), w);
-	if (pio == 0 && smn == 0) { if (g_v2 && (g_pio[0].ctrl & 1)) { S.pushes++; v2_word(w); return; } sm_push(SIMPIO, w); }
+	if (pio == 0 && smn == 0) {
+		if (g_txf_hook) g_txf_hook(w, 0);
+		if (g_v2 && (g_pio[0].ctrl & 1)) { S.pushes++; v2_word(w); } else sm_push(SIMPIO, w);
+		if (g_txf_hook) g_txf_hook(w, 1);
+	}
 	/* the other state machines (PIO1/PIO2: the jack's I2S output, codec control) are not interpreted.  Cart audio arrives by DMA (paced, see
 	 * "cart audio" below); words the CPU pushes (BattleZone's SM3 codec control, SM2 data would be a new case) are only counted. */
 	else if (pio > 0) {
@@ -1279,6 +1285,17 @@ void um2bus_init(const um2bus_cfg_t *cfg) {
 	}
 }
 
+/* List pickup (um2run, UM2_PICKUP=1): words the cart's own push function would have handed to PIO0 TXF0 (SDK: through its DMA batches; Ralf's v2
+ * engine: one CPU store each), given here in the same order.  The model takes each one exactly as from the DMA or the store (pio_txf_push), so the
+ * stream is the same; only the guest-side trip per word or per batch is gone.  The caller owes fwait_owed() after it (a frame mark inside). */
+void um2bus_pio0_push(const uint32_t *w, unsigned n) {
+	BUS_LOCK_T(12);
+	for (unsigned i = 0; i < n; i++) pio_txf_push(0, 0, w[i]);
+	g_pk_words += n; g_pk_calls++;
+	BUS_UNLOCK_T(12);
+}
+void um2bus_set_txf_hook(void (*fn)(uint32_t w, int after)) { g_txf_hook = fn; }
+
 uint64_t um2bus_irq_lines(void) {
 	uint64_t m = 0;
 	for (int g = 0; g < 4; g++) if (dma_ints(g)) m |= 1ull << (10 + g);              /* DMA_IRQ_0..3 = NVIC 10..13 */
@@ -1328,7 +1345,8 @@ void um2bus_stats(FILE *f) {
 		if (DF.n) fprintf(f, "um2bus: ring fill (guest write index - READ_ADDR, UM2_AUDFILL): min %d mean %.0f max %d frames of %u, %llu of %llu samples above 7/8 (an overrun of the reader = the game resyncs)\n", DF.mn, DF.sum / (double)DF.n, DF.mx, 2048u, (unsigned long long)DF.bad, (unsigned long long)DF.n);
 		um2aud_stats(f);
 	}
-	if (g_busstat) for (int i = 0; i < 12; i++) if (g_bst[i].n) fprintf(f, "um2bus: BUSSTAT %-10s n %llu, wait avg %.1f us (>100us: %llu), hold avg %.1f us, max %.0f us, holds >100us %llu\n", g_bst_name[i], (unsigned long long)g_bst[i].n, g_bst[i].wait / (double)g_bst[i].n / 1e3, (unsigned long long)g_bst[i].bigw, g_bst[i].hold / (double)g_bst[i].n / 1e3, g_bst[i].max / 1e3, (unsigned long long)g_bst[i].big);
+	if (g_pk_calls) fprintf(f, "um2bus: list pickup: %llu words in %llu batches went to PIO0 TXF0 directly (no DMA run, no FIFO store)\n", (unsigned long long)g_pk_words, (unsigned long long)g_pk_calls);
+	if (g_busstat) for (int i = 0; i < 13; i++) if (g_bst[i].n) fprintf(f, "um2bus: BUSSTAT %-10s n %llu, wait avg %.1f us (>100us: %llu), hold avg %.1f us, max %.0f us, holds >100us %llu\n", g_bst_name[i], (unsigned long long)g_bst[i].n, g_bst[i].wait / (double)g_bst[i].n / 1e3, (unsigned long long)g_bst[i].bigw, g_bst[i].hold / (double)g_bst[i].n / 1e3, g_bst[i].max / 1e3, (unsigned long long)g_bst[i].big);
 	if (g_v2_words) fprintf(f, "um2bus: v2 engine: %llu words (%llu reads), %llu E cycles\n", g_v2_words, g_v2_reads, g_v2_cycles);
 	if (g_wall1 > g_wall0) fprintf(f, "um2bus: %llu frames in %.1f s = %.1f fps (%.1f ms per frame), measured from the first frame mark\n", (unsigned long long)(S.frames - g_frames0), g_wall1 - g_wall0, (S.frames - g_frames0) / (g_wall1 - g_wall0), (g_wall1 - g_wall0) * 1e3 / (double)(S.frames - g_frames0));
 	if (g_ringmark && g_wall1 > g_wallr && S.frames > g_framesr) fprintf(f, "um2bus: %llu frames in %.1f s = %.1f fps after the image took the ring (the loading indicator left out)\n", (unsigned long long)(S.frames - g_framesr), g_wall1 - g_wallr, (S.frames - g_framesr) / (g_wall1 - g_wallr));
