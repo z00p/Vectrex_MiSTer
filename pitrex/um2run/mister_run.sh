@@ -40,9 +40,10 @@ case "$args " in *" --cpu "*|*" --rt "*) ;; *) args="--cpu 0 --cpu1 1 --donate 3
 # A/B on the MiSTer 9 Nov, each game on its own card, two rounds: irq1 and share (6000) cost no measurable speed (Star Wars 44.4, Punch-Out 54.3,
 # Pac-Man 33.7 frames/s, as without them); 1.4's --donate 10000 cost 2-4 percent (42.6, 53.3, 32.6). A Bluetooth pad played well with both.
 #   rt0    core 1 leaves real-time scheduling once on CPU1 (SCHED_OTHER, nice -20, um2run --cpu1-normal): Linux and Bluetooth on CPU1 get it
-#          when they need it, without the fixed share; core 0 (cart sound) stays real-time. For a Main that sleeps while a game runs
-#          (main-pitrex passes UM2_SCHED="rt nonice irq1 rt0"); the stock Main polls all the time and keeps the share.
-#          Heard on the MiSTer 10 Nov: no static in play, controls very responsive (wired pad).
+#          when they need it, without the fixed share; core 0 (cart sound) stays real-time.
+#          Heard on the MiSTer 10 Nov: no static in play, controls very responsive (wired pad). Not used by default: main-pitrex
+#          uses "rt nonice irq1 share" too (with rt0 a Bluetooth pad worked only in the OSD, 10 Nov), and on 18 Nov rt0 was never
+#          faster than share (Dragon's Lair 39.6 against 42.1 fps, two rounds) and starved Main (laggy OSD over a running game).
 # A file FAIR_TEST beside this script replaces the words (to compare): "rt" alone = 1.3 behaviour, "nonice irq1" = normal priority.
 ft_restore() { [ -f /tmp/ft_irq_saved ] && { read -r n m < /tmp/ft_irq_saved; echo "$m" > /proc/irq/$n/smp_affinity 2>/dev/null; rm -f /tmp/ft_irq_saved; }; }
 ft_restore
