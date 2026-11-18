@@ -46,6 +46,7 @@
 #define PTX_LEAD_FRAMES 2u                    /* frames the ARM may run ahead (um2run's mister_run.sh sets PTX_LEAD=1) */
 #define PTX_SEQ_TIMEOUT_MS 200                /* core input counter must move at least this often */
 #define PTX_NAME_RECHECK_MS 1000              /* re-read /tmp/CORENAME at least this often, changed or not */
+#define PTX_NAME_STAT_MS 20                   /* stat() it at most this often (about once a frame) */
 
 typedef struct {
 	volatile uint32_t magic, version, log2n;
@@ -102,7 +103,7 @@ static int name_st_ok, name_ours;
  * before every publish and at the start of every ring batch, and never write once it fails.
  * A check passes only if all of these hold:
  *   - /tmp/CORENAME (MiSTer Main writes it when it loads a core) names our core. It is stat()ed
- *     every time (cheap) and re-read only when inode/mtime/size change, or every second;
+ *     every 20 ms and re-read only when inode/mtime/size change, or every second;
  *   - the core's signature is still there and its input counter keeps moving (it stops when
  *     the FPGA is reconfigured or PiTrex Mode is turned off) and its read index never goes
  *     backwards (it restarts from zero on a reload);
@@ -152,8 +153,14 @@ static int vectrex_core_loaded(void)
 
 /* The same, but only as expensive as a stat() unless the file changed. A file caught empty
    (Main truncates it before it writes the new name) is retried briefly, then counts as gone. */
+static long last_stat_ms;
 static int corename_ours(long t)
 {
+	/* stat() at most every PTX_NAME_STAT_MS (18 Nov 2026; it was every check, 1000 syscalls a second).  A rename is now seen up to 20 ms after
+	 * Main writes it, not 1 ms; Main writes it only after reconfiguring the FPGA, and the input counter's PTX_SEQ_TIMEOUT_MS (200 ms) already
+	 * bounds the window after that (see "What remains" above). */
+	if (name_st_ok && t - last_stat_ms < PTX_NAME_STAT_MS && t >= last_stat_ms) return name_ours;
+	last_stat_ms = t;
 	struct stat s;
 	if (stat("/tmp/CORENAME", &s) != 0) { name_st_ok = 0; return 0; }
 	int same = name_st_ok && s.st_ino == name_st.st_ino && s.st_size == name_st.st_size &&
