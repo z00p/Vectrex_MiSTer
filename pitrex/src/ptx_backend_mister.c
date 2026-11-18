@@ -34,6 +34,9 @@
 #ifndef PTX_DDR_BASE
 #define PTX_DDR_BASE   0x34000000u
 #endif
+#ifndef PTX_DEVMEM
+#define PTX_DEVMEM     "/dev/mem"             /* tests/ptx_wait_test.c builds with a plain file here and PTX_DDR_BASE=0 */
+#endif
 #define PTX_RING_LOG2  16u
 #define PTX_RING_N     (1u << PTX_RING_LOG2)
 #define PTX_MAGIC      0x58525450u            /* "PTRX" */
@@ -81,11 +84,13 @@ static uint64_t aud_part;              /* samples collected for the next word */
 static unsigned aud_nsamp;
 static uint64_t wr, published, rd_cache;   /* rd_cache: last rd_idx seen (it only grows between re-attaches) */
 static uint64_t frame_end[8];
+static uint64_t pushed_cyc;             /* stream time of everything written to the ring (see m_push) */
+static int cyc_off_ok;                  /* m_wait's offset between pushed_cyc and the core's core_cycles is known */
 static uint32_t n_frames;
 static int lead_f = -1;                 /* frames ahead: PTX_LEAD_FRAMES, or env PTX_LEAD (0-6) for tests */
 /* Pacing statistics (ptx_pace_report): was the producer ahead of the core at the frame marks (it had to wait: the stream length, i.e. the
  * Vectrex, sets the speed) or behind (it never waited: the host sets the speed)?  Counters only, no clock reads. */
-static unsigned long ps_frames, ps_waited, ps_naps, ps_fullnaps, ps_behind;
+static unsigned long ps_frames, ps_waited, ps_naps, ps_sleeps, ps_fullnaps, ps_behind;   /* ps_sleeps: naps that were a predicted sleep (m_wait) */
 static uint64_t ps_lead_sum, ps_lead_max;   /* commands written but not yet fetched by the core, at each frame mark */
 static uint32_t hb;
 static volatile sig_atomic_t core_lost;   /* set once we no longer own the block: never write again */
@@ -234,6 +239,7 @@ static void check_core_alive(void)
 		epoch0 = core_epoch();
 		epoch_changed = 0;
 		wr = published = rd_cache = st->rd_idx;
+		cyc_off_ok = 0;              /* the core counts its stream time from zero again */
 		n_frames = 0;                /* frame_end[] belongs to the old ring position: pacing on it would wait for ever (it is only read for n_frames > PTX_LEAD_FRAMES, after being rewritten) */
 		last_seq_ms = now_ms();      /* a fresh takeover: the core gets a full PTX_SEQ_TIMEOUT_MS to move its input counter again (review item 5, 27 Oct 2026) */
 		hdr->wr_idx = wr;
@@ -322,8 +328,8 @@ static int m_open(void)
 		struct timespec ts = { 0, 200 * 1000000L };
 		nanosleep(&ts, NULL);
 	}
-	memfd = open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
-	if (memfd < 0) { perror("ptx: /dev/mem"); return -1; }
+	memfd = open(PTX_DEVMEM, O_RDWR | O_SYNC | O_CLOEXEC);
+	if (memfd < 0) { perror("ptx: " PTX_DEVMEM); return -1; }
 	void *p = mmap(0, PTX_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, memfd, PTX_DDR_BASE);
 	if (p == MAP_FAILED) { perror("ptx: mmap"); close(memfd); return -1; }
 	base = p;
@@ -399,10 +405,19 @@ static void m_push(uint64_t cmd)
 	}
 	ring[wr & (PTX_RING_N - 1)] = cmd;
 	wr++;
+	{ uint32_t op = PTX_CMD_OP(cmd);     /* the stream time written, counted as the player counts it (pitrex_player.sv): a bus op is delta + 1 E cycles, a WAIT delta */
+	  if (op == PTX_OP_WRITE || op == PTX_OP_READ) pushed_cyc += PTX_CMD_DELTA(cmd) + 1u; else if (op == PTX_OP_WAIT) pushed_cyc += PTX_CMD_DELTA(cmd); }
 	if (wr - published >= PTX_PUBLISH) publish();
 }
 
-static uint64_t pend_target, pend_wr; static int pend;   /* the wait m_frame leaves to m_wait */
+static uint64_t pend_target, pend_wr, pend_cyc; static int pend;   /* the wait m_frame leaves to m_wait */
+static uint64_t frame_cyc[8];          /* pushed_cyc at each frame_end[] */
+/* One sleep per frame wait (18 Nov 2026, review D3; it napped 200 us at a time, each nap a syscall plus the ownership check).  The core's
+ * core_cycles counts the stream time it has played since it took over, so it is pushed_cyc (counted the same way) less an offset: the takeover
+ * point and the few commands its FIFO holds.  The offset is learnt where the two meet, when a short poll sees rd_idx pass a frame end.
+ * Remaining wait = (frame end - core time) x 2/3 us.  Not the producer's stream_cycles: that includes time it moved on without writing yet
+ * (a PiTrex program's T2 wait), which the core only sees with the next command. */
+static int64_t cyc_off;
 static void m_frame(uint64_t stream_cycles)
 {
 	(void)stream_cycles;
@@ -412,10 +427,27 @@ static void m_frame(uint64_t stream_cycles)
 	   (its FIFO is tiny, so fetched ~ played): enough slack for Linux
 	   scheduling, little enough that input still feels immediate. */
 	frame_end[n_frames % 8] = wr;
+	frame_cyc[n_frames % 8] = pushed_cyc;
 	n_frames++;
 	if (lead_f < 0) { const char *e = getenv("PTX_LEAD"); lead_f = e && *e >= '0' && *e <= '6' ? *e - '0' : (int)PTX_LEAD_FRAMES; }
 	if (n_frames <= (unsigned)lead_f) return;
-	pend_target = frame_end[(n_frames - 1 - lead_f) % 8]; pend_wr = wr; pend = 1;
+	pend_target = frame_end[(n_frames - 1 - lead_f) % 8]; pend_cyc = frame_cyc[(n_frames - 1 - lead_f) % 8]; pend_wr = wr; pend = 1;
+}
+
+/* How long to sleep before polling: the predicted time to the frame end less a margin for the core_cycles snapshot (it is refreshed every 4096
+ * of the core's clocks) and the offset's own error (one poll).  0: poll (offset unknown, nearly there, or a prediction that makes no sense). */
+#define PTX_WAIT_MARGIN_US 500
+static long wait_sleep_us(uint64_t target_cyc)
+{
+	uint64_t cc = st->core_cycles;
+#ifdef PTX_WAIT_POLL_ONLY
+	cyc_off_ok = 0;                          /* tests/ptx_wait_test.c: the old 200 us polling, for comparison */
+#endif
+	if (!cyc_off_ok || !cc) return 0;        /* 0: a core that does not report it (or has not started) */
+	int64_t left = (int64_t)target_cyc - ((int64_t)cc + cyc_off);   /* E cycles */
+	long us = (long)(left * 2 / 3) - PTX_WAIT_MARGIN_US;
+	if (us < 200) return 0;
+	return us > 20000 ? 20000 : us;  /* a frame at most per sleep: the heartbeat and the ownership check run after each */
 }
 
 /* The pacing wait for the last m_frame, apart from it (18 Nov 2026): um2run publishes the frame under its bus lock and
@@ -426,9 +458,8 @@ static void m_wait(void)
 {
 	if (!pend) return;
 	pend = 0;
-	uint64_t target = pend_target, wr = pend_wr;
-	int naps = 0;
-	long wait0_ms = 0;
+	uint64_t target = pend_target, wr = pend_wr, target_cyc = pend_cyc;
+	long wait0_ms = 0, last_us = 0;
 	{ uint64_t rd = st->rd_idx; uint64_t lead = wr > rd ? wr - rd : 0;
 	  ps_frames++; ps_lead_sum += lead; if (lead > ps_lead_max) ps_lead_max = lead;
 	  if (rd < target) { ps_waited++; wait0_ms = now_ms(); } else ps_behind++; }
@@ -436,14 +467,18 @@ static void m_wait(void)
 	while (st->rd_idx < target) {
 		ps_naps++;
 		/* Once stalled (usually the core's Pause button: it stops the machine, and the player reads the stream only on its E edges)
-		 * nap 2 ms, not 200 us: the wait can last minutes, and a 2 ms nap still notices the resume within a frame. */
-		nap_us(ptx_core_stalled ? 2000 : 200);
-		if (++naps == 10000) {                   /* 2 s without progress */
+		 * nap 2 ms: the wait can last minutes, and a 2 ms nap still notices the resume within a frame. */
+		long us = ptx_core_stalled ? 2000 : wait_sleep_us(target_cyc);
+		last_us = us ? us : 200; if (us && !ptx_core_stalled) ps_sleeps++;
+		nap_us(last_us);
+		if (!ptx_core_stalled && now_ms() - wait0_ms >= 2000) {   /* 2 s without reaching the frame end */
 			fprintf(stderr, "ptx: core not fetching (rd_idx %llu < %llu) - paused (the core's Pause button)? PiTrex Mode on?\n",
 			        (unsigned long long)st->rd_idx, (unsigned long long)target);
 			ptx_core_stalled = 1;
 		}
 	}
+	/* caught within one short poll: the core is at this frame end now, so learn (or refresh) the offset between the two stream times */
+	if (wait0_ms && last_us == 200 && !ptx_core_stalled) { uint64_t cc = st->core_cycles; if (cc) { cyc_off = (int64_t)target_cyc - (int64_t)cc; cyc_off_ok = 1; } }
 	ptx_in_ring_wait = 0;
 	if (ptx_core_stalled) {
 		fprintf(stderr, "ptx: core fetching again after %ld s\n", (now_ms() - wait0_ms) / 1000);
@@ -546,8 +581,8 @@ void ptx_audio_write(const int16_t *s, uint32_t n)
 int ptx_pace_report(char *buf, unsigned n)
 {
 	if (!base || !st || !ps_frames) return 0;       /* base: st points into the block, which m_close unmaps */
-	return snprintf(buf, n, "ptx pacing: %lu frame marks, producer ahead by more than %u frames at %lu (waited %lu naps), not ahead at %lu; commands unfetched at a mark: avg %.0f max %llu; ring-full naps %lu; core frames %u underruns %u",
-	                ps_frames, lead_f < 0 ? PTX_LEAD_FRAMES : (unsigned)lead_f, ps_waited, ps_naps, ps_behind, (double)ps_lead_sum / (double)ps_frames, (unsigned long long)ps_lead_max, ps_fullnaps, st->frames, st->underruns);
+	return snprintf(buf, n, "ptx pacing: %lu frame marks, producer ahead by more than %u frames at %lu (waited %lu naps, %lu of them predicted sleeps), not ahead at %lu; commands unfetched at a mark: avg %.0f max %llu; ring-full naps %lu; core frames %u underruns %u",
+	                ps_frames, lead_f < 0 ? PTX_LEAD_FRAMES : (unsigned)lead_f, ps_waited, ps_naps, ps_sleeps, ps_behind, (double)ps_lead_sum / (double)ps_frames, (unsigned long long)ps_lead_max, ps_fullnaps, st->frames, st->underruns);
 }
 
 #else  /* not Linux: keep the symbol so the harness links everywhere */
