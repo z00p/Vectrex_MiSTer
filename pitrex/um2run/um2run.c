@@ -2663,6 +2663,9 @@ static double g_settle = 0, g_cpu1_after = 0;   /* --settle S: wait S s before t
 static volatile pid_t g_c1_tid;
 static unsigned g_donate_us = 1000, g_donate_period_us = 2000;
 static volatile int g_boosted;
+/* Core 1 runs SCHED_OTHER on its own CPU (--cpu1-normal, set by c1_go_normal): Linux already shares that CPU with Main and Bluetooth, so
+ * core 1 gets no donation ticks (18 Nov 2026; until then it still slept --donate us in every 16 ms there, with all signals blocked). */
+static volatile int g_c1_is_normal;
 /* SIGURG attempts that did not deliver: pc in helper/loader code, PRIMASK set, other (IT block, depth); deliveries inside a stub */
 static void on_irq(int sig, siginfo_t *si, void *vuc) {      /* SIGURG: asynchronous interrupt delivery */
     ucontext_t *uc = vuc; (void)sig; (void)si;
@@ -2692,6 +2695,7 @@ static void on_donate(int sig, siginfo_t *si, void *vuc) {
         struct timespec ts = { 0, 2000000L }; nanosleep(&ts, NULL); return;
     }
     if (g_cpu1 >= 0 && g_c1_own_cpu && !tl_core) return;
+    if (tl_core && g_c1_is_normal) return;
     if (++n % 8 == 0) { struct timespec ts = { 0, (long)g_donate_us * 1000L }; nanosleep(&ts, NULL); }   /* a share for tasks below us (Main) */
     else sched_yield();                                                                              /* the other guest thread, if runnable */
 }
@@ -2702,7 +2706,7 @@ static void *fair_thread(void *arg) {
         static unsigned tk; tk++;
         (void)tk;
         if (!(g_cpu1 >= 0 && g_c1_own_cpu) || (ptx_core_stalled && !getenv("UM2_NOPARK"))) pthread_kill(g_th_core0, SIGUSR1);   /* otherwise on_donate would return at once (a stalled core: park it) */
-        if (__atomic_load_n(&g_have_core1, __ATOMIC_ACQUIRE)) pthread_kill(g_th_core1, SIGUSR1);
+        if (__atomic_load_n(&g_have_core1, __ATOMIC_ACQUIRE) && (!g_c1_is_normal || (ptx_core_stalled && !getenv("UM2_NOPARK")))) pthread_kill(g_th_core1, SIGUSR1);   /* normal scheduling: only the stalled-core park */
     }
     return NULL;
 }
@@ -3170,6 +3174,7 @@ static int g_c1_normal;
 static void c1_go_normal(pid_t tid) {
     struct sched_param sp = { 0 };
     if (sched_setscheduler(tid, SCHED_OTHER, &sp)) { perror("core1 SCHED_OTHER"); return; }
+    __atomic_store_n(&g_c1_is_normal, 1, __ATOMIC_RELEASE);
     if (setpriority(PRIO_PROCESS, (id_t)tid, -20)) perror("core1 nice");
     fprintf(stderr, "core 1: normal scheduling, nice -20\n");
 }
