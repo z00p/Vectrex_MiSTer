@@ -123,8 +123,7 @@ static uint8_t g_patch_orig_n[(IMG_TOP - IMG_BASE) / 2];
 static double now(void) { return (double)um2_clock_ns() * 1e-9; }
 /* CLOCK_MONOTONIC is seconds since boot: *1e6 exceeds 2^32 after 71.6 min of uptime and a double->uint32 cast then SATURATES on ARM (timer stuck at 0xFFFFFFFF). Go through uint64 and wrap. */
 static double up_add(void) { static double add = -1; if (add < 0) { const char *e = getenv("UM2_UPTIME_ADD"); add = e ? atof(e) : 0; } return add; }   /* test hook: pretend a long uptime */
-static uint32_t micros_ts(const struct timespec *t) { return (uint32_t)((uint64_t)((t->tv_sec + t->tv_nsec * 1e-9 + up_add()) * 1e6)); }
-static uint32_t micros(void) { return (uint32_t)((uint64_t)((double)um2_clock_ns() * 1e-3 + up_add() * 1e6)); }   /* micros_ts without the timespec (no 64-bit divide on this hot path) */
+static uint32_t micros(void) { return (uint32_t)((uint64_t)((double)um2_clock_ns() * 1e-3 + up_add() * 1e6)); }   /* no 64-bit divide on this hot path */
 
 static void logf_(const char *fmt, ...) {
     if (opt.quiet || g_logged >= opt.logmax) return;
@@ -443,8 +442,7 @@ static void *irq_thread(void *arg) {
     pthread_mutex_lock(&g_irq_m);
     for (;;) {
         uint32_t seq = __atomic_load_n(&g_irq_seq, __ATOMIC_SEQ_CST);         /* before the scan: a wake-up after this point makes the futex wait below return at once */
-        struct timespec ts; um2_mono(&ts);                                     /* the one clock read of this round: the sleep below ends `wait` after it (a few us early at most) */
-        uint32_t nowu = micros_ts(&ts), gen = g_tm_gen; int64_t wait = 20000; int fired = 0;
+        uint32_t nowu = micros(), gen = g_tm_gen; int64_t wait = 20000; int fired = 0;
         for (int t = 0; t < 2; t++) for (int n = 0; n < 4; n++) {
             if (!((g_tm[t].armed >> n) & 1)) continue;
             int32_t d = (int32_t)(g_tm[t].target[n] - nowu);
@@ -458,11 +456,13 @@ static void *irq_thread(void *arg) {
           if (stuck) { if (!kicked) irq_kick(); if (wait > 150) wait = 150; } }      /* just kicked: no second signal for the same tick (it found nothing pending in ~60 percent of the cases), look again in 150 us */
         if (g_tm_gen != gen) continue;          /* an alarm was armed while the lock was open: rescan before sleeping */
         g_sleep_until = nowu + (uint32_t)wait; g_irq_sleeping = 1;
-        long ns = ts.tv_nsec + (long)(wait * 1000) % 1000000000L; long sec = ts.tv_sec + (long)(wait * 1000) / 1000000000L; if (ns >= 1000000000L) { ns -= 1000000000L; sec++; }
-        struct { int32_t s, n; } kts = { (int32_t)sec, (int32_t)ns };         /* the kernel's 32-bit ARM timespec: CLOCK_MONOTONIC (seconds since boot) is far from 2038 */
         __atomic_store_n(&g_irq_waiting, 1, __ATOMIC_SEQ_CST);
         pthread_mutex_unlock(&g_irq_m);
-        syscall(SYS_futex, &g_irq_seq, FUTEX_WAIT_BITSET_PRIVATE, seq, &kts, NULL, FUTEX_BITSET_MATCH_ANY);
+        /* A relative sleep, measured on the cart crystal just before the call (18 Nov 2026): the kernel never sees a deadline made from our
+         * clock, so the two clocks cannot disagree about it (on 15 Nov 2026 they did, and this thread spun at 40 kHz). */
+        { int32_t left = (int32_t)(g_sleep_until - micros()); if (left < 0) left = 0;
+          struct { int32_t s, n; } kts = { left / 1000000, (left % 1000000) * 1000 };   /* the kernel's 32-bit ARM timespec */
+          syscall(SYS_futex, &g_irq_seq, FUTEX_WAIT_PRIVATE, seq, &kts, NULL, 0); }
         __atomic_store_n(&g_irq_waiting, 0, __ATOMIC_SEQ_CST);
         pthread_mutex_lock(&g_irq_m);
         g_irq_sleeping = 0; g_irq_wakes++;
@@ -2482,7 +2482,6 @@ static void heartbeat(pid_t child) {
         }
     }
     fputc('\n', stderr);
-    um2_clock_sync();
     if (!g_slice_ms) prof_slice();
 }
 

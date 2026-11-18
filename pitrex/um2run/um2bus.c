@@ -822,12 +822,12 @@ static void *aud_thread(void *arg) {
 		int act = 0; for (int ch = 0; ch < 16; ch++) act |= g_ad[ch].act;
 		if (g_aud_pred && g_aud_gen != gen) continue;                              /* a block was started while the lock was open: rescan */
 		if (!act && !any) {
-			struct timespec ts; um2_mono(&ts); g_aud_sleeping = 1;
-			if (g_aud_used) { g_aud_sleep_until = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec + 50000000ull; ts.tv_nsec += 50000000; if (ts.tv_nsec >= 1000000000L) { ts.tv_nsec -= 1000000000L; ts.tv_sec++; } pthread_cond_timedwait(&g_aud_c, &g_aud_m, &ts); }
+			struct timespec ts; g_aud_sleeping = 1;
+			if (g_aud_used) { g_aud_sleep_until = mono_ns() + 50000000ull; um2_kernel_deadline(&ts, 50000000ull); pthread_cond_timedwait(&g_aud_c, &g_aud_m, &ts); }
 			else { g_aud_sleep_until = ~0ull; pthread_cond_wait(&g_aud_c, &g_aud_m); }
 			g_aud_sleeping = 0; continue; }
 		if (dl < now + 100000) dl = now + 100000;
-		struct timespec ts = { (time_t)(dl / 1000000000ull), (long)(dl % 1000000000ull) };
+		struct timespec ts; { uint64_t t = mono_ns(); um2_kernel_deadline(&ts, dl > t ? dl - t : 0); }   /* the length on the cart crystal, the deadline on the kernel's clock (18 Nov 2026) */
 		g_aud_sleep_until = dl; g_aud_sleeping = 1;
 		pthread_cond_timedwait(&g_aud_c, &g_aud_m, &ts);
 		g_aud_sleeping = 0;

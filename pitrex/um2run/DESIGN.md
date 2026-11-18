@@ -74,9 +74,13 @@ commands, so the cartridge and the core never need to know about each other.
 - **Clock.** The MiSTer kernel has no vDSO, so every `clock_gettime` is a real system call
   (1.3 us on the A9), and the guest TIMER and DWT reads, the audio thread and the ring backend
   read the clock a lot. `um2clock.c` reads the Cortex-A9 global timer through `/dev/mem` instead
-  (63 ns), calibrated against CLOCK_MONOTONIC at start and slewed back onto it every heartbeat, so
-  it never goes backwards and deadlines made from it stay right. That saved about 4% of core 1's
-  CPU. Where the timer cannot be mapped (the PC) it falls back to `clock_gettime`;
+  (63 ns). That saved about 4% of core 1's CPU. It plays the cart's crystal: its rate is measured
+  against CLOCK_MONOTONIC once at start and never changed, and every time in um2run (TIMER,
+  alarms, audio pacing, intervals) comes from it. It drifts away from CLOCK_MONOTONIC (about
+  180 ppm here), so no absolute deadline made from it goes to the kernel: sleeps are relative
+  (the irq thread's futex wait), or the kernel's own deadline is formed just before the call
+  (`um2_kernel_deadline`, for `pthread_cond_timedwait`). Until 18 Nov 2026 it was slewed back
+  onto CLOCK_MONOTONIC every heartbeat instead, a second clock mixed into the first. Where the timer cannot be mapped (the PC) it falls back to `clock_gettime`;
   `UM2_SLOWCLOCK=1` forces that.
 
 ## Bus side
