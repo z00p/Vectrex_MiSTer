@@ -583,10 +583,13 @@ pause #(.RW(8), .GW(8), .BW(8), .CLK_HZ(24_000_000)) pause_inst
 (
 	.clk_sys      (clk_sys),
 	.reset        (machine_reset),
-	.user_button  (joystick_0[8] | joystick_1[8]),
+	// No Pause in PiTrex Mode (John's decision, 18 Nov 2026): the core can stop the console, but not a UVMC2 cartridge's own
+	// processor or a PiTrex program, so a Pause froze the picture while the game ran on unseen. A real Vectrex has no pause; a game's
+	// own pause still works. A Pause set before the takeover is cleared by the entry reset (ptx_mode_reset is part of machine_reset).
+	.user_button  ((joystick_0[8] | joystick_1[8]) & ~ptx_active),
 	.pause_request(1'b0),
 	.options      ({~status[ST_DIM], status[ST_OSD_PAUSE]}),
-	.OSD_STATUS   (OSD_STATUS),
+	.OSD_STATUS   (OSD_STATUS & ~ptx_active),
 	.r            (vfb_r),
 	.g            (vfb_g),
 	.b            (vfb_b),
