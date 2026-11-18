@@ -26,8 +26,8 @@
 /* PTX_SIMCORE=1 (PC test hook, 16 Nov 2026): model the core's consumption of the stream so the PC run is paced like the
  * MiSTer.  The simulated core plays stream cycles at 1.5 MHz of wall time, never past what has been handed over (an empty
  * FIFO stalls it, exact resume), and not at all inside PTX_SIMPAUSE="start_s:len_s[,start_s:len_s]" (the core's Pause
- * button).  ptx_frame() waits like m_frame: at most PTX_LEAD (default 1) frames ahead, 200 us naps, 2 ms once stalled,
- * ptx_core_stalled set after 10000 naps.  status.core_cycles = cycles the simulated core has run. */
+ * button).  ptx_frame() waits like m_wait: at most PTX_LEAD (default 1) frames ahead, a predicted sleep, then 200 us polls
+ * backing off to 2 ms while the core does not move.  status.core_cycles = cycles the simulated core has run. */
 static int sim_on = -1, sim_lead = 1, sim_np; static double sim_ps[4], sim_pl[4], sim_t0, sim_last, sim_pos, sim_prod;
 static uint64_t sim_fend[8]; static uint32_t sim_n;
 static double sim_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec * 1e-9; }
@@ -117,18 +117,20 @@ static void file_frame(uint64_t stream_cycles)
 	}
 }
 
-static void file_wait(void)      /* the simulated core's pacing wait, apart from file_frame as in the MiSTer backend */
+static void file_wait(void)      /* the simulated core's pacing wait, apart from file_frame and shaped like m_wait (ptx_backend_mister.c) */
 {
 	if (!sim_pend) return;
 	sim_pend = 0;
-	double target = sim_target, w0 = sim_now(); int naps = 0;
-	ptx_in_ring_wait = 1;
+	double target = sim_target, w0 = sim_now(), seen = -1, moved = w0; long poll_us = 200; int told = 0;
 	for (sim_adv(); sim_pos < target; sim_adv()) {
-		struct timespec ts = { 0, (ptx_core_stalled && !getenv("UM2_NOPARK") ? 2000 : 200) * 1000L }; nanosleep(&ts, NULL);
-		if (++naps == 10000) { fprintf(stderr, "ptx: (sim) core not fetching\n"); ptx_core_stalled = 1; }
+		double pos; pthread_mutex_lock(&sim_m); pos = sim_pos; pthread_mutex_unlock(&sim_m);
+		if (pos != seen) { seen = pos; poll_us = 200; moved = sim_now(); } else if (poll_us < 2000) poll_us *= 2;
+		long us = (long)((target - pos) / 1.5) - 500;    /* the predicted sleep, as m_wait's (the simulation knows its position exactly) */
+		us = us < 200 ? poll_us : us > 20000 ? 20000 : us;
+		struct timespec ts = { 0, us * 1000L }; nanosleep(&ts, NULL);
+		if (!told && sim_now() - moved >= 2.0) { fprintf(stderr, "ptx: (sim) the core has fetched nothing for 2 s\n"); told = 1; }
 	}
-	ptx_in_ring_wait = 0;
-	if (ptx_core_stalled) { fprintf(stderr, "ptx: (sim) core fetching again after %.1f s\n", sim_now() - w0); ptx_core_stalled = 0; }
+	if (told) fprintf(stderr, "ptx: (sim) the core is fetching again after %.1f s\n", sim_now() - w0);
 }
 
 static void file_input(ptx_input_t *o)

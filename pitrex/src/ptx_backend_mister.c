@@ -68,8 +68,6 @@ typedef struct {
 } core_status_t;
 
 volatile int ptx_boot_phase;   /* see ptx.h; defined for every platform */
-volatile int ptx_core_stalled;   /* ditto */
-__thread int ptx_in_ring_wait;   /* ditto: set in the thread that is waiting in m_frame for the core */
 
 static int memfd = -1;
 static volatile uint8_t *base;
@@ -453,37 +451,43 @@ static long wait_sleep_us(uint64_t target_cyc)
 /* The pacing wait for the last m_frame, apart from it (18 Nov 2026): um2run publishes the frame under its bus lock and
  * waits here only after releasing it, as core 1 waits on the PIO on a real cart while core 0, the DMA and the timer go on.
  * Holding the lock across this wait blocked core 0's next DMA access for the whole wait, so in a Pause its timer
- * interrupts stopped and were replayed afterwards. */
+ * interrupts stopped and were replayed afterwards.
+ *
+ * Nothing here decides that the core is paused (18 Nov 2026, review A10).  The core's Pause button stops the machine, so neither rd_idx nor
+ * core_cycles moves: the prediction then stays the same and the wait sleeps it in chunks of at most 20 ms until the core plays again, and
+ * without a prediction the polls back off from 200 us to 2 ms while nothing moves, and go back to 200 us when anything does.  This thread
+ * just sleeps; the rest of the program runs on, as the cart's other core does on a stopped console.  (Until then a "stalled" flag, set after
+ * 2 s, made the wait nap 2 ms and parked the other guest threads in 2 ms naps: that stopped the game's timer interrupts again on the MiSTer.) */
 static void m_wait(void)
 {
 	if (!pend) return;
 	pend = 0;
 	uint64_t target = pend_target, wr = pend_wr, target_cyc = pend_cyc;
-	long wait0_ms = 0, last_us = 0;
+	long wait0_ms = 0, last_us = 0, poll_us = 200, moved_ms;
+	uint64_t seen_rd = 0, seen_cc = 0; int told = 0;
 	{ uint64_t rd = st->rd_idx; uint64_t lead = wr > rd ? wr - rd : 0;
 	  ps_frames++; ps_lead_sum += lead; if (lead > ps_lead_max) ps_lead_max = lead;
 	  if (rd < target) { ps_waited++; wait0_ms = now_ms(); } else ps_behind++; }
-	ptx_in_ring_wait = 1;
-	while (st->rd_idx < target) {
+	moved_ms = wait0_ms;
+	for (;;) {
+		uint64_t rd = st->rd_idx, cc = st->core_cycles;
+		if (rd >= target) break;
+		if (rd != seen_rd || cc != seen_cc) { seen_rd = rd; seen_cc = cc; poll_us = 200; moved_ms = now_ms(); }
+		else if (poll_us < 2000) poll_us *= 2;
 		ps_naps++;
-		/* Once stalled (usually the core's Pause button: it stops the machine, and the player reads the stream only on its E edges)
-		 * nap 2 ms: the wait can last minutes, and a 2 ms nap still notices the resume within a frame. */
-		long us = ptx_core_stalled ? 2000 : wait_sleep_us(target_cyc);
-		last_us = us ? us : 200; if (us && !ptx_core_stalled) ps_sleeps++;
+		long us = wait_sleep_us(target_cyc);
+		if (us) ps_sleeps++;
+		last_us = us ? us : poll_us;
 		nap_us(last_us);
-		if (!ptx_core_stalled && now_ms() - wait0_ms >= 2000) {   /* 2 s without reaching the frame end */
-			fprintf(stderr, "ptx: core not fetching (rd_idx %llu < %llu) - paused (the core's Pause button)? PiTrex Mode on?\n",
-			        (unsigned long long)st->rd_idx, (unsigned long long)target);
-			ptx_core_stalled = 1;
+		if (!told && now_ms() - moved_ms >= 2000) {   /* a log line only: nothing changes behaviour on it */
+			fprintf(stderr, "ptx: the core has fetched nothing for 2 s (rd_idx %llu < %llu) - its Pause button? PiTrex Mode off?\n",
+			        (unsigned long long)rd, (unsigned long long)target);
+			told = 1;
 		}
 	}
 	/* caught within one short poll: the core is at this frame end now, so learn (or refresh) the offset between the two stream times */
-	if (wait0_ms && last_us == 200 && !ptx_core_stalled) { uint64_t cc = st->core_cycles; if (cc) { cyc_off = (int64_t)target_cyc - (int64_t)cc; cyc_off_ok = 1; } }
-	ptx_in_ring_wait = 0;
-	if (ptx_core_stalled) {
-		fprintf(stderr, "ptx: core fetching again after %ld s\n", (now_ms() - wait0_ms) / 1000);
-		ptx_core_stalled = 0;
-	}
+	if (wait0_ms && last_us == 200) { uint64_t cc = st->core_cycles; if (cc) { cyc_off = (int64_t)target_cyc - (int64_t)cc; cyc_off_ok = 1; } }
+	if (told) fprintf(stderr, "ptx: the core is fetching again after %ld s\n", (now_ms() - wait0_ms) / 1000);
 }
 
 static void m_input(ptx_input_t *o)

@@ -2621,7 +2621,8 @@ static void install_seccomp(void) {
 static volatile int g_ptx_up, g_guest_seen;   /* g_guest_seen: the image itself has produced a bus event (ptx may be up earlier: loading indicator) */
 static const char *g_sd_path;
 /* --bus-timeout S / --frame-timeout S: exit if the bus stays unused / no frame comes for this long.  Test runs only, off by default (18 Nov 2026):
- * a real cart may draw nothing for as long as it likes, so a missing frame is no proof of a hang (it was 60 s / 30 s until then). */
+ * a real cart may draw nothing for as long as it likes, so a missing frame is no proof of a hang (it was 60 s / 30 s until then).  A Pause of
+ * the core counts as no frames too: don't use --frame-timeout with one. */
 static double g_last_frame_t, g_bus_timeout = 0, g_frame_timeout = 0;
 static void on_alarm(int sig, siginfo_t *si, void *vuc) {
     ucontext_t *uc = vuc; (void)sig; (void)si;
@@ -2635,7 +2636,6 @@ static void on_alarm(int sig, siginfo_t *si, void *vuc) {
     if (now() - g_t0 > opt.secs) { if (!exit_claim(0)) return; printf("-- time limit reached\n"); print_summary(1); fflush(stdout); bus_finish(); _exit(0); }
     if (opt.bus && g_bus_timeout > 0 && !g_guest_seen && now() - g_t0 > g_bus_timeout) {
         fprintf(stderr, "um2run: no bus event within %.0f s, exiting (--bus-timeout)\n", g_bus_timeout); fflush(stdout); _exit(4); }
-    if (ptx_core_stalled) g_last_frame_t = now();     /* the core is not fetching (paused?): nothing the image did, so wait for it, however long */
     if (opt.bus && g_frame_timeout > 0 && g_ptx_up && g_last_frame_t && now() - g_last_frame_t > g_frame_timeout) {
         if (!exit_claim(5)) return;
         fprintf(stderr, "um2run: no frame for %.0f s, exiting\n", g_frame_timeout);
@@ -2684,15 +2684,8 @@ static void on_donate(int sig, siginfo_t *si, void *vuc) {
     static __thread unsigned n;
     /* core 0 has CPU 0 to itself once core 1 sits on its own CPU (--cpu1): only core 1 shares its CPU with Main.  BEFORE the move (--cpu1-after)
      * both guests share CPU 0 and core 0 must donate too: on 27 Oct 2026 a natively spinning core 0 that never yielded starved core 1 (0 ms CPU) until the move. */
-    /* The core has stopped reading the stream (paused, 14 Nov 2026: Pac-Man waited 15 min at a full CPU).  The thread in the ring wait already naps 2 ms
-     * and is the only one that can see the resume and clear ptx_core_stalled: never hold it here (the first version parked core 1 in a loop of naps,
-     * and since the next tick is already pending when the handler returns, its own code never ran again: frozen after the unpause).  Any other guest
-     * thread is spinning on guest work that cannot progress: one 2 ms nap per tick parks it, and the tick after the resume returns at once. */
-    static int nopark = -1; if (nopark < 0) nopark = getenv("UM2_NOPARK") != NULL;   /* PC A/B test hook (16 Nov 2026): the 17e50dc/b9dce53 parking off */
-    if (ptx_core_stalled && !nopark) {
-        if (ptx_in_ring_wait) return;
-        struct timespec ts = { 0, 2000000L }; nanosleep(&ts, NULL); return;
-    }
+    /* No parking while the core is paused (removed 18 Nov 2026, review A10; added 14 Nov in 17e50dc/b9dce53): the other guest thread runs on, as the
+     * cart's other core does on a stopped console.  The parking was a guessed state ("stalled" after 2 s) that stopped the game's timer interrupts again. */
     if (g_cpu1 >= 0 && g_c1_own_cpu && !tl_core) return;
     if (tl_core && g_c1_is_normal) return;
     if (++n % 8 == 0) { struct timespec ts = { 0, (long)g_donate_us * 1000L }; nanosleep(&ts, NULL); }   /* a share for tasks below us (Main) */
@@ -2704,8 +2697,8 @@ static void *fair_thread(void *arg) {
         struct timespec ts = { 0, (long)g_donate_period_us * 1000L }; nanosleep(&ts, NULL);
         static unsigned tk; tk++;
         (void)tk;
-        if (!(g_cpu1 >= 0 && g_c1_own_cpu) || (ptx_core_stalled && !getenv("UM2_NOPARK"))) pthread_kill(g_th_core0, SIGUSR1);   /* otherwise on_donate would return at once (a stalled core: park it) */
-        if (__atomic_load_n(&g_have_core1, __ATOMIC_ACQUIRE) && (!g_c1_is_normal || (ptx_core_stalled && !getenv("UM2_NOPARK")))) pthread_kill(g_th_core1, SIGUSR1);   /* normal scheduling: only the stalled-core park */
+        if (!(g_cpu1 >= 0 && g_c1_own_cpu)) pthread_kill(g_th_core0, SIGUSR1);                                       /* otherwise on_donate would return at once */
+        if (__atomic_load_n(&g_have_core1, __ATOMIC_ACQUIRE) && !g_c1_is_normal) pthread_kill(g_th_core1, SIGUSR1);   /* normal scheduling: Linux shares the CPU */
     }
     return NULL;
 }
@@ -2750,8 +2743,8 @@ static void sim_report(void) {
     struct rusage ru; getrusage(RUSAGE_SELF, &ru); double cp = ru.ru_utime.tv_sec + ru.ru_utime.tv_usec * 1e-6 + ru.ru_stime.tv_sec + ru.ru_stime.tv_usec * 1e-6;
     double c0 = thr_cpu(g_th_core0), c1 = g_have_core1 ? thr_cpu(g_th_core1) : 0; ptx_status_t st = {0}; ptx_get_status(&st);
     unsigned long i0 = g_irq_cnt[0], tr = g_tmr_rd, mk = g_marks, al = g_al_inline, vc = (unsigned long)ru.ru_nvcsw;
-    fprintf(stderr, "sim t=%.0f frames +%lu irq0 +%lu inline-alarms +%lu timer-reads +%lu cpu core0 %.0f core1 %.0f proc %.0f ms, volcs +%lu, core played %.1f%% stalled %d alarm lag %d ms\n",
-            t - t0, mk - mp, i0 - ip, al - alp, tr - tp, (c0 - c0p) * 1e3, (c1 - c1p) * 1e3, (cp - cpp) * 1e3, vc - vp, (double)(st.core_cycles - ccp) / (t - tl) / 15000.0, ptx_core_stalled,
+    fprintf(stderr, "sim t=%.0f frames +%lu irq0 +%lu inline-alarms +%lu timer-reads +%lu cpu core0 %.0f core1 %.0f proc %.0f ms, volcs +%lu, core played %.1f%% alarm lag %d ms\n",
+            t - t0, mk - mp, i0 - ip, al - alp, tr - tp, (c0 - c0p) * 1e3, (c1 - c1p) * 1e3, (cp - cpp) * 1e3, vc - vp, (double)(st.core_cycles - ccp) / (t - tl) / 15000.0,
             g_irq_cnt[0] ? -(int32_t)(g_tm[0].target[0] - micros()) / 1000 : 0);
     tl = t; c0p = c0; c1p = c1; cpp = cp; ip = i0; tp = tr; mp = mk; alp = al; vp = vc; ccp = st.core_cycles;
 }
