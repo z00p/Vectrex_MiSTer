@@ -2762,6 +2762,10 @@ static void *hb_thread(void *arg) {
 static pthread_mutex_t g_up_m = PTHREAD_MUTEX_INITIALIZER;   /* the guest and the loading indicator can both be first */
 static void ptx_up(void) {
     if (g_ptx_up) return;
+    /* An exit is under way: bus_finish has shut the sink or is about to, and another guest thread is still producing. Starting the
+     * sink again re-opened PTX_STREAM with "wb" (truncated: 2 of 3 runs on the PC, 18 Nov 2026) and on the MiSTer would redo the
+     * takeover. Such a thread stops here, like the other exit losers; the exiting thread ends the process. */
+    if (g_exit_claimed) for (;;) pause();
     pthread_mutex_lock(&g_up_m);
     if (!g_ptx_up) {
         if (opt.bus_verbose) fprintf(stderr, "ptx_up: init\n");
