@@ -2625,6 +2625,11 @@ static const char *g_sd_path;
  * a real cart may draw nothing for as long as it likes, so a missing frame is no proof of a hang (it was 60 s / 30 s until then).  A Pause of
  * the core counts as no frames too: don't use --frame-timeout with one. */
 static double g_last_frame_t, g_bus_timeout = 0, g_frame_timeout = 0;
+/* SIGTERM / SIGINT (19 Nov 2026): pitrexd stops a game with SIGTERM when the player picks another one (SIGKILL ~2 s later), so a normal
+ * play session left no summary (fps, audio, pacing). The handler only notes the signal; the next tick (on_alarm, <= 100 ms) leaves by
+ * the same path as the time limit, then exits 128 + the signal, as the default action would (mister_run.sh treats 143 as a normal stop). */
+static volatile sig_atomic_t g_term_sig;
+static void on_term(int sig) { g_term_sig = sig; }
 static void on_alarm(int sig, siginfo_t *si, void *vuc) {
     ucontext_t *uc = vuc; (void)sig; (void)si;
     if (g_exit_claimed) { if (g_exit_t > 0 && now() - g_exit_t > 3) _exit(g_exit_rc); return; }
@@ -2635,6 +2640,7 @@ static void on_alarm(int sig, siginfo_t *si, void *vuc) {
       if (np < 0) { np = 0; const char *e = getenv("UM2_POKE"); while (e && *e && np < 8) { char *q; pa[np] = (uint32_t)strtoul(e, &q, 16); if (*q == ':') q++; pv[np] = (uint32_t)strtoul(q, &q, 16); if (*q == ':') q++; pt[np] = strtod(q, &q); np++; if (*q == ',') q++; e = q; } }
       for (int i = 0; i < np; i++) if (!done[i] && now() - g_t0 >= pt[i] && pa[i] >= IMG_BASE && pa[i] < IMG_TOP - 4) { done[i] = 1; *(volatile uint32_t *)(uintptr_t)pa[i] = pv[i]; fprintf(stderr, "um2run: poked %08x = %08x\n", pa[i], pv[i]); } }
     if (now() - g_t0 > opt.secs) { if (!exit_claim(0)) return; printf("-- time limit reached\n"); print_summary(1); fflush(stdout); bus_finish(); _exit(0); }
+    if (g_term_sig) { int s = g_term_sig; if (!exit_claim(128 + s)) return; printf("-- stopped by signal %d\n", s); print_summary(1); fflush(stdout); bus_finish(); _exit(128 + s); }
     if (opt.bus && g_bus_timeout > 0 && !g_guest_seen && now() - g_t0 > g_bus_timeout) {
         fprintf(stderr, "um2run: no bus event within %.0f s, exiting (--bus-timeout)\n", g_bus_timeout); fflush(stdout); _exit(4); }
     if (opt.bus && g_frame_timeout > 0 && g_ptx_up && g_last_frame_t && now() - g_last_frame_t > g_frame_timeout) {
@@ -3567,6 +3573,8 @@ static int run_inproc(void) {
     sa.sa_sigaction = on_sys; sigaction(SIGSYS, &sa, NULL);
 #endif
     sa.sa_sigaction = on_alarm; sigaction(SIGALRM, &sa, NULL);
+    { struct sigaction st; memset(&st, 0, sizeof st); st.sa_handler = on_term; sigemptyset(&st.sa_mask); st.sa_flags = SA_RESTART;
+      sigaction(SIGTERM, &st, NULL); sigaction(SIGINT, &st, NULL); }
     sa.sa_sigaction = on_donate; sigaction(SIGUSR1, &sa, NULL);
     if (opt.bus) fair_start();
     sa.sa_sigaction = on_quiesce; sigaction(SIGUSR2, &sa, NULL);
