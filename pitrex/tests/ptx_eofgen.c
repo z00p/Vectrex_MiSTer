@@ -75,8 +75,16 @@ static void adv(uint32_t n) { now += n; }
 
 static void frame_cmd(int eof)          /* takes no bus time */
 {
+	/* The player ignores a FRAME's delta (pitrex_player.sv: OP_FRAME only counts; the PiTrex library always sends delta 0), so
+	 * idle time before the marker goes into its own WAIT. A delta here played as 0 on the core: frames of 831 cycles, not 30000. */
 	flush_gap();
-	uint64_t w = ptx_cmd(PTX_OP_FRAME, (uint32_t)(now - emit_end), 0, 0);
+	if (now > emit_end) {
+		char s[32]; snprintf(s, sizeof s, "WAIT %u", (unsigned)(now - emit_end));
+		uint64_t at = now; now = emit_end;
+		put(ptx_cmd(PTX_OP_WAIT, (uint32_t)(at - emit_end), 0, 0), s);
+		now = at; emit_end = now;
+	}
+	uint64_t w = ptx_cmd(PTX_OP_FRAME, 0, 0, 0);
 	if (eof) w |= PTX_FRAME_FLAG_EOF;
 	put(w, eof ? "FRAME +EOF flag" : "FRAME");
 	emit_end = now;
@@ -125,7 +133,7 @@ int main(int argc, char **argv)
 	snprintf(p, sizeof p, "%s.txt", argv[2]); ft = fopen(p, "w");
 	if (!fb || !ft) { perror("open"); return 1; }
 	fprintf(ft, "# ptx_eofgen %s: %u frames of %u E cycles; columns: stream cycle at the command, raw word, meaning\n", argv[1], frames, len);
-	fprintf(ft, "# WRITE: the delta (bits 55..40) idle E periods come first, then the write takes 1 E period. FRAME takes none. WAIT n: n idle E periods.\n");
+	fprintf(ft, "# WRITE: the delta (bits 55..40) idle E periods come first, then the write takes 1 E period. FRAME: delta always 0, takes no time. WAIT n: n idle E periods.\n");
 
 	put(ptx_cmd(PTX_OP_RESET_SYNC, 0, 0, 0), "RESET_SYNC");
 	wr(DDRA, 0xFF); wr(DDRB, 0x9F); wr(ORB, 0x01);
