@@ -147,6 +147,22 @@ commands, so the cartridge and the core never need to know about each other.
   deadlock it (`UM2_SPIMUTEX=1`: a pthread mutex). `UM2_SRFAST=1` (experimental, off by
   default: no gain measured beyond the noise) sends SR loads at SPI0 sites straight to a
   frameless leaf (`um2_srfast`) without the thunk's stack switch.
+- **Bit-banged SD card (19 Nov 2026; `UM2_NOSDBB=1`: off).** Images built with the SDK's old
+  transport (`uvm2_sd.c` with `-DUVM2_SD_BITBANG`: Contrex, Glint, Jukebox 2 and 3, QUARTER,
+  Ship It, Summit in the 16 Nov survey) drive the card through SIO GPIO32..47 with SPI0 off:
+  per bit, MOSI to `GPIO_HI_OUT_SET` / `_CLR`, a delay, SCK set, MISO from `GPIO_HI_IN`, a
+  delay, SCK clear. The SDK documents that at about 300 KB/s on the cart; with each of the 32
+  accesses a byte going through a stub or a trap, um2run managed about 45 KB/s, so Contrex's
+  load frames took 45 to 50 ms and its cart audio refills fell behind the SDK's 50 ms lead
+  (the rough sound for the first seconds). Compiled, the byte routine `xfer()` is the same
+  112 bytes in every such image (one or two copies). At load its entry becomes `b.w stub`;
+  the stub calls `um2bus_sdbb_xfer` through the full thunk, which makes the same 32 accesses
+  in the same order on the same model under one bus lock and returns the byte. The card sees
+  the same bytes (the `um2sd` MOSI / MISO hashes at exit are equal with and without, checked
+  on Contrex); only the delay loops, which just burn time, are not run. Contrex on the MiSTer,
+  3 runs each way: the image takes the ring at 1.7 s instead of 2.4 s, its load frames are at
+  most about 35 ms apart instead of about 100, and the cart audio has no waits and no stale
+  frames during the load (without: 9 to 88 waits and 200 to 1,800 stale frames a second).
 - **PSRAM.** Images that stage a ROM set in PSRAM get 8 MB of RAM at 0x11000000 (and the
   uncached alias at 0x15000000, the same memory). The QMI direct-mode ID handshake that
   proves the PSRAM is present is modelled.

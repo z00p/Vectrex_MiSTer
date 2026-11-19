@@ -1082,6 +1082,24 @@ static void sio_gpio_set(uint32_t off, uint32_t v) {
 	g_rd_active = g_rd_active && (off == 0x38 || off == 0x40);
 }
 
+/* The SD card fast path for bit-banging images (19 Nov 2026; um2run.c sdbb_install): the SDK's old bit-banged byte exchange (uvm2_sd.c xfer(),
+ * -DUVM2_SD_BITBANG) as one call.  The same 32 accesses in the same order as the image's loop: per bit, MOSI to HI_OUT_SET / _CLR (value 8), SCK to
+ * HI_OUT_SET (4), MISO from GPIO_HI_IN bit 4, SCK to HI_OUT_CLR.  Same model, same card bytes; one bus lock per byte instead of one trap per access.
+ * The image's two delay loops (tick()) are skipped: they only burn time, which our ARM never charges against the cart anyway. */
+uint8_t um2bus_sdbb_xfer(uint8_t out) {
+	uint8_t in = 0;
+	BUS_LOCK_T(0);
+	for (int i = 7; i >= 0; i--) {
+		uint32_t mo = ((out >> i) & 1) ? 0x1Cu : 0x24u;
+		cap(CAP_SIO_ST, 4, 0xD0000000u + mo, 8); sio_gpio_set(mo, 8);
+		cap(CAP_SIO_ST, 4, 0xD000001Cu, 4); sio_gpio_set(0x1C, 4);
+		in = (uint8_t)(in << 1 | (g_bb.miso & 1));
+		cap(CAP_SIO_ST, 4, 0xD0000024u, 4); sio_gpio_set(0x24, 4);
+	}
+	BUS_UNLOCK_T(0);
+	return in;
+}
+
 static int sio_store(uint32_t off, int size, uint32_t v, int core) {
 	(void)size;
 	if (off >= 0x10 && off <= 0x4C) { cap(CAP_SIO_ST, size, 0xD0000000u + off, v); sio_gpio_set(off, v); return 1; }

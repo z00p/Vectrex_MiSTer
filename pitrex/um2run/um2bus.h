@@ -50,6 +50,7 @@ int  um2bus_load(uint32_t addr, int size, uint32_t *val, int core);
 uint32_t um2bus_spi_load(uint32_t addr);
 void     um2bus_spi_dr_store(uint32_t val);
 uint32_t um2bus_spi_sr(void);
+uint8_t  um2bus_sdbb_xfer(uint8_t out);   /* one bit-banged SD byte (SIO GPIO32..47), exactly the image's 32 accesses (bus lock taken here) */
 void     um2bus_ring_mark(void);     /* the image took the ring after a loading indicator: um2bus_stats adds an fps line from here */        /* SPI0 SR (lock free) */
 int      um2bus_spi_lean_ok(void);   /* the two above run without VFP use (no UM2_BUSSTAT timing): the card stubs may skip the VFP save */
 /* list pickup: n words for PIO0 TXF0, taken as if the cart's DMA or CPU store had delivered them (bus lock taken here) */

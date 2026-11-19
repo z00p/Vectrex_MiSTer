@@ -89,7 +89,7 @@ static struct {
     unsigned frame_cycles;
 } opt = { 0, 1, 0, 0, 0, 0, 0, 200000, 20000, 20.0, 30, 400, 0, NULL, 0, 0, NULL, 30000 };
 static void bus_finish(void);
-static void pick_report(void); static void spin_report(void);
+static void pick_report(void); static void spin_report(void); static void sdbb_report(void);
 static void rh_dump(void);
 uint64_t g_trap_ns, g_trap_n;   /* time spent inside the trap handler body (not the kernel's signal path) and count, for the profile line */
 static __thread int tl_core;          /* 0 = main thread (core 0), 1 = the core-1 thread */
@@ -3072,7 +3072,7 @@ static void bus_finish(void) {
     if (g_nsvcp) { fprintf(stderr, "um2run: %u SVC veneers became stubs; native SVC entries (call number:count):", g_nsvcp); for (int q = 0; q < 256; q++) if (g_svc_nat[q]) fprintf(stderr, " %d:%lu", q, g_svc_nat[q]); fputc(10, stderr); }
     lb_dump(stderr); um_dump(stderr);
     thr_dump(stderr);
-    um2bus_stats(stderr); um2sd_stats(); pick_report(); spin_report();
+    um2bus_stats(stderr); um2sd_stats(); pick_report(); spin_report(); sdbb_report();
     if (getenv("UM2_HASHMEM") && !opt.no_psram) {      /* test hook: FNV-1a of the guest's PSRAM (where the images stage what they read from the SD card): what the guest really received */
         uint64_t h = 0xcbf29ce484222325ull; const uint32_t *p = (const uint32_t *)(uintptr_t)PSRAM_BASE;
         for (uint32_t i = 0; i < PSRAM_SIZE / 4; i++) h = (h ^ p[i]) * 0x100000001b3ull;
@@ -3582,6 +3582,53 @@ static void spin_report(void) {
     static int done; if (done++ || !g_sw_ctr) return;
     fprintf(stderr, "um2run: spin wait: %u naps of %u us in the frame-handshake loop at %08x\n", *g_sw_ctr, g_sw_us, g_sw_site);
 }
+/* ================================================================== SD card fast path for bit-banging images (19 Nov 2026; on by default, UM2_NOSDBB=1: off)
+ * Images built with the SDK's old SD transport (uvm2_sd.c with -DUVM2_SD_BITBANG: Contrex, Glint, Jukebox 2/3, QUARTER, Ship It, Summit in the 16 Nov
+ * survey) exchange each card byte in xfer(): 8 x (MOSI to SIO HI_OUT_SET/CLR, delay, SCK set, read GPIO_HI_IN, delay, SCK clear).  On the cart that is
+ * ~300 KB/s (SDK docs); here every one of the 32 accesses went through a stub helper or a trap, about 7x slower than the cart, so Contrex's load frames ran
+ * 45-50 ms and its audio refills fell behind the SDK's 50 ms lead (research/experiments_audio_spin_2026-11-19.md).  Compiled, xfer() is always the same
+ * 112 bytes (one or two copies per image, all PC-relative; the word after it is the address of s_slow, the delay switch).  Its entry becomes `b.w stub`;
+ * the stub calls um2_sdbb_xfer through um2_hthunk, which makes the same 32 accesses on the same model (um2bus_sdbb_xfer) and returns the byte.  What the image
+ * can see is unchanged (card bytes, pin state, return value; r1-r3, r12 are scratch in the AAPCS and xfer() itself clobbers them) except the time: the
+ * delay loops are not run.  The um2sd mosi / miso hashes at exit must be equal with and without (UM2_NOSDBB=1).  Installed at load, before core 1 exists. */
+static const uint8_t g_sdbb_tpl[112] = {
+    0x70,0xb5,0x4f,0xf0,0x07,0x0c,0x4f,0xf0,0x00,0x0e,0x4f,0xf0,0x50,0x41,0x08,0x26,0x04,0x24,0x17,0x4d,0x82,0xb0,0x40,0xfa,0x0c,0xf3,0xdb,0x07,
+    0x4c,0xbf,0xce,0x61,0x4e,0x62,0x2b,0x68,0x00,0x2b,0x0c,0xbf,0x01,0x23,0x18,0x23,0x01,0x93,0x01,0x9b,0x5a,0x1e,0x01,0x92,0x00,0x2b,0xfa,0xd1,
+    0xcc,0x61,0x8b,0x68,0x2a,0x68,0xc3,0xf3,0x00,0x13,0x00,0x2a,0x0c,0xbf,0x01,0x22,0x18,0x22,0x43,0xea,0x4e,0x03,0x5f,0xfa,0x83,0xfe,0x00,0x92,
+    0x00,0x9b,0x5a,0x1e,0x00,0x92,0x00,0x2b,0xfa,0xd1,0x0c,0xf1,0xff,0x3c,0xbc,0xf1,0xff,0x3f,0x4c,0x62,0xd5,0xd1,0x70,0x46,0x02,0xb0,0x70,0xbd };
+static unsigned long g_sdbb_n; static int g_sdbb_sites; static uint32_t g_sdbb_at[4];
+uint32_t um2_sdbb_xfer(uint32_t out) { tl_act += 32; tl_n_ms += 24; tl_n_ml += 8; g_sdbb_n++; return um2bus_sdbb_xfer((uint8_t)out); }   /* core 0's card loop only */
+static void sdbb_install(void) {
+    if (getenv("UM2_NOSDBB") || !g_stub_ready) return;
+    uint32_t words; memcpy(&words, g_file + 16, 4); uint32_t end = IMG_BASE + words * 4;
+    uint32_t at[4]; int n = 0;
+    for (uint32_t a = IMG_BASE + 32; a + sizeof g_sdbb_tpl <= end; a += 2)
+        if (g_rd16(a) == 0xB570 && !memcmp((const void *)(uintptr_t)a, g_sdbb_tpl, sizeof g_sdbb_tpl)) { if (n < 4) at[n] = a; n++; }
+    if (!n) return;
+    if (n > 4) { fprintf(stderr, "um2run: SD bit-bang fast path: %d copies of xfer(), nothing patched\n", n); return; }
+    for (int i = 0; i < n; i++) {
+        uint32_t site = at[i], base;
+        if (target_hits(site, site + 2)) { fprintf(stderr, "um2run: SD bit-bang fast path: %08x + 2 is a branch target, not patched\n", site); continue; }
+        int pb = patch_begin(site, 4, 24, &base); if (pb <= 0) { fprintf(stderr, "um2run: SD bit-bang fast path: patch of %08x refused (%d)\n", site, pb); continue; }
+        uint32_t S = (base + 3) & ~3u;
+        uint16_t k[6] = { 0xB510,       /*  0: push {r4, lr}  (8-byte frame, as the AAPCS wants at a call)      */
+                          0x4B02,       /*  2: ldr r3, [pc, #8]   = um2_sdbb_xfer (the helper)                 */
+                          0x4A02,       /*  4: ldr r2, [pc, #8]   = um2_hthunk (VFP save, host stack)          */
+                          0x4790,       /*  6: blx r2             r0 = out byte in, card byte out              */
+                          0xBD10,       /*  8: pop {r4, pc}       back to xfer()'s caller                      */
+                          0xBF00 };     /* 10: nop                                                             */
+        uint32_t lit[2] = { (uint32_t)(uintptr_t)um2_sdbb_xfer, (uint32_t)(uintptr_t)um2_hthunk };
+        memcpy((void *)(uintptr_t)S, k, sizeof k); memcpy((void *)(uintptr_t)(S + 12), lit, sizeof lit);
+        __builtin___clear_cache((char *)(uintptr_t)S, (char *)(uintptr_t)(S + 20));
+        patch_end(site, 4, S);
+        g_sdbb_at[g_sdbb_sites++] = site;
+    }
+    for (int i = 0; i < g_sdbb_sites; i++) fprintf(stderr, "um2run: SD bit-bang fast path: xfer() at %08x -> one call per card byte (UM2_NOSDBB=1: off)\n", g_sdbb_at[i]);
+}
+static void sdbb_report(void) {
+    static int done; if (done++ || !g_sdbb_sites) return;
+    fprintf(stderr, "um2run: SD bit-bang fast path: %lu card bytes in %d patched xfer() copies\n", g_sdbb_n, g_sdbb_sites);
+}
 static void pick_report(void) {
     static int done; if (done++) return;
     if (g_pkd) { if (g_pkd_st) fprintf(g_pkd, "X %u remain %u (at exit)\n", D.seq, D.remain); fflush(g_pkd); }
@@ -3660,6 +3707,7 @@ static int run_inproc(void) {
     guest_load_and_map();
     if (opt.bus) pick_install();
     if (opt.bus) spin_install();
+    if (opt.bus) sdbb_install();
     hstack_set(0); tl_guest = 1; prof_start(); slice_start();
     g_t0 = now();
     struct itimerval it = { {0, 100000}, {0, 100000} }; setitimer(ITIMER_REAL, &it, NULL);
