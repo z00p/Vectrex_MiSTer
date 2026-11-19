@@ -120,7 +120,10 @@ commands, so the cartridge and the core never need to know about each other.
   that runs the same five instructions and, only when the loop would go round again, sleeps 50 us
   (a Linux nanosleep straight from the stub, so guest interrupts are still delivered there). The
   registers and flags at the exit are the loop's own; the image's round count
-  (`uvm2_stats.wait_spins`, statistics only in the SDK) is smaller. Nothing the core sees changes.
+  (`uvm2_stats.wait_spins`, statistics only in the SDK) is smaller. Timing does change: on 19 Nov
+  2026 the frame rate was the same and core 0 used about 60% less CPU, but the audio thread
+  (which shares CPU0) kept better time and Pac-Man's stale cart audio got 2 to 4 times worse
+  (research/experiments_audio_spin_2026-11-19.md). Not for a release.
 
 ## Storage
 
