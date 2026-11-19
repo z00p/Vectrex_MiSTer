@@ -4,7 +4,7 @@ This is an **unofficial fork** of [Videodr0me's Vectrex core](https://github.com
 
 The same route also runs games for the [UVMC2](https://github.com/tullulah/uvmc2-sdk) multicart, rebuilt for the ARM with the UVMC2 team's permission.
 
-With PiTrex Mode off the core behaves exactly like Videodr0me's original. With it on, the core's Pause (Select, or Pause when OSD open) is off: the core cannot stop a PiTrex program or a UVMC2 cartridge's own processor, so it would freeze only the picture. A game's own pause still works. Everything below the line is his README and applies to this fork as well.
+With PiTrex Mode off the core behaves exactly like Videodr0me's original. Everything below the line is his README and applies to this fork as well.
 
 ## Quick start
 1. Download `PiTrex_MiSTer_UVMC2_<version>_<date>.zip` (currently 1.4.2) from [Releases](https://github.com/z00p/Vectrex_MiSTer/releases) and unzip it onto the root of your MiSTer's SD card (`/media/fat`). It contains:

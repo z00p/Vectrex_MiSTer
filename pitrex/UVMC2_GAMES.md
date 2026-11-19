@@ -52,9 +52,9 @@ Controls are the cartridge's own. BattleZone: button 1 starts, button 4 fires. *
 (the MiSTer's menu program shares a CPU with the game): it works, give it a moment.
 
 **No Pause for UVMC2 games.** A real Vectrex has no pause, and a UVMC2 cartridge runs on its own processor, which the
-console cannot stop: the core's Pause would only freeze the picture while the game ran on unseen. So while PiTrex Mode
-is on, the core's Pause (a mapped controller button, Select by default, or Pause when OSD open) does nothing. A game's
-own pause, if it has one, works as normal.
+console cannot stop. The core's Pause (a mapped controller button, Select by default, or Pause when OSD open) stops the
+picture and the sound, but the game itself keeps running unseen, so don't use it during play. A game's own pause, if it
+has one, works as normal.
 
 ## Sidecar settings
 Optional file `<image>.um2.cfg` next to the image, one `key=value` per line, `#` for comments.
@@ -246,7 +246,7 @@ their `.bak` backups, sidecars, and anything of yours in `pitrex/um2run/`.
 | Static at the start | Expected for the first second or two. Up to about 10 seconds when the pick had to switch View Area (the core reloads first, see `/tmp/pitrexd.log`); the next pick starts clean. |
 | The picture is cropped at the sides | Landscape game on a portrait screen. OSD > View Area = Open Matte shows it all (the default, unless you changed it), or put `view=open` in the sidecar. |
 | A message on the Vectrex instead of the game | CARD OUT OF DATE: the game still starts, on the current card; run Scripts > PiTrex_Make_UVMC2_Card when you have time. NO CARD FOR THIS GAME: the game wants a card with its own scale (see `scale=` in [Sidecar settings](#sidecar-settings)) and it has not been made yet; the game starts on `sd.img`, with its picture at the default size, until you run Scripts > PiTrex_Make_UVMC2_Card. LINUX ON ONE CPU: reboot the MiSTer. UM2RUN MISSING: run Scripts > PiTrex_Update. GAME FILE NOT FOUND: the file went away between the pick and the start. GAME STOPPED: the game ended by itself; `/tmp/um2.log` has why and `/tmp/pitrexd.log` the exit status. |
-| The picture froze | The core's Pause is off in PiTrex Mode (see [Playing](#playing)), so it is not that. `/tmp/um2.log` says `the core has fetched nothing for 2 s` while the core takes no picture, and `the core is fetching again` when it carries on; anything else there says why the game stopped. |
+| The picture froze | Check the core's Pause first (a mapped controller button, Select by default, or Pause when OSD open): press it again to go on. The game kept running meanwhile (see [Playing](#playing)). `/tmp/um2.log` says `the core has fetched nothing for 2 s` while the picture is stopped, and `the core is fetching again` when it carries on. |
 | An old overlay is on top of the game | The game has no art of its own (see [Overlays](#overlays)): OSD > Video Overlay & Geometry > Overlay = Off. |
 | A controller button does something different from the normal Vectrex core (e.g. View) | The MiSTer keeps controller mappings per core name, so "Vectrex-PiTrex" has its own mapping, separate from VECTREX's. Set it up once in the OSD (Define joystick buttons). |
 | Log of the last game | `/tmp/um2.log` (the game), `/tmp/um2.prev.log` (the game before it), `/tmp/pitrexd.log` (picks and settings). |

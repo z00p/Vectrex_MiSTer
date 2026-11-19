@@ -81,8 +81,7 @@ With **PiTrex Mode** off (the default), the core behaves exactly like
 | **UVMC2 FX demo**: shoot a wireframe shape and watch it come apart | stick aims, 1 fires, 2 blows it apart, 3 dissolves it, 4 starts again |
 | **Tac/Scan** (UVMC2 port, included; reads your MAME `tacscan.zip` from `/media/fat/games/mame`; see [UVMC2.md](UVMC2.md) for the optional sound) | 1 fire, 2 grab, 3 coin, 4 start |
 
-The core's Pause is off while PiTrex Mode is on (the core cannot stop the program itself, so it would only freeze the
-picture). A program's own pause works as normal.
+The core's own pause button also pauses PiTrex programs.
 
 **Your own music in VecDrive:** put AY-3-8912 register dumps in `/media/fat/pitrex/music/`
 as `.ay14` files: 14 bytes per 50 Hz frame (registers 0 to 13 in order). An optional `.loop`
