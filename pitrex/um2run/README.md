@@ -77,6 +77,7 @@ experimental `orient` and `view`. They are described in [../UVMC2_GAMES.md](../U
 | `UM2_NOAUDIO=1` | no cart audio (the games' sound then comes from the Vectrex PSG where they use it) |
 | `UM2_AUDPRE=<ms>` | cart audio jitter buffer, default 60, at most about 90 |
 | `UM2_AUDHOLD=<ms>` | how long the cart audio waits for a game that is late refilling its ring before it plays the old lap again, default 30, 0 = off |
+| `UM2_SPINWAIT=1` or `=<us>` | experiment, off by default: the SDK's core 0 frame-handshake spin loop (found by its exact instructions at load) sleeps 50 us (or `<us>`, 10..2000) per round instead of spinning; same registers and flags at its exit, only the image's own spin count differs (DESIGN.md, Bus side) |
 | `UM2_AUDSEC=<s>` | diagnostics, off by default: for the first `<s>` seconds one `audsec` line per window (`UM2_AUDSEC_MS`, default 1000, at least 50) with frame marks, E cycles produced and played, card sector reads, guest core CPU, CPU idle, and the cart audio reader and sink over that window |
 | `SETTLE=<s>`, `CPU1_AFTER=<s>` | `mister_run.sh`: black-screen guard timings (sidecar keys `settle`, `cpu1_after`) |
 | `UM2_NOVFP=1`, `UM2_NOSPIPATCH=1`, `UM2_NOXIPMAINT=1`, `UM2_SPIBUSLOCK=1`, `UM2_NOSPILEAN=1`, `UM2_SPIMUTEX=1` | switch off an optimisation, to find out whether it is to blame for a problem |

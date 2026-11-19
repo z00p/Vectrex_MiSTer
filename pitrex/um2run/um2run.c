@@ -89,7 +89,7 @@ static struct {
     unsigned frame_cycles;
 } opt = { 0, 1, 0, 0, 0, 0, 0, 200000, 20000, 20.0, 30, 400, 0, NULL, 0, 0, NULL, 30000 };
 static void bus_finish(void);
-static void pick_report(void);
+static void pick_report(void); static void spin_report(void);
 static void rh_dump(void);
 uint64_t g_trap_ns, g_trap_n;   /* time spent inside the trap handler body (not the kernel's signal path) and count, for the profile line */
 static __thread int tl_core;          /* 0 = main thread (core 0), 1 = the core-1 thread */
@@ -3072,7 +3072,7 @@ static void bus_finish(void) {
     if (g_nsvcp) { fprintf(stderr, "um2run: %u SVC veneers became stubs; native SVC entries (call number:count):", g_nsvcp); for (int q = 0; q < 256; q++) if (g_svc_nat[q]) fprintf(stderr, " %d:%lu", q, g_svc_nat[q]); fputc(10, stderr); }
     lb_dump(stderr); um_dump(stderr);
     thr_dump(stderr);
-    um2bus_stats(stderr); um2sd_stats(); pick_report();
+    um2bus_stats(stderr); um2sd_stats(); pick_report(); spin_report();
     if (getenv("UM2_HASHMEM") && !opt.no_psram) {      /* test hook: FNV-1a of the guest's PSRAM (where the images stage what they read from the SD card): what the guest really received */
         uint64_t h = 0xcbf29ce484222325ull; const uint32_t *p = (const uint32_t *)(uintptr_t)PSRAM_BASE;
         for (uint32_t i = 0; i < PSRAM_SIZE / 4; i++) h = (h ^ p[i]) * 0x100000001b3ull;
@@ -3532,6 +3532,56 @@ static void pick_install(void) {
     if (g_pkd) um2bus_set_txf_hook(pkd_txf);
     fprintf(stderr, "um2run: list pickup: entry %08x -> stub %08x (%s)\n", site, base, g_pick_on ? "native replacement" : "observed only, UM2_PKDIAG");
 }
+/* ================================================================== spin-wait experiment (19 Nov 2026; opt-in: UM2_SPINWAIT=1 (50 us) or UM2_SPINWAIT=<us>, 10..2000)
+ * The UVMC2 SDK's core 0 waits for core 1 in one tight loop (uvm2_draw.c, the frame handshake: `while ((int32_t)(uvm2_frame_done - (s_frame_no - K)) < 0) rotations++;`,
+ * K = 1 in uvm2_frame_end, 2 in uvm2_frame_begin with UVM2_REPLAY_LAST).  On the RP2350 that spin is free; here core 0 is a real-time thread on CPU0 and spins at 100%
+ * (Kuroishi: 84% of core 0's profile samples in it).  Compiled, it is always the same 12 bytes (82 of the 93 survey images, one each; r0 = &frame_done, r1 = s_frame_no,
+ * r2 = rotations):  L: ldr r3,[r0] ; adds r2,#1 ; subs r3,r3,r1 ; cmn.w r3,#K ; bmi L.
+ * The first 4 bytes become `b.w stub`.  The stub runs the same five instructions; only when the loop would go round again it sleeps (a real nanosleep from Thumb code:
+ * the guest's interrupts are still delivered inside a stub) and counts the nap.  So registers and flags at the exit are what the loop leaves, and memory is untouched;
+ * the one difference the image can see is the rotation count (uvm2_stats.wait_spins: statistics only in the SDK), which is smaller (one per nap).  Installed at load,
+ * before core 1 exists.  Exactly one match or nothing is patched. */
+static unsigned g_sw_us; static uint32_t g_sw_site, g_sw_stub, g_sw_lit, g_sw_k; static volatile uint32_t *g_sw_ctr;
+static void spin_install(void) {
+    const char *e = getenv("UM2_SPINWAIT"); if (!e || !*e || !strcmp(e, "0")) return;
+    long v = atol(e); g_sw_us = v >= 10 ? (unsigned)(v > 2000 ? 2000 : v) : 50;
+    if (!g_stub_ready) { fprintf(stderr, "um2run: spin wait: no stub area, nothing patched\n"); return; }
+    uint32_t words; memcpy(&words, g_file + 16, 4); uint32_t end = IMG_BASE + words * 4; int hits = 0;
+    for (uint32_t a = IMG_BASE + 32; a + 12 <= end; a += 2) {
+        if (g_rd16(a) != 0x6803 || g_rd16(a + 2) != 0x3201 || g_rd16(a + 4) != 0x1A5B || g_rd16(a + 6) != 0xF113) continue;
+        int k = g_rd16(a + 8); if ((k & 0xFF00) != 0x0F00 || (k & 0xFF) < 1 || (k & 0xFF) > 2 || g_rd16(a + 10) != 0xD4F9) continue;
+        hits++; g_sw_site = a; g_sw_k = (uint32_t)k & 0xFF; g_sw_lit = 0;
+        for (uint32_t b = a - 2; b >= a - 36; b -= 2) { int y = g_rd16(b); if ((y & 0xFF00) == 0x4800) { uint32_t la = ((b + 4) & ~3u) + (uint32_t)(y & 0xFF) * 4; g_sw_lit = (uint32_t)g_rd16(la) | (uint32_t)g_rd16(la + 2) << 16; break; } }
+    }
+    if (hits != 1) { fprintf(stderr, "um2run: spin wait: %d matches of the SDK frame-handshake loop, nothing patched\n", hits); g_sw_site = 0; return; }
+    uint32_t site = g_sw_site;
+    if (target_hits(site, site + 2)) { fprintf(stderr, "um2run: spin wait: %08x + 2 is a branch target, nothing patched\n", site); g_sw_site = 0; return; }
+    uint32_t base;
+    { int pb = patch_begin(site, 4, 64, &base); if (pb <= 0) { fprintf(stderr, "um2run: spin wait: patch refused (%d)\n", pb); g_sw_site = 0; return; } }
+    uint32_t S = (base + 3) & ~3u;                                   /* the literals below assume a word-aligned start */
+    uint16_t k[30]; int n = 0;
+#define E(x) k[n++] = (uint16_t)(x)
+    E(0x6803); E(0x3201); E(0x1A5B); E(0xF113); E(0x0F00 | g_sw_k);   /*  0: the loop as it stands: ldr r3,[r0]; adds r2,#1; subs r3,r3,r1; cmn.w r3,#K */
+    E(0xD50A);                                                       /* 10: bpl 34 (done: leave with the loop's own flags)    */
+    E(0xB483);                                                       /* 12: push {r0, r1, r7}                                  */
+    E(0x4906); E(0x6808); E(0x3001); E(0x6008);                      /* 14: ldr r1,=ctr; ldr r0,[r1]; adds r0,#1; str r0,[r1]   */
+    E(0x4805); E(0x2100); E(0x27A2); E(0xDF00);                      /* 22: ldr r0,=ts; movs r1,#0; movs r7,#162 (nanosleep); svc #0 */
+    E(0xBC83);                                                       /* 30: pop {r0, r1, r7}                                   */
+    E(0xE7EE);                                                       /* 32: b 0                                                */
+    { uint32_t bw = enc_bw(S + 34, site + 12); E(bw & 0xFFFF); E(bw >> 16); }   /* 34: b.w the loop's exit */
+    E(0xBF00);                                                       /* 38: nop (align)                                        */
+    uint32_t lit[5] = { S + 48, S + 52, 0, 0, g_sw_us * 1000u };     /* 40: &ctr, &ts; 48: ctr; 52: ts = { 0 s, us * 1000 ns } */
+    memcpy((void *)(uintptr_t)S, k, (size_t)n * 2); memcpy((void *)(uintptr_t)(S + 40), lit, sizeof lit);
+#undef E
+    __builtin___clear_cache((char *)(uintptr_t)S, (char *)(uintptr_t)(S + 60));
+    g_sw_ctr = (volatile uint32_t *)(uintptr_t)(S + 48); g_sw_stub = S;
+    patch_end(site, 4, S);
+    fprintf(stderr, "um2run: spin wait (experiment): frame-handshake loop at %08x (K=%u, counter at %08x) -> stub %08x, naps of %u us\n", site, g_sw_k, g_sw_lit, S, g_sw_us);
+}
+static void spin_report(void) {
+    static int done; if (done++ || !g_sw_ctr) return;
+    fprintf(stderr, "um2run: spin wait: %u naps of %u us in the frame-handshake loop at %08x\n", *g_sw_ctr, g_sw_us, g_sw_site);
+}
 static void pick_report(void) {
     static int done; if (done++) return;
     if (g_pkd) { if (g_pkd_st) fprintf(g_pkd, "X %u remain %u (at exit)\n", D.seq, D.remain); fflush(g_pkd); }
@@ -3609,6 +3659,7 @@ static int run_inproc(void) {
     sa.sa_sigaction = on_irq; sigaction(SIGURG, &sa, NULL);       /* asynchronous interrupt delivery (SIGUSR2 is the patch quiesce) */
     guest_load_and_map();
     if (opt.bus) pick_install();
+    if (opt.bus) spin_install();
     hstack_set(0); tl_guest = 1; prof_start(); slice_start();
     g_t0 = now();
     struct itimerval it = { {0, 100000}, {0, 100000} }; setitimer(ITIMER_REAL, &it, NULL);

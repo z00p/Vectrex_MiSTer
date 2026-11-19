@@ -112,6 +112,15 @@ commands, so the cartridge and the core never need to know about each other.
   and its park-count maximum (read by the image's bus-release wait) is kept. `UM2_PKDIAG=file`
   writes per-list and per-frame hashes for equivalence tests (and observes the function with
   pickup off).
+- **Spin wait (experiment, off by default: `UM2_SPINWAIT=1`).** The SDK's core 0 waits for
+  core 1 in one 12-byte loop (`uvm2_frame_end` / `uvm2_frame_begin`: spin until
+  `uvm2_frame_done` reaches the frame it needs, counting rounds). On the RP2350 that spin costs
+  nothing; here core 0 is a real-time thread on CPU0 and spins at 100%. At load um2run looks for
+  the loop's exact instructions and, with exactly one match, patches its first 4 bytes to a stub
+  that runs the same five instructions and, only when the loop would go round again, sleeps 50 us
+  (a Linux nanosleep straight from the stub, so guest interrupts are still delivered there). The
+  registers and flags at the exit are the loop's own; the image's round count
+  (`uvm2_stats.wait_spins`, statistics only in the SDK) is smaller. Nothing the core sees changes.
 
 ## Storage
 
