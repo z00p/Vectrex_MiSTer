@@ -23,6 +23,7 @@ int  um2aud_enabled(void);
 void um2aud_put(const int16_t *s, uint32_t n, uint32_t rate, uint64_t gap_ns);
 void um2aud_pump(int have_bus);  /* push what is queued to the core (non-blocking); have_bus = the caller already holds the bus lock (the guest's frame mark) */
 void um2aud_stats(FILE *f);
+void um2aud_win(char *b, size_t n);  /* UM2_AUDSEC (diagnostics): the sink since the last call, as text */
 void um2aud_finish(void);        /* close the .wav (also called at exit) */
 void um2aud_stop(void);          /* no more ptx_audio_* calls (before ptx_shutdown unmaps the core's block) */
 

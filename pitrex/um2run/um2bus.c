@@ -405,6 +405,10 @@ static void v2_word(uint32_t w) {
 }
 
 static struct { uint64_t cpu_words, starts, blocks, irqs, steps, words, aborts, late[5], maxlate, held, forced; double maxheld; double fps[NPIO][4]; int bits[NPIO][4]; } AS;   /* cart audio statistics */
+/* UM2_AUDSEC (19 Nov 2026, diagnostics, off by default): the cart audio over time, not only as end-of-run totals. um2run's heartbeat thread prints one
+ * "audsec" line per window from um2bus_audwin (here) and um2aud_win.  AW is updated under g_aud_m; lead = frames ahead of the reader that the game has
+ * rewritten since they were last played (the same test as the ring hold; a flat block counts as written, so silence reads as a full ring). */
+static int g_audwin; static struct { uint64_t held, forced, words, steps; double maxheld; uint32_t minlead, maxlead, nlead; uint64_t maxscan, refills, maxrefill; } AW;
 static void (*g_txf_hook)(uint32_t w, int after);        /* diagnostics only (um2bus_set_txf_hook): every PIO0 TXF0 word, before and after the model took it */
 static uint64_t g_pk_words, g_pk_calls;                  /* words pushed by um2bus_pio0_push (list pickup) */
 static void pio_txf_push(int pio, int smn, uint32_t w) {
@@ -721,8 +725,8 @@ static void aud_start(int ch, int p, int s, unsigned bytes, uint32_t n, int endl
 	pthread_mutex_unlock(&g_aud_m);
 }
 /* ring hold: how many of the run's frames at a->rd the game has rewritten since they were last played (stops at the first unchanged, non-flat block) */
-static uint32_t aud_fresh(const Adma *a, const uint8_t *src, uint32_t run) {
-	const uint8_t *sh = a->sh + (a->rd - a->rbase); uint32_t n = 0;
+static uint32_t aud_fresh_at(const Adma *a, uint32_t off, const uint8_t *src, uint32_t run) {
+	const uint8_t *sh = a->sh + off; uint32_t n = 0;
 	while (n < run) {
 		uint32_t k = run - n < AUD_HOLD_BLK ? run - n : AUD_HOLD_BLK; unsigned len = k * a->bytes; const uint8_t *p = src + n * a->bytes;
 		if (!memcmp(p, sh + n * a->bytes, len)) {
@@ -730,6 +734,19 @@ static uint32_t aud_fresh(const Adma *a, const uint8_t *src, uint32_t run) {
 			if (i < len) break;                                                     /* unchanged and not flat: not written yet */
 		}
 		n += k;
+	}
+	return n;
+}
+static uint32_t aud_fresh(const Adma *a, const uint8_t *src, uint32_t run) { return aud_fresh_at(a, a->rd - a->rbase, src, run); }
+/* UM2_AUDSEC: frames from the reader on that the game has rewritten (at most one ring) */
+static uint32_t aud_lead(const Adma *a) {
+	uint32_t nw = (a->rmask + 1) / a->bytes, pos = (a->rd - a->rbase) / a->bytes, n = 0;
+	while (n < nw) {
+		uint32_t run = nw - pos; if (run > nw - n) run = nw - n;
+		const uint8_t *src = C.host_ptr(a->rbase + pos * a->bytes, run * a->bytes); if (!src) break;
+		uint32_t f = aud_fresh_at(a, pos * a->bytes, src, run); n += f;
+		if (f < run) break;
+		pos = 0;
 	}
 	return n;
 }
@@ -761,7 +778,7 @@ static uint64_t aud_consume(Adma *a, uint64_t w, double fps, uint64_t *gap, int 
 static int aud_step(int ch, uint64_t now, uint64_t *dl) {
 	Adma *a = &g_ad[ch]; Dch *d = &g_dma[ch]; int irq = 0;
 	double fps = (g_pio[a->pio].ctrl >> a->sm & 1) ? aud_fps(a->pio, a->sm) : 0;
-	AS.steps++;
+	AS.steps++; AW.steps++;
 	if (fps < 1) { a->t_last = now; *dl = now + AUD_TICK_NS; return 0; }          /* state machine stopped: the FIFO fills up and the transfer waits */
 	if (fps > 4e5) fps = 4e5;
 	double due = a->acc + (double)(now - a->t_last) * 1e-9 * fps;
@@ -771,11 +788,13 @@ static int aud_step(int ch, uint64_t now, uint64_t *dl) {
 	uint64_t gap = a->gap_ns; a->gap_ns = 0;
 	int hold = a->endless && a->shn && a->words >= a->shn;
 	uint64_t got = aud_consume(a, w, fps, &gap, hold);
+	AW.words += got;
 	if (got < w) {                                                                  /* ring hold: the game has not written the next block yet */
 		double owe = (double)(w - got) + a->acc, lim = fps * (double)g_aud_hold_ns * 1e-9;
 		AS.held++;
-		if (owe > lim) { uint64_t f = (uint64_t)(owe - lim); f = aud_consume(a, f, fps, &gap, 0); AS.forced += f; owe -= (double)f; }   /* waited long enough: play on */
+		if (owe > lim) { uint64_t f = (uint64_t)(owe - lim); f = aud_consume(a, f, fps, &gap, 0); AS.forced += f; AW.forced += f; AW.words += f; owe -= (double)f; }   /* waited long enough: play on */
 		a->acc = owe; if (owe / fps * 1e3 > AS.maxheld) AS.maxheld = owe / fps * 1e3;
+		AW.held++; if (owe / fps * 1e3 > AW.maxheld) AW.maxheld = owe / fps * 1e3;
 		if (g_aud_hold_log) { static uint64_t t0; if (!t0) t0 = now - (uint64_t)((double)a->words / fps * 1e9); fprintf(stderr, "audhold: t=%.3f s owed %.1f ms%s frames %llu\n", (double)(now - t0) * 1e-9, owe / fps * 1e3, owe >= lim - 1 ? " (limit, played on)" : "", (unsigned long long)S.frames); }
 	}
 	if (fin) {
@@ -789,6 +808,10 @@ static int aud_step(int ch, uint64_t now, uint64_t *dl) {
 		}
 		return irq;
 	}
+	if (g_audwin && hold && C.host_ptr) { uint32_t l = aud_lead(a); if (!AW.nlead || l < AW.minlead) AW.minlead = l; if (l > AW.maxlead) AW.maxlead = l; AW.nlead++;
+		static uint32_t pl; static uint64_t tr;                                          /* a refill: the lead grows by more than 4 ms of frames in one step */
+		if (l > pl + (uint32_t)(fps * 0.004) && l < (a->rmask + 1) / a->bytes) { if (tr && now - tr > AW.maxrefill) AW.maxrefill = now - tr; tr = now; AW.refills++; }
+		pl = l; }
 	if (g_dbg_wr && a->endless && a->rmask && C.host_ptr) {                          /* UM2_AUDFILL=<hex addr>: the guest's ring write index (frames); fill level statistics (SW: 2007c808) */
 		const uint8_t *q = C.host_ptr(g_dbg_wr, 4); uint32_t wr, nw = (a->rmask + 1) / a->bytes;
 		if (q) { memcpy(&wr, q, 4); int fl = (int)((wr - (a->rd - a->rbase) / a->bytes) & (nw - 1)); if (!DF.n || fl < DF.mn) DF.mn = fl; if (fl > DF.mx) DF.mx = fl; DF.n++; DF.sum += fl; if (fl > (int)(nw * 7 / 8)) DF.bad++; if (DF.log) fprintf(DF.log, "%.4f %d\n", (double)(now - DF.t0) * 1e-9, fl); }
@@ -820,6 +843,7 @@ static void *aud_thread(void *arg) {
 	pthread_mutex_lock(&g_aud_m);
 	for (;;) {
 		uint64_t now = mono_ns(), dl = now + AUD_TICK_NS; int any = 0, irq = 0; uint32_t gen = g_aud_gen;
+		{ static uint64_t last; if (g_audwin && last && g_aud_used && now - last > AW.maxscan) AW.maxscan = now - last; last = now; }
 		for (int ch = 0; ch < 16; ch++) if (g_ad[ch].act) { uint64_t d1 = dl; any = 1; irq |= aud_step(ch, now, &d1); if (d1 < dl) dl = d1; }
 		pthread_mutex_unlock(&g_aud_m);
 		if (irq) irq_poke();
@@ -1268,7 +1292,7 @@ void um2bus_init(const um2bus_cfg_t *cfg) {
 	for (int j = 0; j < 4; j++) for (int i = 0; i < NPIO; i++) g_pio[i].sm[j].osr_cnt = 32;
 	if (C.capture_path) g_cap = fopen(C.capture_path, "wb");
 	{ const char *e = getenv("UM2_BUSYUS"); if (e) { long u = atol(e); g_busy_ns = u <= 0 ? 0 : u > 5000 ? 5000000 : u * 1000; } }
-	g_nofast = getenv("UM2BUS_NOFAST") != NULL; g_aud_pred = getenv("UM2_NOAUDPRED") == NULL; g_busstat = getenv("UM2_BUSSTAT") != NULL;
+	g_nofast = getenv("UM2BUS_NOFAST") != NULL; g_aud_pred = getenv("UM2_NOAUDPRED") == NULL; g_busstat = getenv("UM2_BUSSTAT") != NULL; g_audwin = getenv("UM2_AUDSEC") != NULL;
 #ifndef UM2BUS_NO_THREADS
 	g_spi_buslock = getenv("UM2_SPIBUSLOCK") != NULL; g_spi_mutex = getenv("UM2_SPIMUTEX") != NULL;
 #endif
@@ -1315,6 +1339,18 @@ void um2bus_dump_pio(FILE *f) {
 	fwrite(buf, 1, (size_t)n, f);
 }
 
+/* UM2_AUDSEC: the cart audio since the last call (one window), for um2run's heartbeat thread */
+void um2bus_audwin(char *b, size_t n) {
+	static uint64_t ph, pf, pw, ps, prf;
+	pthread_mutex_lock(&g_aud_m);
+	uint64_t h = AW.held - ph, f = AW.forced - pf, w = AW.words - pw, st = AW.steps - ps; double mh = AW.maxheld; uint32_t ml = AW.minlead, xl = AW.maxlead, nl = AW.nlead; uint64_t sc = AW.maxscan, rf = AW.refills - prf, mrf = AW.maxrefill;
+	ph = AW.held; pf = AW.forced; pw = AW.words; ps = AW.steps; AW.maxheld = 0; AW.nlead = 0; AW.minlead = 0; AW.maxlead = 0; AW.maxscan = 0; prf = AW.refills; AW.maxrefill = 0;
+	pthread_mutex_unlock(&g_aud_m);
+	if (nl) snprintf(b, n, "read %llu fr in %llu steps (longest gap %.1f ms), waits %llu longest %.1f ms, unrefreshed %llu, lead %u..%u fr, refills %llu (longest gap %.1f ms)", (unsigned long long)w, (unsigned long long)st, sc * 1e-6,
+		(unsigned long long)h, mh, (unsigned long long)f, ml, xl, (unsigned long long)rf, mrf * 1e-6);
+	else snprintf(b, n, "read %llu fr in %llu steps (longest gap %.1f ms), waits %llu longest %.1f ms, unrefreshed %llu, lead -", (unsigned long long)w, (unsigned long long)st, sc * 1e-6,
+		(unsigned long long)h, mh, (unsigned long long)f);
+}
 void um2bus_stats(FILE *f) {
 	if (getenv("UM2_PIODUMP")) um2bus_dump_pio(f);
 	/* may run from atexit() inside a sink call that holds the lock: do not block */

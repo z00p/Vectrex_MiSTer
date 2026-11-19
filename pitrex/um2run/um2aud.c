@@ -26,7 +26,8 @@ static uint32_t g_pre_ms = 60;
 static FILE *g_wav; static uint64_t g_wav_n; static pthread_mutex_t g_wav_m = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_sink_m = PTHREAD_MUTEX_INITIALIZER;     /* the 32 kHz queue and resampler: put() from the pacing thread, pump() from it or from the guest's frame mark */
 static int16_t g_q[QCAP]; static uint32_t g_qh, g_qn;                 /* output queue (32 kHz) */
-static struct { uint64_t in, out, core, dropped, padded, gaps, pumps, busy, notready, resets; int16_t peak; } S;
+static struct { uint64_t in, out, core, dropped, padded, gaps, pumps, busy, notready, resets, reprime; int16_t peak; } S;
+static struct { int32_t minlvl, maxlvl; int have; } W;                   /* UM2_AUDSEC window: the core's queue level seen at the pumps */
 
 /* ---- resampler: arbitrary rate -> 32 kHz */
 static uint32_t g_rate;                    /* current input rate (0 = none) */
@@ -158,10 +159,11 @@ void um2aud_pump(int have_bus) {
 	else {
 		uint32_t sp = ptx_audio_space();
 		int32_t lvl = sp ? 3200 - (int32_t)sp : 3200;                       /* samples queued in the core (ptx keeps up to 3200) */
+		if (!W.have) { W.minlvl = W.maxlvl = lvl; W.have = 1; } else { if (lvl < W.minlvl) W.minlvl = lvl; if (lvl > W.maxlvl) W.maxlvl = lvl; }
 		int16_t z[512]; memset(z, 0, sizeof z);
 		int32_t pre = (int32_t)(g_pre_ms * OUT_HZ / 1000), pad = 0;
 		if (!primed) { primed = 1; pad = pre - lvl; }                       /* first data: run ahead by the jitter buffer, with silence */
-		else if (lvl < (int32_t)(OUT_HZ / 125) && S.pumps - lastpad > 125) { pad = pre - lvl; lastpad = S.pumps; if (g_log) fprintf(stderr, "um2aud: core queue ran dry (%d samples), re-priming\n", (int)lvl); }
+		else if (lvl < (int32_t)(OUT_HZ / 125) && S.pumps - lastpad > 125) { pad = pre - lvl; lastpad = S.pumps; S.reprime++; if (g_log) fprintf(stderr, "um2aud: core queue ran dry (%d samples), re-priming\n", (int)lvl); }
 		while (pad > 0 && sp) { uint32_t k = (uint32_t)pad > 512 ? 512 : (uint32_t)pad; if (k > sp) k = sp; ptx_audio_write(z, k); pad -= (int32_t)k; sp -= k; lvl += (int32_t)k; S.padded += k; }
 		/* too far ahead (the core consumes slower than the stream arrives): drop the oldest */
 		int32_t over = lvl + (int32_t)g_qn - (pre + (int32_t)(OUT_HZ * 60 / 1000));
@@ -176,6 +178,17 @@ void um2aud_pump(int have_bus) {
 	if (!have_bus && g_unlock) g_unlock();
 }
 
+void um2aud_win(char *b, size_t n) {
+	static uint64_t pc, pp, pd, pb, pu, pr, pn;
+	pthread_mutex_lock(&g_sink_m);
+	uint64_t c = S.core - pc, pa = S.padded - pp, d = S.dropped - pd, bu = S.busy - pb, pm = S.pumps - pu, r = S.reprime - pr, nr = S.notready - pn; int32_t mn = W.minlvl, mx = W.maxlvl, hv = W.have; uint32_t q = g_qn;
+	pc = S.core; pp = S.padded; pd = S.dropped; pb = S.busy; pu = S.pumps; pr = S.reprime; pn = S.notready; W.have = 0;
+	pthread_mutex_unlock(&g_sink_m);
+	if (hv) snprintf(b, n, "to core %llu, core queue %d..%d, our queue %u, silence %llu, dropped %llu, re-primes %llu, pumps %llu (bus busy %llu, not ready %llu)",
+		(unsigned long long)c, (int)mn, (int)mx, q, (unsigned long long)pa, (unsigned long long)d, (unsigned long long)r, (unsigned long long)pm, (unsigned long long)bu, (unsigned long long)nr);
+	else snprintf(b, n, "to core %llu, core queue -, our queue %u, silence %llu, dropped %llu, re-primes %llu, pumps %llu (bus busy %llu, not ready %llu)",
+		(unsigned long long)c, q, (unsigned long long)pa, (unsigned long long)d, (unsigned long long)r, (unsigned long long)pm, (unsigned long long)bu, (unsigned long long)nr);
+}
 void um2aud_stats(FILE *f) {
 	if (!S.in && !S.out) return;
 	fprintf(f, "um2aud: %llu samples in (rate %u Hz), %llu out at 32 kHz (peak %d), to the core %llu, silence added %llu, dropped %llu, stalls %llu; pumps %llu (bus busy %llu, core not ready %llu)%s\n",

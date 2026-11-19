@@ -2755,12 +2755,39 @@ static void sim_report(void) {
             g_irq_cnt[0] ? -(int32_t)(g_tm[0].target[0] - micros()) / 1000 : 0);
     tl = t; c0p = c0; c1p = c1; cpp = cp; ip = i0; tp = tr; mp = mk; alp = al; vp = vc; ccp = st.core_cycles;
 }
+/* UM2_AUDSEC=<s> (19 Nov 2026, diagnostics, off by default): for the first <s> seconds, one "audsec" line per window (UM2_AUDSEC_MS, default 1000) with
+ * the frame marks, card sector reads, guest core CPU, idle time of CPU0/CPU1 (/proc/stat), the cart audio reader (um2bus_audwin) and the sink (um2aud_win),
+ * to see what the audio does while the image loads. */
+static double g_audsec, g_audsec_win = 1.0; static volatile double g_fm_maxgap;   /* g_fm_maxgap: longest wall time between two frame marks in the window */
+static int cpu_idle_ms(double out[2]) {   /* idle + iowait of cpu0 and cpu1, in ms since boot */
+    FILE *f = fopen("/proc/stat", "r"); if (!f) return 0; char ln[256]; int got = 0;
+    while (fgets(ln, sizeof ln, f)) { int c; unsigned long long u, ni, sy, id, io; if (sscanf(ln, "cpu%d %llu %llu %llu %llu %llu", &c, &u, &ni, &sy, &id, &io) == 6 && c >= 0 && c < 2) { out[c] = (double)(id + io) * 1000.0 / (double)sysconf(_SC_CLK_TCK); got++; } }
+    fclose(f); return got == 2;
+}
+static void audsec_sample(void) {
+    static double tl, c0p, c1p, ip[2]; static unsigned mp; static unsigned long sp; static int have, done; static uint64_t ep, cp;
+    if (done) return;
+    double t = now() - g_t0;
+    if (!have) { have = 1; tl = t; c0p = thr_cpu(g_th_core0); c1p = g_have_core1 ? thr_cpu(g_th_core1) : 0; cpu_idle_ms(ip); mp = g_marks; sp = um2sd_present() ? um2sd_reads() : 0; { ptx_status_t s0 = {0}; ptx_get_status(&s0); cp = s0.core_cycles; ep = ptx_now_cycles(); }
+                 char a[256], k[256]; um2bus_audwin(a, sizeof a); um2aud_win(k, sizeof k);                    /* what happened before the sink came up */
+                 fprintf(stderr, "audsec t=%.2f start (windows of %.0f ms until t=%.0f), before it: frames %u, sd reads %lu | %s | %s\n", t, g_audsec_win * 1e3, g_audsec, mp, sp, a, k); return; }
+    if (t - tl < g_audsec_win) return;
+    if (t > g_audsec + g_audsec_win) { done = 1; return; }
+    double c0 = thr_cpu(g_th_core0), c1 = g_have_core1 ? thr_cpu(g_th_core1) : 0, id[2] = { ip[0], ip[1] }; cpu_idle_ms(id);
+    unsigned long sd = um2sd_present() ? um2sd_reads() : 0; char a[256], k[256]; um2bus_audwin(a, sizeof a); um2aud_win(k, sizeof k);
+    ptx_status_t st = {0}; ptx_get_status(&st); uint64_t e = ptx_now_cycles();                     /* E cycles: produced into the stream / played by the core (MiSTer) */
+    double fg = g_fm_maxgap; g_fm_maxgap = 0;
+    fprintf(stderr, "audsec t=%.2f +%.0f ms: frames +%u (longest gap %.1f ms), E stream +%.0fk core +%.0fk, sd reads +%lu, cpu core0 %.0f core1 %.0f ms, idle cpu0 %.0f cpu1 %.0f ms | %s | %s\n",
+            t, (t - tl) * 1e3, g_marks - mp, fg * 1e3, (double)(e - ep) * 1e-3, st.valid ? (double)(st.core_cycles - cp) * 1e-3 : -1.0, sd - sp, (c0 - c0p) * 1e3, (c1 - c1p) * 1e3, id[0] - ip[0], id[1] - ip[1], a, k);
+    tl = t; c0p = c0; c1p = c1; ip[0] = id[0]; ip[1] = id[1]; mp = g_marks; sp = sd; ep = e; cp = st.core_cycles;
+}
 static void *hb_thread(void *arg) {
     (void)arg; pthread_setname_np(pthread_self(), "u2hb");
     um2_rt_boost(2);
     if (g_ringmon) mon_open();
     int simrep = getenv("PTX_SIMCORE") != NULL;
-    while (g_ptx_up) { struct timespec ts = { 0, 10 * 1000000L }; nanosleep(&ts, NULL); if (g_ptx_up) { ptx_poll(); if (g_ringmon) mon_sample(0); if (simrep) sim_report(); } }
+    { const char *e = getenv("UM2_AUDSEC"); if (e) g_audsec = atof(e); e = getenv("UM2_AUDSEC_MS"); if (e && atoi(e) >= 50) g_audsec_win = atoi(e) * 1e-3; }
+    while (g_ptx_up) { struct timespec ts = { 0, 10 * 1000000L }; nanosleep(&ts, NULL); if (g_ptx_up) { ptx_poll(); if (g_ringmon) mon_sample(0); if (simrep) sim_report(); if (g_audsec > 0) audsec_sample(); } }
     return NULL;
 }
 /* The ptx backend (MiSTer: the takeover handshake) starts at the first bus event, not at launch: the image boots for
@@ -3143,6 +3170,7 @@ static void k_advance(uint32_t c) { if (g_pkd_st) pkd_note(2, c, 0); gup(); if (
 static uint64_t k_now(void) { gup(); if (g_hold) { if (!g_vnow) g_vnow = gnow(); return g_vnow; } return gnow(); }
 static void k_frame(void) {
     g_marks++;
+    if (g_audsec > 0) { static double lt; double t = now(); if (lt && t - lt > g_fm_maxgap) g_fm_maxgap = t - lt; lt = t; }
     { static unsigned cr; static int cri = -1; if (cri < 0) { const char *e = getenv("UM2_CENRESET"); cr = e ? (unsigned)atoi(e) : 0; cri = 1; }   /* census window: forget everything before frame cr (diagnostics; patched sites stay patched) */
       if (cr && g_marks == cr) { hs_reset(); g_excret = 0; memset(g_ev, 0, sizeof g_ev); memset(g_kdistinct, 0, sizeof g_kdistinct); memset(g_irq_cnt, 0, sizeof g_irq_cnt); g_irq_kicks = 0; g_irq_pc[0] = g_irq_pc[1] = g_irq_async[0] = g_irq_async[1] = 0; g_irq_trap = g_irq_chain = 0; g_cen_m0 = g_marks; g_events = 0; fprintf(stderr, "um2run: census reset at frame %u\n", cr); } }
     if (g_hs_on > 0 && !(g_marks % 50)) { static uint64_t pe; static unsigned long px; if (g_events < pe) pe = 0; if (g_excret < px) px = 0; fprintf(stderr, "FRAMES %u: +%llu traps +%lu exc-returns since the last mark (%.1f round trips per frame)\n", g_marks, (unsigned long long)(g_events - pe), g_excret - px, (double)(g_events - pe + g_excret - px) / 50.0); pe = g_events; px = g_excret; }

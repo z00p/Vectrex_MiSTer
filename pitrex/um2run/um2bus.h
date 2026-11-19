@@ -59,6 +59,8 @@ void     um2bus_set_txf_hook(void (*fn)(uint32_t w, int after));
 /* level of the interrupt lines the model owns (bit n = NVIC IRQ n): DMA_IRQ_0..3 = IRQ 10..13 */
 uint64_t um2bus_irq_lines(void);
 void um2bus_stats(FILE *f);
+/* UM2_AUDSEC (diagnostics): the cart audio reader since the last call, as text (um2run's heartbeat thread prints it) */
+void um2bus_audwin(char *b, size_t n);
 /* E-clock periods (falling edges of the GPIO31 input) the guest has polled so far */
 uint64_t um2bus_edges(void);
 /* pio disassembly for logs */
