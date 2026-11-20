@@ -131,9 +131,11 @@ until a live program is present.
   - buttons (PSG register 14 through port A) come from the input block;
   - the joystick comparator (port B bit 5) is `pot > DAC`, using the input block and the last
     port A write.
-- **Pacing:** the program stays at most 2 frames ahead of `rd_idx`. The core's command FIFO
-  holds 128 entries, so "fetched" is close to "played", and input latency stays around two
-  frames.
+- **Pacing:** a PiTrex program stays at most 2 frames ahead of `rd_idx` (`PTX_LEAD_FRAMES`;
+  `PTX_LEAD=0..6` overrides it for tests). um2run runs 1 frame ahead: `mister_run.sh` sets
+  `PTX_LEAD=1` (3 Nov 2026: the same frame rate on ten games, less input latency). The core's
+  command FIFO holds 128 entries, so "fetched" is close to "played", and input latency stays
+  around one frame for um2run and two for PiTrex programs.
 - **Audio (B6):** `ptx_audio_ready()`, `ptx_audio_space()` and `ptx_audio_write()` in
   `ptx_backend_mister.c`; `games/tonetest` is a two-minute test tone.
 - **Backends:** `ptx_backend_mister.c` writes the DDR block through `/dev/mem`, and needs root.
