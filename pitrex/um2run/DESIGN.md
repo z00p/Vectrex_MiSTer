@@ -100,9 +100,12 @@ commands, so the cartridge and the core never need to know about each other.
   image paces itself (its `UVM2_HZ` filler pads each list inside the list, to 30000 E cycles for 50 Hz,
   25000 for 60, nothing for 0 = free-running), so the old padding to 30000 was a second, conflicting
   pacer: Demon Attack (an Atari 2600 ROM, built for 60 Hz, lists 25000) ran at 50 instead of ~58 fps.
-  `--frame-pad N` pads to N: a stand-in for the idle "park" words a free-running image (Punch-Out)
-  leaves between its lists on a real cart (SDK doc 05, "The underrun is the idle state"), which um2run
-  does not model yet. `--frame-cycles` (default 30000) now only sets the frame-mark fallbacks and
+  `--frame-pad N` pads to N: a stand-in for the idle time a free-running image (Punch-Out) leaves
+  between its lists on a real cart, which um2run does not model yet. With no new list the cart's core 1
+  pushes nothing: it only reads the controllers and services audio once per frame period, and the beam
+  stays parked (SDK doc 05, "The underrun is the idle state"; confirmed by the SDK's author, 20 Nov 2026).
+  A free-running image's frame rate on a real cart is set by how fast core 0 builds the next list,
+  which um2run does not model either, so such an image can run faster under um2run than on a cart. `--frame-cycles` (default 30000) now only sets the frame-mark fallbacks and
   um2run's own screens. The exit stats list each image's list lengths per frame. `--hold` hands the whole frame to the ring at once.
 - **Pacing.** `ptx_frame()` paces on the core's read index, so the guest never runs far ahead
   of what the core has played.

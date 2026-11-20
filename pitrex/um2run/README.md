@@ -88,6 +88,10 @@ The other `UM2_*` variables are developer diagnostics and A/B switches; `grep ge
 
 ## Limits
 - Speed: the A9 is much slower than the cartridge's RP2350, so the picture is drawn at a lower frame rate than on a real cartridge. Measured in attract modes on a DE10-Nano (2 Nov 2026): Pac-Man about 32 frames/s (game speed right), BattleZone about 40, Star Wars about 45, Veccy Road about 50, Punch-Out about 55 of the 60 frames/s it wants. VecDoom and Out Run still slow down in heavy scenes.
+  Since 1.5 um2run no longer pads frames to 50 Hz, so an image that sets its own rate runs at that rate (Demon Attack ~58),
+  and a free-running image (no rate of its own) runs as fast as um2run can build its frames, which can be faster than on a
+  real cartridge (MiSTer, 20 Nov 2026: VecDoom ~98, Mach 3 ~73 frames/s). If one plays too fast, put `frame_cycles=30000`
+  in its sidecar (see UVMC2_GAMES.md) to cap it at 50 Hz.
 - Controls: a game reacts a little later than on a real cartridge, because um2run draws up to one
   frame ahead of the core. Wired (USB) and Bluetooth controllers both work. Up to 1.3, Bluetooth
   controllers lagged badly while a UVMC2 game ran: the USB interrupt (the Bluetooth adapter's too)
