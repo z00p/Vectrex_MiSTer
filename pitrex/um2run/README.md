@@ -53,7 +53,8 @@ The log is `/tmp/um2.log`. Useful `um2run` options:
 | Option | |
 |---|---|
 | `--sd IMAGE` | SD card image the cartridge sees (read/write if the file is writable) |
-| `--frame-cycles N` | stream frame length in E cycles (default 30000 = 50 Hz; 25000 = 60 Hz) |
+| `--frame-cycles N` | frame length in E cycles for the frame-mark fallbacks and um2run's own screens (default 30000 = 50 Hz) |
+| `--frame-pad N` | pad each of the image's frames with idle cycles to N (default: no padding, an SDK image paces itself). A stand-in for the idle time a free-running image (Punch-Out) leaves between lists on a real cart; pitrexd sets it from a sidecar's `frame_cycles` |
 | `--secs S` | stop after S seconds (`--bus` stops after 300 s by default) |
 | `--no-loading` | no LOADING screen while the image has not drawn its first frame |
 | `--message TEXT` | no image: show TEXT on the Vectrex for 20 s, `\|` for a new line (pitrexd and mister_run.sh use it for errors) |

@@ -34,7 +34,8 @@ typedef struct {
 	/* bootrom protocol finished: start core 1 */
 	void     (*launch_core1)(uint32_t vtor, uint32_t sp, uint32_t entry);
 	int      verbose;
-	uint32_t frame_cycles;                       /* stream cycles per frame (30000 = 50 Hz); 0 = no padding */
+	uint32_t frame_cycles;                       /* stream cycles per frame (30000 = 50 Hz): the frame-mark fallbacks; 0 = none */
+	uint32_t frame_pad;                          /* pad each image frame with idle cycles to this length (0 = no padding, the default: an SDK image paces itself) */
 	volatile uint32_t *dma_mirror;               /* RW alias of the page mapped read-only at 0x50000000 (or NULL: every DMA register read traps) */
 	const char *capture_path;                    /* record the model's inputs for replay, or NULL */
 	double   (*sysclk)(void);                    /* clk_sys in Hz as the image configured it (NULL: 300 MHz); sets the cart-audio sample rate */

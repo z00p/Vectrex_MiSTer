@@ -205,7 +205,7 @@ set_display() {
 #                           make_card.sh copies the art next to the game for that (never over a .art of yours); orient=cw/ccw take the Tate version only.
 # Returns 1 without touching a running program when it refuses (one core, missing files).
 start_um2() {
-	local img=$1 cfg=$1.cfg online fc sd sc="" args st c1 n opt=""
+	local img=$1 cfg=$1.cfg online fc pad sd sc="" args st c1 n opt=""
 	read -r online < $CPUS
 	if [ "$online" != "0-1" ]; then
 		# BigMig leaves Linux on maxcpus=1 until a normal reboot: um2run would starve Main (OSD, controls)
@@ -219,9 +219,12 @@ start_um2() {
 		return 1
 	fi
 	fc=$(cfg_get "$cfg" frame_cycles)
-	case "$fc" in ""|*[!0-9]*) [ -z "$fc" ] || echo "$(date +%T) $cfg: bad frame_cycles '$fc' ignored" >> $LOG; fc=30000
-		# games that only run right with their own frame length need no sidecar for it
-		n=${img##*/}; case "${n,,}" in *punch*) fc=25000 ;; esac ;; esac
+	# an SDK image paces itself (its own filler pads each list to the rate it was built for), so um2run pads nothing by
+	# default; frame_cycles in a sidecar (and Punch-Out's 25000) still pads, standing in for the idle "park" time a
+	# free-running image leaves between its lists on a real cart, which um2run does not model yet
+	pad=$fc
+	case "$fc" in ""|*[!0-9]*) [ -z "$fc" ] || echo "$(date +%T) $cfg: bad frame_cycles '$fc' ignored" >> $LOG; fc=30000; pad=""
+		n=${img##*/}; case "${n,,}" in *punch*) fc=25000; pad=25000 ;; esac ;; esac
 	sd=$(cfg_get "$cfg" sd)
 	if [ -n "$sd" ]; then
 		case "$sd" in /*) ;; *) if [ -f "${img%/*}/$sd" ]; then sd=${img%/*}/$sd; elif [ -f "$UM2SD_DIR/$sd" ] || [ ! -f "$UM2/$sd" ]; then sd=$UM2SD_DIR/$sd; else sd=$UM2/$sd; fi ;; esac
@@ -266,8 +269,8 @@ start_um2() {
 	cd "$UM2" || return 1
 	# mister_run.sh: cd to its own directory, nohup chrt -r 50 ./um2run --bus --hold ... > /tmp/um2.log &
 	# --secs: um2run --bus stops after 300 s by default (a test bound); a game picked from the OSD runs until stopped.
-	SETTLE=$st CPU1_AFTER=$c1 sh ./mister_run.sh "$img" --frame-cycles "$fc" $opt --secs 1000000000 $args >> $LOG 2>&1
-	echo "$(date +%T) started um2run $(basename "$img") frame_cycles=$fc card=${sd:-none}${args:+ args=$args}" >> $LOG
+	SETTLE=$st CPU1_AFTER=$c1 sh ./mister_run.sh "$img" --frame-cycles "$fc" ${pad:+--frame-pad $pad} $opt --secs 1000000000 $args >> $LOG 2>&1
+	echo "$(date +%T) started um2run $(basename "$img") frame_cycles=$fc pad=${pad:-none} card=${sd:-none}${args:+ args=$args}" >> $LOG
 }
 
 # start_ptx <file>: a PiTrex program, one at a time: stop what is running (launcher or OSD started)
