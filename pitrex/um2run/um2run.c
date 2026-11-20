@@ -87,7 +87,8 @@ static struct {
     int bus, bus_verbose;             /* --bus: real svc dispatch + device model + ptx sink */
     const char *capture;
     unsigned frame_cycles;
-} opt = { 0, 1, 0, 0, 0, 0, 0, 200000, 20000, 20.0, 30, 400, 0, NULL, 0, 0, NULL, 30000 };
+    unsigned frame_pad;        /* --frame-pad: idle padding of the image's frames (0: none) */
+} opt = { 0, 1, 0, 0, 0, 0, 0, 200000, 20000, 20.0, 30, 400, 0, NULL, 0, 0, NULL, 30000, 0 };
 static void bus_finish(void);
 static void pick_report(void); static void spin_report(void); static void sdbb_report(void);
 static void rh_dump(void);
@@ -3674,7 +3675,7 @@ static void bus_setup(void) {
     c.vwrite = k_write; c.vread = k_read; c.advance = k_advance; c.now = k_now; c.frame = k_frame;
     c.host_ptr = k_host_ptr; c.ext_load = k_ext_load; c.ext_store = k_ext_store; c.launch_core1 = k_launch_core1;
     c.dma_mirror = dma_rw; c.c1_own_cpu = &g_c1_own_cpu; c.sysclk = sysclk_hz; c.irq_poke = k_irq_poke;
-    c.verbose = opt.bus_verbose; c.frame_cycles = opt.frame_cycles; c.capture_path = opt.capture;
+    c.verbose = opt.bus_verbose; c.frame_cycles = opt.frame_cycles; c.frame_pad = opt.frame_pad; c.capture_path = opt.capture;
     um2bus_init(&c);
     if (g_sd_path) { g_sd_path = strdup(g_sd_path); if (um2sd_open(g_sd_path, opt.bus_verbose)) exit(1); }
     ld_init();
@@ -4008,6 +4009,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--capture") && i + 1 < argc) opt.capture = argv[++i];
         else if (!strcmp(a, "--pickup")) g_pick_on = 1;
         else if (!strcmp(a, "--frame-cycles") && i + 1 < argc) opt.frame_cycles = (unsigned)strtoul(argv[++i], 0, 0);
+        else if (!strcmp(a, "--frame-pad") && i + 1 < argc) opt.frame_pad = (unsigned)strtoul(argv[++i], 0, 0);
         else if (a[0] == '-') { usage(); return 2; }
         else opt.file = a;
     }

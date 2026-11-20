@@ -95,9 +95,15 @@ commands, so the cartridge and the core never need to know about each other.
   each read, and turns a falling edge into a VIA read or write.
 - **Stream.** A latched VIA write at E index i becomes `ptx_write(addr, data)` after the idle
   cycles in between. A frame starts at the image's frame mark (enabling the PIO state
-  machine, or the first controller read of the between-frames window); the stream is padded
-  to a fixed frame length (`--frame-cycles`, default 30000 E cycles = 50 Hz) and ended with the
-  T2 reload the core treats as a frame boundary. `--hold` hands the whole frame to the ring at once.
+  machine, or the first controller read of the between-frames window) and ends with the T2
+  reload the core treats as a frame boundary. Since 20 Nov 2026 the stream is **not padded**: an SDK
+  image paces itself (its `UVM2_HZ` filler pads each list inside the list, to 30000 E cycles for 50 Hz,
+  25000 for 60, nothing for 0 = free-running), so the old padding to 30000 was a second, conflicting
+  pacer: Demon Attack (an Atari 2600 ROM, built for 60 Hz, lists 25000) ran at 50 instead of ~58 fps.
+  `--frame-pad N` pads to N: a stand-in for the idle "park" words a free-running image (Punch-Out)
+  leaves between its lists on a real cart (SDK doc 05, "The underrun is the idle state"), which um2run
+  does not model yet. `--frame-cycles` (default 30000) now only sets the frame-mark fallbacks and
+  um2run's own screens. The exit stats list each image's list lengths per frame. `--hold` hands the whole frame to the ring at once.
 - **Pacing.** `ptx_frame()` paces on the core's read index, so the guest never runs far ahead
   of what the core has played.
 - **List pickup (experiment, off by default: `--pickup` or `UM2_PICKUP=1`).** Core 1 hands each

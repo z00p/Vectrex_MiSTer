@@ -1152,11 +1152,13 @@ static int sio_load(uint32_t off, int size, uint32_t *v, int core) {
 }
 
 /* ------------------------------------------------------------------ frames */
+static uint32_t g_used_hist[26];    /* list+singles cycles per frame, 500-cycle buckets from 20000 (0: below, 25: 32000+) */
 static void frame_mark(int forced) {
 	Sm *s = SIMPIO;
 	if (s->started) sink_sync_to(s, s->t / 100);
 	uint64_t used = C.now() - g_fstart;
-	if (C.frame_cycles && used + 2 < C.frame_cycles) { uint64_t pad = C.frame_cycles - used - 2; S.idle_pad_cycles += pad; while (pad) { uint32_t c = pad > 0x7FFFFFFFu ? 0x7FFFFFFFu : (uint32_t)pad; C.advance(c); pad -= c; } }
+	{ unsigned b = used < 20000 ? 0 : used >= 32000 ? 25 : 1 + (unsigned)((used - 20000) / 500); g_used_hist[b]++; }
+	if (C.frame_pad && used + 2 < C.frame_pad) { uint64_t pad = C.frame_pad - used - 2; S.idle_pad_cycles += pad; while (pad) { uint32_t c = pad > 0x7FFFFFFFu ? 0x7FFFFFFFu : (uint32_t)pad; C.advance(c); pad -= c; } }
 	if (um2aud_enabled()) um2aud_pump(1);   /* a frame mark is a good moment for the audio too (the bus lock is held here, and ptx_frame may now sleep for pacing) */
 	C.vwrite(0xD008, 0x30);                 /* T2 reload: the core takes accepted T2 reloads as frame boundaries */
 	C.vwrite(0xD009, 0x75);
@@ -1385,6 +1387,11 @@ void um2bus_stats(FILE *f) {
 		(unsigned long long)S.dma_runs, (unsigned long long)S.dma_words, (unsigned long long)S.frames, (unsigned long long)S.forced_frames,
 		(unsigned long long)S.frame_cycles_min, (unsigned long long)(S.frames ? S.frame_cycles_sum / S.frames : 0), (unsigned long long)S.frame_cycles_max,
 		(unsigned long long)S.idle_pad_cycles, (unsigned long long)S.unsupported);
+	{   /* list lengths: what the image itself spends per frame, before our padding */
+		fprintf(f, "um2bus: list+singles cycles per frame (500-cycle buckets from 20000):");
+		for (int b = 0; b < 26; b++) if (g_used_hist[b]) fprintf(f, " %s%u:%u", b == 0 ? "<" : b == 25 ? ">=" : "", b == 0 ? 20000 : b == 25 ? 32000 : 20000 + (b - 1) * 500, g_used_hist[b]);
+		fprintf(f, "%s\n", C.frame_pad ? "  (then padded by --frame-pad)" : "");
+	}
 	if (AS.starts || AS.cpu_words) {
 		fprintf(f, "um2bus: cart audio: %llu transfers started, %llu blocks completed (%llu interrupts), %llu words consumed in %llu steps, %llu aborts, %llu CPU pushes to PIO1/2;",
 			(unsigned long long)AS.starts, (unsigned long long)AS.blocks, (unsigned long long)AS.irqs, (unsigned long long)AS.words, (unsigned long long)AS.steps, (unsigned long long)AS.aborts, (unsigned long long)AS.cpu_words);

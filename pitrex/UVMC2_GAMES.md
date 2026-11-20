@@ -63,7 +63,7 @@ Nothing in it is ever executed. Unknown keys are ignored; bad values are ignored
 
 | Key | Meaning | Default |
 |---|---|---|
-| `frame_cycles=25000` | Length of one stream frame in Vectrex E cycles. 30000 is 50 Hz, 25000 is 60 Hz. Images with "punch" in the name get 25000 without a sidecar. | 30000 (Punch-Out 25000) |
+| `frame_cycles=25000` | Pads each frame to this length in Vectrex E cycles (30000 is 50 Hz, 25000 is 60 Hz). Most games need none: they set their own rate. Only for games that leave idle time between frames on a real cart, which um2run does not model yet. Images with "punch" in the name get 25000 without a sidecar. | no padding (Punch-Out 25000) |
 | `sd=name.img` | Card image the cartridge sees. A name without a folder is looked up next to the `.um2`, then in `/media/fat/pitrex/uvmc2/`, then in `/media/fat/pitrex/um2run/`. No spaces in the path. | `pitrex/uvmc2/sd.img` if it exists, else no card |
 | `scale=118` | The UVMC2 calibration's picture size (the game's whole picture grows with it; the cartridge software's default is 160). Without an `sd=` key the game runs on `pitrex/uvmc2/sd_scale118.img`, a copy of `sd.img` whose `config/uvm2.cfg` says `scale 118`, which PiTrex_Make_UVMC2_Card makes (nearly every UVMC2 game reads that file, so it cannot go on the shared card). Images with "vector" and "pinball" in the name get 118 without a sidecar; `scale=0` turns that off. | none (Vector Pinball 118) |
 | `args=--secs 600` | Extra `um2run` arguments, appended last (see um2run/README.md). | none |
