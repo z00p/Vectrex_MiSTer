@@ -101,11 +101,13 @@ commands, so the cartridge and the core never need to know about each other.
   25000 for 60, nothing for 0 = free-running), so the old padding to 30000 was a second, conflicting
   pacer: Demon Attack (an Atari 2600 ROM, built for 60 Hz, lists 25000) ran at 50 instead of ~58 fps.
   `--frame-pad N` pads to N: a stand-in for the idle time a free-running image (Punch-Out) leaves
-  between its lists on a real cart, which um2run does not model yet. With no new list the cart's core 1
+  between its lists on a real cart (that idle time comes from core 0's speed, which um2run does not
+  reproduce, see below). With no new list the cart's core 1
   pushes nothing: it only reads the controllers and services audio once per frame period, and the beam
   stays parked (SDK doc 05, "The underrun is the idle state"; confirmed by the SDK's author, 20 Nov 2026).
-  A free-running image's frame rate on a real cart is set by how fast core 0 builds the next list,
-  which um2run does not model either, so such an image can run faster under um2run than on a cart. `--frame-cycles` (default 30000) now only sets the frame-mark fallbacks and
+  A free-running image's frame rate on a real cart is set by how long the RP2350's core 0 takes to build
+  the next list. um2run runs core 0's code natively on the A9, at the A9's own speed: it does not slow it to
+  the RP2350's timing, so such an image can run faster (or slower) under um2run than on a cart. `--frame-cycles` (default 30000) now only sets the frame-mark fallbacks and
   um2run's own screens. The exit stats list each image's list lengths per frame. `--hold` hands the whole frame to the ring at once.
 - **Pacing.** `ptx_frame()` paces on the core's read index, so the guest never runs far ahead
   of what the core has played.
