@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * Copyright (C) 2026 John (z00p) - PiTrex on MiSTer
+ * Copyright (C) 2026 z00p - PiTrex on MiSTer
  */
 /*
  * um2run -- run an unmodified UVMC2 cartridge image (.um2, an RP2350 / Cortex-M33 RAM image) on the MiSTer's Cortex-A9.

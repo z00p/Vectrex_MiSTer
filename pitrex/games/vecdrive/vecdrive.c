@@ -59,7 +59,7 @@ void v_printString(int8_t x, int8_t y, char *string, uint8_t textSize, uint8_t b
 #ifndef CLIMB_B
 #define CLIMB_B    2600.0f        /* ... and can never rise more than A + B above it */
 #endif
-#ifndef VD_SKY_FIXED              /* the skyline lifts onto a crest that rises above it (John's pick, 9 Nov 2026) */
+#ifndef VD_SKY_FIXED              /* the skyline lifts onto a crest that rises above it (z00p's pick, 9 Nov 2026) */
 #define VD_SKY_FOLLOWS_CREST
 #endif
 #define DRAW_DIST  60
@@ -225,7 +225,7 @@ static const struct { const spec_t *s; int n; } th_spec[N_THEMES] = {
 /* roadside objects (spacing in segments, up to 3 kinds) and road markings:
    centre-dash mask and kerb-tick mask (-1 = none) */
 /* depth 1: objects stand at three distances from the road (close, middle, set back), mixing tall, medium and
-   low kinds (SEA first, John 8 Nov; every theme since 9 Nov). An odd count of kinds lets each one turn up on
+   low kinds (SEA first, z00p 8 Nov; every theme since 9 Nov). An odd count of kinds lets each one turn up on
    both sides. Some kinds keep their place: huts and mesas set back, lamps, posts and signs at the kerb. */
 static const struct { unsigned char spacing, n, kind[5]; signed char dash, kerb; unsigned char depth; } th_style[N_THEMES] = {
 	/* SEA      */ { 5, 5, { OBJ_PALM, OBJ_PARASOL, OBJ_GRASS, OBJ_PALM, OBJ_HUT }, 3, -1, 1 },
@@ -662,7 +662,7 @@ static void draw_sky(void)
 }
 
 /* ---- roadside objects ---- */
-/* palm (design P2, John's pick 8 Nov): near, an outlined ringed trunk that leans and tapers, five broad
+/* palm (design P2, z00p's pick 8 Nov): near, an outlined ringed trunk that leans and tapers, five broad
    leaf loops in ONE path (out along each leaf's top edge, back along its bottom) and a coconut cluster;
    mid-distance, a curved trunk line and five single fronds; far, a trunk and four straight fronds */
 static const float palm_leaf[5][3] = {                      /* dx (x crown width), rise, droop (x height) */
@@ -1091,7 +1091,7 @@ static void draw_vehicle(float x, float y, float s, int truck, int bright)
 	}
 }
 
-/* twin-light GT, rear view (John's pick, 8 Nov): wide hips over the wheels, a fastback cabin that leans
+/* twin-light GT, rear view (z00p's pick, 8 Nov): wide hips over the wheels, a fastback cabin that leans
    with the steering, a light bar each side (full brightness while braking) and an inset diffuser.
    Drawn as few paths as possible: the body and diffuser are one closed walk. */
 static int braking;
@@ -1293,7 +1293,7 @@ static void draw_road(void)
 				kerb_b[n] = bright - 20;
 		}
 		/* sky boxes now, nearest first; lines later. Roadside scenery is gone before it reaches the very
-		   front (John, 8 Nov: near palms filled half the screen); the gantries stay so you drive under them. */
+		   front (z00p, 8 Nov: near palms filled half the screen); the gantries stay so you drive under them. */
 		if (sg->obj && n < (d > 0 ? 22 : 40) &&
 		    (n >= OBJ_NEAR || OBJ_GANTRY(sg->obj))) {
 			obj_on[n] = 1;
@@ -1668,7 +1668,7 @@ static void place_cars(float from)
 		cars[i].x = (i & 1) ? -0.45f : 0.45f;
 		cars[i].truck = (i % 3 == 1);
 		/* trucks in the two lanes run at different speeds: two side by side fill the road, and at one speed they
-		   stayed that way for good (John's photos, 9 Nov 2026) */
+		   stayed that way for good (z00p's photos, 9 Nov 2026) */
 		cars[i].speed = MAX_SPEED * (cars[i].truck ? 0.28f + 0.04f * (i & 1) : 0.40f + 0.06f * (i % 4)) * (1 + 0.04f * (ph - 1));
 	}
 }

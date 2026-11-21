@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * Copyright (C) 2026 John (z00p) - PiTrex on MiSTer
+ * Copyright (C) 2026 z00p - PiTrex on MiSTer
  */
 /*
  * ptx_selftest.c - bring-up test for PiTrex mode, with no PiTrex library.

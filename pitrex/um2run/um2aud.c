@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * Copyright (C) 2026 John (z00p) - PiTrex on MiSTer
+ * Copyright (C) 2026 z00p - PiTrex on MiSTer
  */
 /*
  * um2aud.c -- see um2aud.h.  Resampler (windowed sinc, polyphase) + jitter buffer + .wav dump for the cart's I2S audio.

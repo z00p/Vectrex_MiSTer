@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * Copyright (C) 2026 John (z00p) - PiTrex on MiSTer
+ * Copyright (C) 2026 z00p - PiTrex on MiSTer
  */
 /*
  * um2bus -- device model for the RP2350 pieces a UVMC2 .um2 image uses to drive the Vectrex bus,

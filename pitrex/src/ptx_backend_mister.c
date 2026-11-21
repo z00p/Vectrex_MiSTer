@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * Copyright (C) 2026 John (z00p) - PiTrex on MiSTer
+ * Copyright (C) 2026 z00p - PiTrex on MiSTer
  */
 /*
  * ptx_backend_mister.c - DE10-Nano backend: a command ring in the DDR3 that

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * Copyright (C) 2026 John (z00p) - PiTrex on MiSTer
+ * Copyright (C) 2026 z00p - PiTrex on MiSTer
  */
 /*
  * um2aud -- sink for the cart's own audio (the I2S jack output of a UVMC2 image).  See DESIGN.md, "Cart audio".

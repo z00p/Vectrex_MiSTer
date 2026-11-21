@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * Copyright (C) 2026 John (z00p) - PiTrex on MiSTer
+ * Copyright (C) 2026 z00p - PiTrex on MiSTer
  */
 /* PCM channel test (B6 cores): 4 s of a 440 Hz tone, 4 s of an 880 Hz tone, repeated for
  * about 2 minutes, at a loud level; prints the core's audio counters as it goes. */

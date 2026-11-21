@@ -10,7 +10,7 @@ Alpha: 255 solid print, 51 coloured filter, 0 clear. No anti-aliasing.
     --fork         VecDrive_Fork.png: for builds with -DVD_NOCHECKPOINT (the time is added at the fork)
     --checkpoint   VecDrive_Checkpoint.png: the 9 Nov "VecDrive (Checkpoint)" entry's overlay (title VECDRIVE CHECKPOINT)
 
-v2 (9 Nov 2026, John: "reflect the new game behaviour, more bands on the road"):
+v2 (9 Nov 2026, z00p: "reflect the new game behaviour, more bands on the road"):
   - the ground is seven bands that close up towards the horizon (perspective), hot pink at the horizon
     through violet and blue to teal at the bottom; the bands near the horizon are deep enough that the
     camera pitch on hills (about 11 px either way) and the skyline lift stay inside the glow;

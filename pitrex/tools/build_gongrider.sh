@@ -2,7 +2,7 @@
 # Build Roger Boesch's Gong Rider for the MiSTer (run in WSL).
 #   tools/build_gongrider.sh [path/to/gongrider.c]     -> build/arm/gongrider
 # One MiSTer change, made on a copy: the gong section maps the Vectrex's buttons so a pad's
-# face-button diamond matches the gongs. Checked on John's pad (3 Nov): button 1 = bottom
+# face-button diamond matches the gongs. Checked on z00p's pad (3 Nov): button 1 = bottom
 # gong, 2 = left, 3 = right, 4 = top. The stick is unchanged.
 set -e
 cd "$(dirname "$0")/.."
