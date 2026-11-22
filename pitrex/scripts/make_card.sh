@@ -6,7 +6,7 @@
 #   /media/fat/pitrex/uvmc2/sd.img  the card every UVMC2 game without an sd= key in its sidecar sees (output)
 # The card is a FAT32 image of a whole card without a partition table ("superfloppy"), the layout um2run
 # was tested with. Rebuilding keeps the player's saves: what the games wrote to the old sd.img (every
-# file the last build did not put there, and all config and scores folders) is copied into the new one,
+# file the last build did not put there, and all config, .conf and scores folders) is copied into the new one,
 # and the old image is kept as sd.img.bak (one backup). sd.img.list records what a build put on the card.
 # BattleZone writes to its card: if its image is in games/Vectrex-PiTrex/UVMC2, bz_sd.img is made too
 # (same files, its own saves) and, if the image has no sidecar yet, one is written with sd=bz_sd.img.
@@ -17,6 +17,7 @@
 # Scale cards: a game that wants the console calibration's `scale` changed (its sidecar says scale=N, or a built-in one by name, see
 # game_scale) gets sd_scale<N>.img: a copy of sd.img with config/uvm2.cfg saying `scale N` (any other fields in that file kept), and
 # its own saves. It has to be a card of its own: nearly every UVMC2 image reads config/uvm2.cfg, so on sd.img it would resize them all.
+# Images built with SDK 1.4.17 or later read .conf/uvm2.cfg first, so where a scale card has one it gets the scale too.
 # pitrexd.sh starts such a game on it. A sidecar with sd= (a card named by hand) or scale=0 gets none.
 #   make_card.sh               build now
 #   make_card.sh --if-needed   build only if sd.img is missing, the card folder changed since the last build, or
@@ -223,13 +224,14 @@ def cmd_copy(src, dst):
     print(n)
 
 def in_save_dir(rel):
-    return any(p.lower() in ("config", "scores") for p in rel.split("/")[:-1])
+    return any(p.lower() in ("config", ".conf", "scores") for p in rel.split("/")[:-1])
 
 def cmd_saves_out(mnt, dst, listfile, card):
     """Copy the player's files out of an old card into dst (same paths); prints the number of files.
     The games do not all save in the same place (config/ and scores/ at the top, Punch-Out in
-    PORTDATA/Punchout/CONFIG, BattleZone makes a BATTLEZONE folder), so kept are:
-      - every file in a folder named config or scores (any case, any depth), and
+    PORTDATA/Punchout/CONFIG, BattleZone makes a BATTLEZONE folder, images built with SDK 1.4.17 or
+    later save their settings to .conf/), so kept are:
+      - every file in a folder named config, .conf or scores (any case, any depth), and
       - if this script built the card (its .list exists): every file and folder it did not put there,
         i.e. what the games wrote;
       - otherwise (a card made by hand): every file and folder the card folder does not provide,
@@ -340,14 +342,10 @@ def cmd_um2(src, dst):
                 print("E %s: %s" % (rel, e.strerror or e))
     sys.stdout.flush()
 
-def cmd_scalecfg(mnt, n):
-    """config/uvm2.cfg on a mounted card says `scale n`: the other lines of an existing file are kept (a calibration made
+def set_scale(p, n):
+    """The file p says `scale n`: the other lines of an existing file are kept (a calibration made
     with a game's wizard, say), any scale line is replaced. Padded to 512 bytes: the SDK's writer only overwrites a file of
-    one sector or more, so the wizard can still save to it. Folder and file matched ignoring case, as the games' FAT does."""
-    d = os.path.join(mnt, find_ci(mnt, "config"))
-    if not os.path.isdir(d):
-        os.mkdir(d)
-    p = os.path.join(d, find_ci(d, "uvm2.cfg"))
+    one sector or more, so the wizard can still save to it."""
     keep = []
     if os.path.isfile(p):
         with open(p, "rb") as f:
@@ -360,6 +358,19 @@ def cmd_scalecfg(mnt, n):
         text += " " * (511 - len(text)) + "\n"
     with open(p, "wb") as f:
         f.write(text.encode("latin-1"))
+
+def cmd_scalecfg(mnt, n):
+    """A mounted card's calibration says `scale n`. config/uvm2.cfg always: every image can read it. SDK 1.4.17 and
+    later reads .conf/uvm2.cfg instead when there is one, so that gets the scale as well. It is not created: without
+    it those images fall back to config/. Folders and files matched ignoring case, as the games' FAT does."""
+    d = os.path.join(mnt, find_ci(mnt, "config"))
+    if not os.path.isdir(d):
+        os.mkdir(d)
+    set_scale(os.path.join(d, find_ci(d, "uvm2.cfg")), n)
+    d = os.path.join(mnt, find_ci(mnt, ".conf"))
+    p = os.path.join(d, find_ci(d, "uvm2.cfg"))
+    if os.path.isfile(p):
+        set_scale(p, n)
 
 cmds = {"scan": cmd_scan, "size": cmd_size, "list": cmd_list, "copy": cmd_copy, "saves_out": cmd_saves_out,
         "saves_in": cmd_saves_in, "mkimg": cmd_mkimg, "free": cmd_free, "dev": cmd_dev, "cfg": cmd_cfg,
@@ -694,7 +705,7 @@ scale_cards() {
 		cp "$OUT" "$t.new" || die "cannot write $t.new"
 		put_saves "$t.new" "$SAVES/scale$n"
 		attach "$t.new" "$WORK/mnt_new" || die "cannot mount ${t##*/}.new"
-		py scalecfg "$WORK/mnt_new" "$n" || die "cannot write config/uvm2.cfg on ${t##*/}"
+		py scalecfg "$WORK/mnt_new" "$n" || die "cannot write the scale to uvm2.cfg on ${t##*/}"
 		detach "$WORK/mnt_new"
 		if command -v fsck.vfat > /dev/null; then
 			fsck.vfat -n "$t.new" > "$WORK/fsck.log" 2>&1 || { cat "$WORK/fsck.log"; die "the new card ${t##*/} has errors (fsck.vfat)"; }
